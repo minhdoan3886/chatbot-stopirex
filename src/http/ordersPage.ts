@@ -1,6 +1,6 @@
 export const ordersPage = `<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stopirex — Hứng Đơn</title><style>
+<title>Stopirex — Đơn Hàng</title><style>
 :root{color-scheme:light;--ink:#162033;--muted:#637189;--line:#dfe5ee;--panel:#fff;--bg:#f5f7fb;--blue:#2459d3;--green:#138a5b;--amber:#b76a00;--red:#c73737;--gray:#7b8493}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Montserrat,Arial,sans-serif}
 main{max-width:1320px;margin:0 auto;padding:24px}
@@ -59,7 +59,7 @@ tbody tr:hover{background:#f8faff}
 <nav class="tabs">
   <a class="tab" href="/">Chat thử</a>
   <a class="tab" href="/operations">Tổng quan kết nối</a>
-  <a class="tab active" href="/orders">Hứng đơn</a>
+  <a class="tab active" href="/orders">Đơn hàng</a>
   <a class="tab" href="/product">Thông tin sản phẩm</a>
 </nav>
 
@@ -151,9 +151,10 @@ function renderRows(){
   });
   document.getElementById('orderCount').textContent='Hiển thị '+rows.length+'/'+allRecords.length+' đơn';
   document.getElementById('orderRows').innerHTML=rows.length?rows.map(r=>{
+    const id=esc(r.id);
     const actionCell=r.status==='pending'
-      ?'<button class="btn btn-complete" onclick="updateStatus(\''+esc(r.id)+'\',\'completed\',this)">✓ Đã lên Sapo</button>'
-       +'<button class="btn btn-cancel" style="margin-top:4px" onclick="updateStatus(\''+esc(r.id)+'\',\'cancelled\',this)">✕ Huỷ</button>'
+      ?'<button class="btn btn-complete" onclick=\'updateStatus("'+id+'","completed",this)\'>✓ Đã lên Sapo</button>'
+       +'<button class="btn btn-cancel" style="margin-top:4px" onclick=\'updateStatus("'+id+'","cancelled",this)\'>✕ Huỷ</button>'
       :r.note?'<span class="sub">'+esc(r.note)+'</span>':'';
     return '<tr id="row-'+esc(r.id)+'">'
       +'<td><span class="pill '+esc(r.status)+'">'+esc(statusLabel[r.status]??r.status)+'</span></td>'

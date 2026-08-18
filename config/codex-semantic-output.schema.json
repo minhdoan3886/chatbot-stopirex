@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StopirexSemanticUnderstanding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "skill",
+    "intent",
+    "actions",
+    "uncertainties",
+    "knowledgeIds",
+    "unsupportedQuestions",
+    "groundingConfidence",
+    "draftReply",
+    "confidence",
+    "needsClarification",
+    "evidence",
+    "asksDirectAnswer",
+    "topic",
+    "subject",
+    "scenario",
+    "replyTo",
+    "affirmation",
+    "age",
+    "priceFromVnd",
+    "priceToVnd",
+    "discountAmountVnd",
+    "workContext",
+    "primarySymptom",
+    "sweatPresent",
+    "odorPresent",
+    "priorProduct",
+    "priorIrritation"
+  ],
+  "properties": {
+    "summary": { "type": "string" },
+    "skill": {
+      "type": "string",
+      "enum": [
+        "direct-answer",
+        "need-discovery",
+        "solution-guidance",
+        "pricing-objection",
+        "order-closing",
+        "after-sales-care",
+        "safety-first",
+        "knowledge-handoff",
+        "follow-up"
+      ]
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "bot_identity",
+        "price_change",
+        "price_request",
+        "promotion_inquiry",
+        "price_objection",
+        "negotiation",
+        "decline_purchase",
+        "efficacy_objection",
+        "product_comparison",
+        "authenticity_question",
+        "product_effect",
+        "usage_guidance",
+        "usage_time",
+        "usage_frequency",
+        "safety",
+        "ineffective",
+        "buying",
+        "consultation",
+        "order_support",
+        "knowledge_unknown",
+        "other"
+      ]
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "topic",
+          "field",
+          "value",
+          "quantity",
+          "issue",
+          "reason",
+          "confidence",
+          "evidence"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "stop_bot",
+              "start_customer_care",
+              "handoff_to_human",
+              "answer_question",
+              "record_fact",
+              "select_quantity",
+              "continue_order_collection",
+              "pause_order",
+              "decline_purchase"
+            ]
+          },
+          "topic": {
+            "type": ["string", "null"],
+            "enum": [
+              "price",
+              "promotion",
+              "shipping",
+              "comparison",
+              "effectiveness",
+              "usage",
+              "child_age",
+              "pregnancy",
+              "breastfeeding",
+              "sensitive_skin",
+              "irritation",
+              "damaged_goods",
+              "delivery",
+              "negative_review",
+              "order",
+              "sweat",
+              "odor",
+              "other",
+              null
+            ]
+          },
+          "field": { "type": ["string", "null"] },
+          "value": { "type": ["string", "number", "boolean", "null"] },
+          "quantity": { "type": ["integer", "null"], "enum": [1, 2, 3, 4, 5, null] },
+          "issue": {
+            "type": ["string", "null"],
+            "enum": [
+              "ineffective",
+              "irritation",
+              "missing_or_damaged",
+              "delivery",
+              "counterfeit",
+              "negative_review",
+              null
+            ]
+          },
+          "reason": { "type": ["string", "null"] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "evidence": {
+            "type": "array",
+            "maxItems": 3,
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "uncertainties": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "type": "string" }
+    },
+    "knowledgeIds": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "type": "string" }
+    },
+    "unsupportedQuestions": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "type": "string" }
+    },
+    "groundingConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "draftReply": { "type": "string", "maxLength": 600 },
+    "topic": {
+      "type": ["string", "null"],
+      "enum": [
+        "price",
+        "promotion",
+        "shipping",
+        "comparison",
+        "effectiveness",
+        "usage",
+        "child_age",
+        "pregnancy",
+        "breastfeeding",
+        "sensitive_skin",
+        "irritation",
+        "damaged_goods",
+        "delivery",
+        "negative_review",
+        "order",
+        "sweat",
+        "odor",
+        "other",
+        null
+      ]
+    },
+    "subject": {
+      "type": ["string", "null"],
+      "enum": ["customer", "child", "product", "order", null]
+    },
+    "scenario": {
+      "type": ["string", "null"],
+      "enum": ["actual", "hypothetical", "past", "unknown", null]
+    },
+    "replyTo": {
+      "type": ["string", "null"],
+      "enum": [
+        "offer_usage_guidance",
+        "offer_price",
+        "choose_quantity",
+        "confirm_order",
+        "care_question",
+        null
+      ]
+    },
+    "affirmation": { "type": ["boolean", "null"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "needsClarification": { "type": "boolean" },
+    "age": { "type": ["integer", "null"], "minimum": 0, "maximum": 120 },
+    "evidence": {
+      "type": "array",
+      "maxItems": 3,
+      "items": { "type": "string" }
+    },
+    "asksDirectAnswer": { "type": "boolean" },
+    "priceFromVnd": { "type": ["number", "null"], "minimum": 0 },
+    "priceToVnd": { "type": ["number", "null"], "minimum": 0 },
+    "discountAmountVnd": { "type": ["number", "null"], "minimum": 0 },
+    "workContext": {
+      "type": ["string", "null"],
+      "enum": ["outdoor_heavy", "rest_or_stress", "both", null]
+    },
+    "primarySymptom": {
+      "type": ["string", "null"],
+      "enum": ["sweat", "odor", "both", null]
+    },
+    "sweatPresent": { "type": ["boolean", "null"] },
+    "odorPresent": { "type": ["boolean", "null"] },
+    "priorProduct": {
+      "type": ["string", "null"],
+      "enum": ["daily_rollon", "specialized", "none", null]
+    },
+    "priorIrritation": { "type": ["boolean", "null"] }
+  }
+}

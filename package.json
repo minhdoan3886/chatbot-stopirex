@@ -1,0 +1,48 @@
+{
+  "name": "stopirex-chatbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/http/server.ts",
+    "worker": "node --env-file-if-exists=.env --import tsx src/worker.ts",
+    "worker:followup": "node --env-file-if-exists=.env --import tsx src/followupWorker.ts",
+    "start": "node --env-file-if-exists=.env --import tsx src/http/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "test": "tsx --test test/*.test.ts",
+    "test:coverage": "tsx --test --experimental-test-coverage test/*.test.ts",
+    "test:prompt-shadow": "node --env-file-if-exists=.env --import tsx scripts/prompt-shadow.ts",
+    "migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
+    "seed": "node --env-file-if-exists=.env --import tsx scripts/seed.ts",
+    "meta:register-page": "node --env-file-if-exists=.env --import tsx scripts/register-meta-page.ts",
+    "meta:preflight": "node --env-file-if-exists=.env --import tsx scripts/meta-preflight.ts",
+    "meta:subscribe-page": "node --env-file-if-exists=.env --import tsx scripts/subscribe-meta-page.ts",
+    "inbound:drain": "node --env-file-if-exists=.env --import tsx scripts/drain-stale-inbound.ts",
+    "meta:gateway": "node --env-file-if-exists=.env --import tsx src/http/metaGateway.ts",
+    "load:smoke": "tsx scripts/load-smoke.ts",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^20.17.0",
+    "@types/pg": "^8.20.0",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.65.0"
+  },
+  "dependencies": {
+    "openai": "^6.49.0",
+    "pg": "^8.22.0",
+    "read-excel-file": "^9.3.4",
+    "redis": "^6.1.0"
+  }
+}

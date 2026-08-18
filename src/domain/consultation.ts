@@ -1,0 +1,268 @@
+import type { ConversationSkillId } from "./chatSkills.js";
+import type { ConversationAction } from "./conversationActions.js";
+
+export type WorkContext = "outdoor_heavy" | "rest_or_stress" | "both";
+export type PrimarySymptom = "sweat" | "odor" | "both";
+export type PriorProduct = "daily_rollon" | "specialized" | "none";
+
+export type ConsultationSlots = {
+  workContext?: WorkContext;
+  primarySymptom?: PrimarySymptom;
+  sweatPresent?: boolean;
+  odorPresent?: boolean;
+  priorProduct?: PriorProduct;
+  priorIrritation?: boolean;
+  activeIrritation?: boolean;
+  damagedSkin?: boolean;
+  recentShaveWaxLaser?: boolean;
+  wantsPriceFirst?: boolean;
+};
+
+export type CustomerIntent =
+  | "bot_identity"
+  | "price_change"
+  | "price_request"
+  | "promotion_inquiry"
+  | "price_objection"
+  | "negotiation"
+  | "decline_purchase"
+  | "efficacy_objection"
+  | "product_comparison"
+  | "authenticity_question"
+  | "product_effect"
+  | "usage_guidance"
+  | "usage_time"
+  | "usage_frequency"
+  | "safety"
+  | "ineffective"
+  | "buying"
+  | "consultation"
+  | "order_support"
+  | "knowledge_unknown"
+  | "other";
+
+export type SemanticTopic =
+  | "price"
+  | "promotion"
+  | "shipping"
+  | "comparison"
+  | "effectiveness"
+  | "usage"
+  | "child_age"
+  | "pregnancy"
+  | "breastfeeding"
+  | "sensitive_skin"
+  | "irritation"
+  | "damaged_goods"
+  | "delivery"
+  | "negative_review"
+  | "order"
+  | "sweat"
+  | "odor"
+  | "other";
+
+export type SemanticSubject = "customer" | "child" | "product" | "order";
+
+export type SemanticReplyTo =
+  | "offer_usage_guidance"
+  | "offer_price"
+  | "choose_quantity"
+  | "confirm_order"
+  | "care_question";
+
+export type SemanticScenario = "actual" | "hypothetical" | "past" | "unknown";
+
+export type SemanticUnderstanding = {
+  slots: ConsultationSlots;
+  status?: "interpreted" | "fallback" | "skipped" | "unavailable";
+  summary?: string;
+  actions?: ConversationAction[];
+  uncertainties?: string[];
+  knowledgeIds?: string[];
+  unsupportedQuestions?: string[];
+  groundingConfidence?: number;
+  draftReply?: string;
+  skill?: ConversationSkillId;
+  intent?: CustomerIntent;
+  topic?: SemanticTopic;
+  subject?: SemanticSubject;
+  replyTo?: SemanticReplyTo;
+  scenario?: SemanticScenario;
+  affirmation?: boolean;
+  confidence?: number;
+  needsClarification?: boolean;
+  age?: number;
+  evidence?: string[];
+  asksDirectAnswer?: boolean;
+  priceFromVnd?: number;
+  priceToVnd?: number;
+  discountAmountVnd?: number;
+};
+
+export type ConsultationStage =
+  | "S0.new"
+  | "S1.context"
+  | "S2.symptom"
+  | "S2.sweat"
+  | "S2.odor"
+  | "S3.prior_use"
+  | "S4.safety"
+  | "S5.guidance"
+  | "S6.price"
+  | "S7.waiting"
+  | "S8.order"
+  | "H.handoff";
+
+export type ConsultationState = {
+  stage: ConsultationStage;
+  slots: ConsultationSlots;
+  asked: readonly string[];
+};
+
+export type NextAction = {
+  stage: ConsultationStage;
+  reply: string;
+  question?: string;
+  handoffReason?: string;
+};
+
+export function initialConsultation(): ConsultationState {
+  return { stage: "S0.new", slots: {}, asked: [] };
+}
+
+export function mergeConfirmedSlots(
+  state: ConsultationState,
+  confirmed: ConsultationSlots,
+): ConsultationState {
+  const previousSymptom = state.slots.primarySymptom;
+  const incomingSymptom = confirmed.primarySymptom;
+  const mergedSymptom =
+    previousSymptom &&
+    incomingSymptom &&
+    previousSymptom !== incomingSymptom
+      ? "both"
+      : incomingSymptom ?? previousSymptom;
+  const slots = {
+    ...state.slots,
+    ...confirmed,
+    ...(mergedSymptom ? { primarySymptom: mergedSymptom } : {}),
+  };
+  if (!slots.primarySymptom && slots.sweatPresent !== undefined && slots.odorPresent !== undefined) {
+    if (slots.sweatPresent && slots.odorPresent) slots.primarySymptom = "both";
+    else if (slots.sweatPresent) slots.primarySymptom = "sweat";
+    else if (slots.odorPresent) slots.primarySymptom = "odor";
+  }
+  return { ...state, slots };
+}
+
+export function nextConsultationAction(state: ConsultationState): NextAction {
+  const slots = state.slots;
+
+  if (hasSafetyRedFlag(slots)) {
+    return {
+      stage: "H.handoff",
+      reply:
+        "Dạ em đã ghi nhận tình trạng da của mình. Mình tạm ngưng sử dụng trên vùng đang đỏ, rát hoặc tổn thương giúp em; em chuyển chuyên viên hỗ trợ kiểm tra kỹ hơn cho mình ạ.",
+      handoffReason: "safety_red_flag",
+    };
+  }
+
+  if (slots.wantsPriceFirst) {
+    return {
+      stage: "S6.price",
+      reply: "Dạ em sẽ kiểm tra mức giá và chương trình đang áp dụng đúng theo kênh của mình ạ.",
+      question:
+        "Sau khi xem giá, anh/chị cho em biết mình ra nhiều khi vận động hay cả lúc ngồi điều hòa/căng thẳng nhé?",
+    };
+  }
+
+  if (!slots.workContext) {
+    return {
+      stage: "S1.context",
+      reply: "Dạ em hỏi nhanh để hiểu tình trạng của mình ạ.",
+      question: "Tình trạng của mình có xuất hiện cả khi ngồi điều hòa không ạ?",
+    };
+  }
+
+  if (!slots.primarySymptom) {
+    if (slots.sweatPresent === false && slots.odorPresent === undefined) {
+      return {
+        stage: "S2.odor",
+        reply: "Dạ em ghi nhận mình không bị ướt áo ạ.",
+        question: "Cuối ngày vùng nách có mùi làm mình khó chịu không ạ?",
+      };
+    }
+    if (slots.odorPresent === false && slots.sweatPresent === undefined) {
+      return {
+        stage: "S2.sweat",
+        reply: "Dạ em ghi nhận mình không bị mùi ạ.",
+        question: "Áo vùng nách có hay bị ướt hoặc có vệt ố không ạ?",
+      };
+    }
+    if (slots.sweatPresent === false && slots.odorPresent === false) {
+      return {
+        stage: "S5.guidance",
+        reply: "Dạ nếu áo không bị ướt và mình cũng không thấy mùi thì hiện chưa có hai dấu hiệu chính ạ.",
+        question: "Mình đang muốn tham khảo để phòng ngừa hay đang gặp vấn đề khác ạ?",
+      };
+    }
+    return {
+      stage: "S2.symptom",
+      reply: contextExpectation(slots.workContext),
+      question:
+        "Mình đang khó chịu nhất vì:\n1. Ướt hoặc ố áo\n2. Mùi cơ thể\n3. Cả hai tình trạng\n\nMình nhắn giúp em 1, 2 hoặc 3 ạ.",
+    };
+  }
+
+  if (slots.priorIrritation && slots.activeIrritation === undefined) {
+    return {
+      stage: "S4.safety",
+      reply: "Dạ vì mình từng bị rát/ngứa nên em ưu tiên kiểm tra tình trạng da trước ạ.",
+      question:
+        "Hiện vùng da có đang đỏ, rát, trầy xước hoặc vừa cạo/wax/triệt trong 24 giờ gần đây không ạ?",
+    };
+  }
+
+  return {
+    stage: "S5.guidance",
+    reply: tailoredGuidance(slots),
+    question:
+      "Để mình dễ cân nhắc, anh/chị muốn em gửi phương án 1 lọ dùng thử trước, hay gửi cả 1 lọ và combo để mình so sánh ạ?",
+  };
+}
+
+export function contextExpectation(context: WorkContext): string {
+  if (context === "outdoor_heavy") {
+    return "Dạ em hiểu, mình thường bị lúc vận động hoặc ở ngoài trời ạ.";
+  }
+  if (context === "rest_or_stress") {
+    return "Dạ em hiểu, ngay cả khi ngồi điều hòa mình vẫn bị ạ.";
+  }
+  return "Dạ em hiểu, mình bị cả khi vận động và khi ngồi mát ạ.";
+}
+
+function tailoredGuidance(slots: ConsultationSlots): string {
+  const symptom =
+    slots.primarySymptom === "sweat"
+      ? "điều làm mình khó chịu nhất là mồ hôi làm ướt hoặc ố áo"
+      : slots.primarySymptom === "odor"
+        ? "điều làm mình khó chịu nhất là mùi cơ thể"
+        : "mình đang gặp cả tình trạng ra nhiều mồ hôi và có mùi";
+  const benefit =
+    slots.primarySymptom === "sweat"
+      ? "hỗ trợ kiểm soát tiết mồ hôi"
+      : slots.primarySymptom === "odor"
+        ? "hỗ trợ kiểm soát mùi cơ thể"
+        : "hỗ trợ kiểm soát cả mồ hôi và mùi";
+  const context =
+    slots.workContext === "outdoor_heavy"
+      ? "Với lịch vận động hoặc ở ngoài trời, dùng đúng vào buổi tối sẽ giúp hôm sau mình thoải mái hơn"
+      : slots.workContext === "rest_or_stress"
+        ? "Dùng đều theo hướng dẫn sẽ giúp vùng da khô thoáng và dễ chịu hơn"
+        : "Dùng đều theo hướng dẫn sẽ giúp mình thoải mái hơn cả khi vận động lẫn lúc ngồi mát";
+  return `Dạ em hiểu rồi ạ — ${symptom}. Stopirex phù hợp để ${benefit}.\n\nMình lăn một lớp mỏng vào buổi tối khi da sạch, khô. ${context} nhé.`;
+}
+
+function hasSafetyRedFlag(slots: ConsultationSlots): boolean {
+  return slots.activeIrritation === true || slots.damagedSkin === true || slots.recentShaveWaxLaser === true;
+}

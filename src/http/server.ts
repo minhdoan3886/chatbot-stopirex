@@ -40,6 +40,8 @@ import { OperationsControlBusyError, OperationsControlService } from "../service
 import { buildProductInformationSnapshot } from "../services/productInformation.js";
 import { operationsPage } from "./operationsPage.js";
 import { productPage } from "./productPage.js";
+import { ordersPage } from "./ordersPage.js";
+import { OrderInboxService } from "../services/orderInbox.js";
 
 const env = loadEnv();
 const logger = new StructuredLogger();
@@ -62,6 +64,7 @@ const operationsControl = new OperationsControlService({
   env,
   ...(redis ? { redis } : {}),
 });
+const orderInbox = postgres ? new OrderInboxService(postgres.pool) : undefined;
 
 const server = createServer(async (request, response) => {
   const traceId = String(request.headers["x-request-id"] ?? randomUUID());
@@ -78,6 +81,51 @@ const server = createServer(async (request, response) => {
 
   if (request.method === "GET" && url.pathname === "/product") {
     return html(response, 200, productPage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/orders") {
+    return html(response, 200, ordersPage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/orders") {
+    if (!isOperationsAuthorized(request)) {
+      return json(response, 401, { error: "unauthorized" });
+    }
+    if (!orderInbox) {
+      return json(response, 503, { error: "database_not_configured" });
+    }
+    try {
+      return json(response, 200, await orderInbox.list());
+    } catch (error) {
+      logger.log("error", "order_inbox_list_failed", {
+        traceId,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+      return json(response, 503, { error: "order_inbox_unavailable", traceId });
+    }
+  }
+
+  // POST /api/orders/:id/completed  or  /api/orders/:id/cancelled
+  const orderStatusMatch = url.pathname.match(/^\/api\/orders\/([a-f0-9-]{36})\/(completed|cancelled)$/);
+  if (request.method === "POST" && orderStatusMatch) {
+    if (!isOperationsAuthorized(request)) {
+      return json(response, 401, { error: "unauthorized" });
+    }
+    if (!orderInbox) {
+      return json(response, 503, { error: "database_not_configured" });
+    }
+    const [, orderId, newStatus] = orderStatusMatch as [string, string, "completed" | "cancelled"];
+    let note: string | undefined;
+    try {
+      const body = JSON.parse((await readBody(request, 4_000)).toString("utf8")) as { note?: unknown };
+      note = typeof body.note === "string" ? body.note.trim() || undefined : undefined;
+    } catch {
+      // note là optional, không bắt buộc
+    }
+    const updated = await orderInbox.updateStatus(orderId, newStatus, note);
+    if (!updated) return json(response, 404, { error: "order_not_found" });
+    logger.log("info", "order_inbox_status_updated", { traceId, orderId, newStatus });
+    return json(response, 200, updated);
   }
 
   if (request.method === "GET" && url.pathname === "/api/product-information") {

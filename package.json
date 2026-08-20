@@ -11,6 +11,7 @@
     "worker": "node --env-file-if-exists=.env --import tsx src/worker.ts",
     "worker:followup": "node --env-file-if-exists=.env --import tsx src/followupWorker.ts",
     "start": "node --env-file-if-exists=.env --import tsx src/http/server.ts",
+    "start:prod": "node dist/scripts/migrate.js && node dist/src/http/server.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",

@@ -47,9 +47,10 @@ docker compose -f docker-compose.staging.yml exec api npm run meta:register-page
 docker compose -f docker-compose.staging.yml exec api npm run meta:preflight:prod
 ```
 
-Service `migration` chạy và hoàn tất trước API/worker. Runtime image chứa bản
-JavaScript đã build và thư mục migrations, nên không cần cài dev dependency
-`tsx` trên máy product.
+API tự chạy `dist/scripts/migrate.js` trước khi mở HTTP server ở mỗi lần container
+khởi động. Migration có bảng `schema_migrations` nên những file đã áp dụng sẽ được
+bỏ qua. Runtime image chứa bản JavaScript đã build và thư mục migrations, vì vậy
+không cần service migration riêng hoặc dev dependency `tsx` trên máy product.
 
 Triển khai lần đầu nên giữ `META_LIVE_SEND_ENABLED=false`,
 `MULTI_ACTION_ROLLOUT_MODE=shadow` và `FOLLOWUP_MODE=shadow`. Sau khi kiểm tra

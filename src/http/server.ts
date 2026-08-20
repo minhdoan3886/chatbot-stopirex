@@ -686,14 +686,7 @@ function isLocalOperationsControlAuthorized(request: import("node:http").Incomin
     address.startsWith("::ffff:10.") ||
     address.startsWith("::ffff:192.168.") ||
     address.startsWith("::ffff:100.");
-  if (!isPrivateOrLocal) return false;
-  const origin = request.headers.origin;
-  if (!origin) return true;
-  try {
-    return new URL(origin).host === request.headers.host;
-  } catch {
-    return false;
-  }
+  return isPrivateOrLocal;
 }
 
 if (process.env.NODE_ENV !== "test") {

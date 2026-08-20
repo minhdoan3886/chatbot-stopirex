@@ -35,6 +35,7 @@ const validDraft = {
 const savedRecord: OrderInboxRecord = {
   id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   sessionId: "session-001",
+  idempotencyKey: "turn-001",
   channel: "meta",
   recipientName: validDraft.recipientName,
   phone: validDraft.phone,
@@ -71,16 +72,15 @@ test("push() trả về record khi INSERT thành công", async () => {
   assert.equal(result.quantity, 2);
   assert.equal(result.totalVnd, 560_000);
   assert.equal(result.paymentMethod, "cod");
+  assert.equal(result.idempotencyKey, savedRecord.idempotencyKey);
 });
 
-test("push() trả về record từ SELECT khi ON CONFLICT bắn ra (rows rỗng lần 1)", async () => {
-  let callCount = 0;
+test("push() dùng ON CONFLICT đúng khóa idempotency", async () => {
+  const queries: string[] = [];
   const pool = {
-    async query(_text: string, _params?: unknown[]) {
-      callCount++;
-      // Lần 1 (INSERT): rows rỗng → ON CONFLICT
-      // Lần 2 (SELECT fallback): trả record
-      return { rows: callCount === 1 ? [] : [savedRecord] };
+    async query(text: string, _params?: unknown[]) {
+      queries.push(text);
+      return { rows: [savedRecord] };
     },
   };
   const service = new OrderInboxService(pool as never);
@@ -91,7 +91,8 @@ test("push() trả về record từ SELECT khi ON CONFLICT bắn ra (rows rỗng
     confirmedAt: new Date("2026-08-18T09:00:00.000Z"),
   });
 
-  assert.equal(callCount, 2, "Phải gọi SELECT fallback sau khi ON CONFLICT");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0] ?? "", /ON CONFLICT \(session_id, idempotency_key\)/);
   assert.equal(result.id, savedRecord.id);
   assert.equal(result.status, "pending");
 });
@@ -112,8 +113,26 @@ test("push() tự động điền channel mặc định là 'meta'", async () =>
     confirmedAt: new Date(),
   });
 
-  // Tham số thứ 2 (index 1) là channel
-  assert.equal(capturedParams[0]?.[1], "meta");
+  // Tham số thứ 3 (index 2) là channel, sau idempotency key.
+  assert.equal(capturedParams[0]?.[2], "meta");
+});
+
+test("push() truyền idempotency key ổn định", async () => {
+  const capturedParams: unknown[][] = [];
+  const pool = {
+    async query(_text: string, params?: unknown[]) {
+      if (params) capturedParams.push(params);
+      return { rows: [savedRecord] };
+    },
+  };
+  const service = new OrderInboxService(pool as never);
+  await service.push({
+    sessionId: "session-001",
+    draft: validDraft,
+    confirmedAt: new Date("2026-08-18T09:00:00.000Z"),
+    idempotencyKey: "turn-001",
+  });
+  assert.equal(capturedParams[0]?.[1], "turn-001");
 });
 
 // ---------------------------------------------------------------------------
@@ -126,7 +145,7 @@ test("list() trả về tổng, số pending và records", async () => {
       queryCount++;
       if (queryCount === 1) {
         // COUNT query
-        return { rows: [{ total: "3", pending: "1" }] };
+        return { rows: [{ total: "3", pending: "1", completed: "1", cancelled: "1", today: "2" }] };
       }
       // Records query
       return { rows: [savedRecord] };
@@ -138,6 +157,9 @@ test("list() trả về tổng, số pending và records", async () => {
 
   assert.equal(result.total, 3);
   assert.equal(result.pending, 1);
+  assert.equal(result.completed, 1);
+  assert.equal(result.cancelled, 1);
+  assert.equal(result.today, 2);
   assert.equal(result.records.length, 1);
   assert.equal(result.records[0]?.id, savedRecord.id);
 });
@@ -147,7 +169,10 @@ test("list() không có đơn trả về total và pending bằng 0", async () =
   const pool = {
     async query() {
       queryCount++;
-      return { rows: queryCount === 1 ? [{ total: "0", pending: "0" }] : [] };
+      return {
+        rows:
+          queryCount === 1 ? [{ total: "0", pending: "0", completed: "0", cancelled: "0", today: "0" }] : [],
+      };
     },
   };
   const service = new OrderInboxService(pool as never);
@@ -165,7 +190,10 @@ test("list() lọc theo status khi truyền filter", async () => {
     async query(text: string) {
       capturedQueries.push(text);
       return {
-        rows: capturedQueries.length === 1 ? [{ total: "5", pending: "2" }] : [],
+        rows:
+          capturedQueries.length === 1
+            ? [{ total: "5", pending: "2", completed: "2", cancelled: "1", today: "3" }]
+            : [],
       };
     },
   };

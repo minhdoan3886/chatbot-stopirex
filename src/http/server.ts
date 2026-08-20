@@ -84,11 +84,16 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "GET" && url.pathname === "/orders") {
+    if (!isOperationsAuthorized(request)) {
+      response.setHeader("WWW-Authenticate", 'Basic realm="Stopirex operations"');
+      return json(response, 401, { error: "unauthorized" });
+    }
     return html(response, 200, ordersPage);
   }
 
   if (request.method === "GET" && url.pathname === "/api/orders") {
     if (!isOperationsAuthorized(request)) {
+      response.setHeader("WWW-Authenticate", 'Basic realm="Stopirex operations"');
       return json(response, 401, { error: "unauthorized" });
     }
     if (!orderInbox) {
@@ -109,6 +114,7 @@ const server = createServer(async (request, response) => {
   const orderStatusMatch = url.pathname.match(/^\/api\/orders\/([a-f0-9-]{36})\/(completed|cancelled)$/);
   if (request.method === "POST" && orderStatusMatch) {
     if (!isOperationsAuthorized(request)) {
+      response.setHeader("WWW-Authenticate", 'Basic realm="Stopirex operations"');
       return json(response, 401, { error: "unauthorized" });
     }
     if (!orderInbox) {
@@ -122,10 +128,20 @@ const server = createServer(async (request, response) => {
     } catch {
       // note là optional, không bắt buộc
     }
-    const updated = await orderInbox.updateStatus(orderId, newStatus, note);
-    if (!updated) return json(response, 404, { error: "order_not_found" });
-    logger.log("info", "order_inbox_status_updated", { traceId, orderId, newStatus });
-    return json(response, 200, updated);
+    try {
+      const updated = await orderInbox.updateStatus(orderId, newStatus, note);
+      if (!updated) return json(response, 404, { error: "order_not_found" });
+      logger.log("info", "order_inbox_status_updated", { traceId, orderId, newStatus });
+      return json(response, 200, updated);
+    } catch (error) {
+      logger.log("error", "order_inbox_status_update_failed", {
+        traceId,
+        orderId,
+        newStatus,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+      return json(response, 503, { error: "order_inbox_unavailable", traceId });
+    }
   }
 
   if (request.method === "GET" && url.pathname === "/api/product-information") {
@@ -266,9 +282,7 @@ const server = createServer(async (request, response) => {
           return json(response, 200, {
             ...result,
             ...(quality ? { quality } : {}),
-            ...(blockedReasons.length > 0
-              ? { qualityGate: { blocked: true, reasons: blockedReasons } }
-              : {}),
+            ...(blockedReasons.length > 0 ? { qualityGate: { blocked: true, reasons: blockedReasons } } : {}),
             llm: {
               provider: codexLlm.provider,
               status: "skipped",
@@ -399,9 +413,7 @@ const server = createServer(async (request, response) => {
         return json(response, 200, {
           ...sourced,
           ...(quality ? { quality } : {}),
-          ...(blockedReasons.length > 0
-            ? { qualityGate: { blocked: true, reasons: blockedReasons } }
-            : {}),
+          ...(blockedReasons.length > 0 ? { qualityGate: { blocked: true, reasons: blockedReasons } } : {}),
           llm: {
             provider: interpreted.provider,
             status: composed.status === "enhanced" ? "enhanced" : interpreted.status,
@@ -668,7 +680,16 @@ function html(response: import("node:http").ServerResponse, status: number, body
 function isOperationsAuthorized(request: import("node:http").IncomingMessage): boolean {
   if (env.nodeEnv !== "production") return true;
   const supplied = request.headers["x-admin-api-key"];
-  return Boolean(env.adminApiKey && supplied === env.adminApiKey);
+  if (env.adminApiKey && supplied === env.adminApiKey) return true;
+  const authorization = request.headers.authorization;
+  if (!env.adminApiKey || !authorization?.startsWith("Basic ")) return false;
+  try {
+    const decoded = Buffer.from(authorization.slice(6), "base64").toString("utf8");
+    const separator = decoded.indexOf(":");
+    return separator >= 0 && decoded.slice(separator + 1) === env.adminApiKey;
+  } catch {
+    return false;
+  }
 }
 
 function isLocalOperationsControlAuthorized(request: import("node:http").IncomingMessage): boolean {

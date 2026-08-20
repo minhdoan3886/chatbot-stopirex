@@ -128,15 +128,15 @@ function isTodayVn(dateStr){
 
 function render(data){
   allRecords=data.records??[];
-  const pending=allRecords.filter(r=>r.status==='pending').length;
-  const completed=allRecords.filter(r=>r.status==='completed').length;
-  const cancelled=allRecords.filter(r=>r.status==='cancelled').length;
-  const today=allRecords.filter(r=>isTodayVn(r.confirmedAt)).length;
+  const pending=data.pending??allRecords.filter(r=>r.status==='pending').length;
+  const completed=data.completed??allRecords.filter(r=>r.status==='completed').length;
+  const cancelled=data.cancelled??allRecords.filter(r=>r.status==='cancelled').length;
+  const today=data.today??allRecords.filter(r=>isTodayVn(r.confirmedAt)).length;
   document.getElementById('kpiPending').textContent=pending;
   document.getElementById('kpiCompleted').textContent=completed;
   document.getElementById('kpiCancelled').textContent=cancelled;
   document.getElementById('kpiToday').textContent=today;
-  document.getElementById('kpiTodayDetail').textContent='Tổng '+allRecords.length+' đơn';
+  document.getElementById('kpiTodayDetail').textContent='Tổng '+(data.total??allRecords.length)+' đơn';
   document.getElementById('freshness').textContent='Cập nhật '+new Intl.DateTimeFormat('vi-VN',{timeStyle:'medium'}).format(new Date());
   renderRows();
 }
@@ -153,8 +153,8 @@ function renderRows(){
   document.getElementById('orderRows').innerHTML=rows.length?rows.map(r=>{
     const id=esc(r.id);
     const actionCell=r.status==='pending'
-      ?'<button class="btn btn-complete" onclick=\'updateStatus("'+id+'","completed",this)\'>✓ Đã lên Sapo</button>'
-       +'<button class="btn btn-cancel" style="margin-top:4px" onclick=\'updateStatus("'+id+'","cancelled",this)\'>✕ Huỷ</button>'
+      ?'<button class="btn btn-complete" data-order-id="'+id+'" data-order-status="completed">✓ Đã lên Sapo</button>'
+       +'<button class="btn btn-cancel" style="margin-top:4px" data-order-id="'+id+'" data-order-status="cancelled">✕ Huỷ</button>'
       :r.note?'<span class="sub">'+esc(r.note)+'</span>':'';
     return '<tr id="row-'+esc(r.id)+'">'
       +'<td><span class="pill '+esc(r.status)+'">'+esc(statusLabel[r.status]??r.status)+'</span></td>'
@@ -167,6 +167,7 @@ function renderRows(){
       +'<td>'+actionCell+'</td>'
       +'</tr>';
   }).join(''):'<tr><td colspan="8" class="empty">Không có đơn nào phù hợp bộ lọc.</td></tr>';
+  document.querySelectorAll('[data-order-id][data-order-status]').forEach(btn=>btn.addEventListener('click',()=>updateStatus(btn.dataset.orderId,btn.dataset.orderStatus,btn)));
 }
 
 
@@ -184,6 +185,7 @@ async function updateStatus(id,status,btn){
     const idx=allRecords.findIndex(r=>r.id===id);
     if(idx>=0)allRecords[idx]=updated;
     renderRows();
+    await load();
   }catch(e){
     alert('Lỗi cập nhật: '+e.message);
     btn.disabled=false;

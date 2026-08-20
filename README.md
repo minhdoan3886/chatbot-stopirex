@@ -44,6 +44,9 @@ Chi tiết logic Pipeline và các nhánh xử lý: [docs/CUSTOMER_JOURNEY.md](d
 
 Thiết lập Facebook Messenger từng bước: [docs/META_MESSENGER_SETUP.md](docs/META_MESSENGER_SETUP.md).
 
+Cách dùng cùng một commit cho môi trường test và product, tách toàn bộ secret qua
+runtime env: [docs/DEPLOYMENT_CONFIG.md](docs/DEPLOYMENT_CONFIG.md).
+
 LLM mặc định chạy ở chế độ `hybrid`: ưu tiên OpenAI Responses API trực tiếp;
 nếu API hết credit, rate-limit, timeout hoặc lỗi nhà cung cấp thì tự chuyển sang
 Codex CLI local. Sau lỗi quota/xác thực, circuit breaker tạm bỏ qua OpenAI trong

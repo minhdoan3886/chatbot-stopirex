@@ -29,17 +29,21 @@ function fixture(options: {
   const sent: string[] = [];
   const processed: string[] = [];
   const runtimeUpdates: Array<Record<string, unknown>> = [];
-  const outbox = new Map<string, {
-    outboxId: string;
-    idempotencyKey: string;
-    recipientId: string;
-    texts: string[];
-    sentCount: number;
-    sourceEventIds: string[];
-    status: "pending" | "sent";
-    lastMessageId?: string;
-  }>();
+  const outbox = new Map<
+    string,
+    {
+      outboxId: string;
+      idempotencyKey: string;
+      recipientId: string;
+      texts: string[];
+      sentCount: number;
+      sourceEventIds: string[];
+      status: "pending" | "sent";
+      lastMessageId?: string;
+    }
+  >();
   const followupSchedules: Array<Record<string, unknown>> = [];
+  const inboxPushes: Array<Record<string, unknown>> = [];
   const followupCancellations: Array<Record<string, unknown>> = [];
   let newerInbound = options.newerInbound ?? false;
   let sendAttempts = 0;
@@ -137,6 +141,12 @@ function fixture(options: {
     liveSendEnabled: options.live,
     staffName: "Mai Lan",
     openingVariantId: "AUTO.dynamic",
+    orderInbox: {
+      async push(input) {
+        inboxPushes.push(input as unknown as Record<string, unknown>);
+        return input;
+      },
+    },
     ...(options.followups ? { followups } : {}),
   });
   return {
@@ -146,6 +156,7 @@ function fixture(options: {
     runtimeUpdates,
     followupSchedules,
     followupCancellations,
+    inboxPushes,
     setNewerInbound(value: boolean) {
       newerInbound = value;
     },
@@ -177,6 +188,27 @@ test("Meta inbound chỉ lưu dữ liệu khi công tắc gửi thật đang t�
   assert.deepEqual(result, { status: "ingested", replyCount: 0 });
   assert.deepEqual(context.sent, []);
   assert.deepEqual(context.processed, ["message-1"]);
+});
+
+test("Meta xác nhận đơn ghi vào inbox và không gửi mã demo", async () => {
+  const context = fixture({ live: true });
+  await context.processor.processBatch([job({ eventId: "order-1", text: "Giá bao nhiêu?" })]);
+  await context.processor.processBatch([job({ eventId: "order-2", text: "Mình lấy combo 2 lọ" })]);
+  await context.processor.processBatch([
+    job({
+      eventId: "order-3",
+      text: "Nguyễn Văn A, 0912345678, số 12 Đội Cấn, phường Đội Cấn, quận Ba Đình, Hà Nội",
+    }),
+  ]);
+  const confirmed = await context.processor.processBatch([job({ eventId: "order-4", text: "ĐỒNG Ý" })]);
+
+  assert.equal(confirmed.status, "replied");
+  assert.equal(context.inboxPushes.length, 1);
+  assert.equal(context.inboxPushes[0]?.sessionId, "page-1:customer-1");
+  assert.ok(context.inboxPushes[0]?.confirmedAt instanceof Date);
+  assert.equal((context.inboxPushes[0]?.draft as { phone?: string })?.phone, "0912345678");
+  assert.ok(context.sent.some((reply) => /đã ghi nhận thông tin đơn/iu.test(reply)));
+  assert.ok(context.sent.every((reply) => !/DEMO-|SPX-DEMO|đã lên đơn thành công/iu.test(reply)));
 });
 
 test("Meta inbound dùng brain để trả lời và lưu state khi đã bật gửi", async () => {
@@ -264,9 +296,7 @@ test("Meta brain chỉ nhận câu trả lời AI có citation thuộc knowledge
   assert.equal(llmCalls, 1);
   assert.match(response.reply, /lăn thường.*khử.*che mùi/isu);
   assert.ok(
-    response.state.decisionTrace?.knowledgeEntityIds.includes(
-      "product-comparison-traditional-rollon",
-    ),
+    response.state.decisionTrace?.knowledgeEntityIds.includes("product-comparison-traditional-rollon"),
   );
 });
 
@@ -398,10 +428,7 @@ test("câu chê giá và mua nhiều đi qua LLM, commerce guard chỉ kiểm so
 
   assert.equal(isFastTransition("Giá hơi cao nhỉ, bên khác bán rẻ hơn.", state), false);
   assert.equal(
-    isFastTransition(
-      "Mình lấy hẳn 3 lọ thì có bớt thêm đồng nào hay tặng kèm quà gì không?",
-      state,
-    ),
+    isFastTransition("Mình lấy hẳn 3 lọ thì có bớt thêm đồng nào hay tặng kèm quà gì không?", state),
     false,
   );
 });
@@ -411,10 +438,7 @@ test("mọi câu hỏi sản phẩm kể cả kích ứng hiện tại đi qua L
   const state = chat.peek("critical-fast-routes");
 
   assert.equal(
-    isFastTransition(
-      "Nó là thuốc chữa dứt điểm hay chỉ ngăn tạm thời? Ngừng bôi là mồ hôi lại ra à?",
-      state,
-    ),
+    isFastTransition("Nó là thuốc chữa dứt điểm hay chỉ ngăn tạm thời? Ngừng bôi là mồ hôi lại ra à?", state),
     false,
   );
   assert.equal(
@@ -424,10 +448,7 @@ test("mọi câu hỏi sản phẩm kể cả kích ứng hiện tại đi qua L
     ),
     false,
   );
-  assert.equal(
-    isFastTransition("Da đang đỏ rát nhưng nếu ổn thì lấy 1 lọ", state),
-    false,
-  );
+  assert.equal(isFastTransition("Da đang đỏ rát nhưng nếu ổn thì lấy 1 lọ", state), false);
 });
 
 test("xác nhận đã nhận giá rồi hỏi hiệu quả được xử lý nhanh theo ý sau từ nhưng", () => {
@@ -508,15 +529,13 @@ test("Meta brain dùng câu LLM grounded cho cách hỏi bôi mấy tháng là c
         knowledgeIds: ["usage-bottle-duration"],
         unsupportedQuestions: [],
         groundingConfidence: 0.98,
-        draftReply:
-          "Dạ một lọ Stopirex thường dùng khoảng 3–4 tháng khi mình lăn mỏng 2–3 lần/tuần ạ.",
+        draftReply: "Dạ một lọ Stopirex thường dùng khoảng 3–4 tháng khi mình lăn mỏng 2–3 lần/tuần ạ.",
         slots: {},
       });
     },
   });
   const brain = new MetaChatBrain(chat, llm);
-  const question =
-    "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?";
+  const question = "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?";
 
   const response = await brain.reply({ sessionId: "llm-first-bottle-duration", text: question });
 
@@ -592,25 +611,21 @@ test("Grounding guard bỏ nguồn gần nghĩa sai và dùng nguồn chính xá
         knowledgeIds: ["usage-exercise-sweat-washoff"],
         unsupportedQuestions: ["Shop có xuất hóa đơn VAT điện tử không?"],
         groundingConfidence: 0.9,
-        draftReply:
-          "Dạ tắm lại bằng xà phòng không làm mất tác dụng ạ. Phần VAT em cần nhân viên kiểm tra.",
+        draftReply: "Dạ tắm lại bằng xà phòng không làm mất tác dụng ạ. Phần VAT em cần nhân viên kiểm tra.",
         slots: {},
       }),
   });
   const brain = new MetaChatBrain(chat, llm);
   const response = await brain.reply({
     sessionId: "coverage-ungrounded-soap",
-    text:
-      "Mình muốn lấy 1 lọ. Bôi xong sáng hôm sau tắm lại bằng xà phòng có mất tác dụng không? Shop có xuất hóa đơn VAT điện tử không?",
+    text: "Mình muốn lấy 1 lọ. Bôi xong sáng hôm sau tắm lại bằng xà phòng có mất tác dụng không? Shop có xuất hóa đơn VAT điện tử không?",
   });
 
   assert.equal(response.state.selectedQuantity, 1);
   assert.equal(response.state.orderFlowStatus, "paused");
   assert.match(response.reply, /xà phòng bình thường.*không làm mất tác dụng/isu);
   assert.match(response.reply, /hóa đơn VAT.*chuyển.*bộ phận liên quan/isu);
-  assert.ok(
-    response.state.decisionTrace?.knowledgeEntityIds.includes("usage-morning-wash-with-soap"),
-  );
+  assert.ok(response.state.decisionTrace?.knowledgeEntityIds.includes("usage-morning-wash-with-soap"));
   assert.equal(
     response.state.decisionTrace?.knowledgeEntityIds.includes("usage-exercise-sweat-washoff"),
     false,

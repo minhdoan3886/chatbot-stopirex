@@ -5,6 +5,7 @@
 CREATE TABLE IF NOT EXISTS order_inbox (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id      TEXT NOT NULL,                  -- conversation session từ chatbot
+  idempotency_key TEXT NOT NULL,                  -- khóa retry của lượt xác nhận
   channel         TEXT NOT NULL DEFAULT 'meta',   -- kênh (meta, demo…)
 
   -- Thông tin khách hàng
@@ -32,3 +33,5 @@ CREATE TABLE IF NOT EXISTS order_inbox (
 CREATE INDEX IF NOT EXISTS order_inbox_status_idx       ON order_inbox (status, confirmed_at DESC);
 CREATE INDEX IF NOT EXISTS order_inbox_session_idx      ON order_inbox (session_id);
 CREATE INDEX IF NOT EXISTS order_inbox_created_at_idx   ON order_inbox (created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS order_inbox_idempotency_idx
+  ON order_inbox (session_id, idempotency_key);

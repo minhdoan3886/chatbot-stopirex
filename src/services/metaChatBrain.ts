@@ -70,10 +70,12 @@ export class MetaChatBrain {
     conversationId?: string;
     identity?: ConversationIdentity;
     openingVariantId?: OpeningVariantId;
+    orderConfirmationMode?: "sandbox" | "inbox";
   }): Promise<DemoChatResponse> {
     const context = {
       ...(input.identity ? { identity: input.identity } : {}),
       ...(input.openingVariantId ? { openingVariantId: input.openingVariantId } : {}),
+      ...(input.orderConfirmationMode ? { orderConfirmationMode: input.orderConfirmationMode } : {}),
     };
     const before = this.chat.peek(input.sessionId);
     const fastTransition = !this.llm.enabled || isFastTransition(input.text, before);
@@ -419,10 +421,7 @@ function assessQuestionCoverage(input: {
   // semantic classification, a deterministic response grounded in approved KB
   // may pass — but only when the actual reply covers every customer question.
   // This keeps timeout/multi-intent omissions fail-closed.
-  const coveredCount = Math.max(
-    Math.min(actionCoveredCount, responseCoveredCount),
-    groundedBaseCoveredCount,
-  );
+  const coveredCount = Math.max(Math.min(actionCoveredCount, responseCoveredCount), groundedBaseCoveredCount);
   const missingCount = Math.max(0, questionCount - coveredCount);
   return {
     complete: missingCount === 0,

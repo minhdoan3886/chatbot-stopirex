@@ -11,14 +11,16 @@ import type { DemoChatService } from "./demoChat.js";
 import { MetaChatBrain } from "./metaChatBrain.js";
 import type { StructuredLogger } from "./logger.js";
 import type { FollowupCycleSchedule } from "./followupRepository.js";
+import type { OrderDraft } from "../domain/orders.js";
+import type { PushOrderInboxInput } from "./orderInbox.js";
 
 export type FollowupCoordinator = {
-  cancelConversation(input: {
-    tenantId: string;
-    conversationId: string;
-    reason: string;
-  }): Promise<number>;
+  cancelConversation(input: { tenantId: string; conversationId: string; reason: string }): Promise<number>;
   scheduleCycle(input: FollowupCycleSchedule): Promise<{ cycleId: string; created: boolean }>;
+};
+
+export type OrderInboxWriter = {
+  push(input: PushOrderInboxInput): Promise<unknown>;
 };
 
 export type MetaInboundJob = {
@@ -60,6 +62,7 @@ export class MetaInboundProcessor {
       liveSendEnabled: boolean;
       staffName: string;
       openingVariantId: OpeningVariantId;
+      orderInbox?: OrderInboxWriter;
       followups?: FollowupCoordinator;
     },
   ) {}
@@ -73,9 +76,7 @@ export class MetaInboundProcessor {
     if (
       jobs.some(
         (job) =>
-          job.tenantId !== first.tenantId ||
-          job.pageId !== first.pageId ||
-          job.senderId !== first.senderId,
+          job.tenantId !== first.tenantId || job.pageId !== first.pageId || job.senderId !== first.senderId,
       )
     ) {
       throw new Error("meta_batch_scope_mismatch");
@@ -85,6 +86,7 @@ export class MetaInboundProcessor {
       pageId: first.pageId,
       externalCustomerId: first.senderId,
     });
+    const sessionId = `${first.pageId}:${first.senderId}`;
     const contentJobs = jobs.filter(
       (job) => job.kind === "text" || job.kind === "image" || job.kind === "postback",
     );
@@ -140,6 +142,10 @@ export class MetaInboundProcessor {
       let replyCount = 0;
       let lastMessageId = existingOutbound.lastMessageId;
       let suppressed = false;
+      await this.pushCreatedOrder({
+        sessionId,
+        state: conversation.runtimeState,
+      });
       if (existingOutbound.status !== "sent") {
         const dispatched = await this.dispatchOutbound(
           first,
@@ -198,12 +204,7 @@ export class MetaInboundProcessor {
       return { status: "paused", replyCount: dispatched.count };
     }
 
-    const sessionId = `${first.pageId}:${first.senderId}`;
-    this.options.chat.restoreSession(
-      sessionId,
-      conversation.runtimeState,
-      this.context(),
-    );
+    this.options.chat.restoreSession(sessionId, conversation.runtimeState, this.context());
     const text = batchMessages(
       contentJobs.map((job) => ({
         id: job.eventId,
@@ -259,16 +260,17 @@ export class MetaInboundProcessor {
         texts: result.replies.slice(0, 2),
       },
     });
+    await this.pushCreatedOrder({
+      sessionId,
+      state: result.state,
+    });
     const dispatched = await this.dispatchOutbound(
       first,
       conversation,
       committed.outbound,
       committed.stateVersion,
     );
-    if (
-      dispatched.lastMessageId &&
-      isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)
-    ) {
+    if (dispatched.lastMessageId && isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)) {
       await this.scheduleFollowup({
         tenantId: first.tenantId,
         pageId: first.pageId,
@@ -286,6 +288,7 @@ export class MetaInboundProcessor {
   private context(): {
     identity: { salutation: "anh/chị"; staffFirstName: string };
     openingVariantId: OpeningVariantId;
+    orderConfirmationMode: "inbox";
   } {
     return {
       identity: {
@@ -293,7 +296,31 @@ export class MetaInboundProcessor {
         staffFirstName: this.options.staffName,
       },
       openingVariantId: this.options.openingVariantId,
+      orderConfirmationMode: "inbox",
     };
+  }
+
+  private async pushCreatedOrder(input: { sessionId: string; state: unknown }): Promise<void> {
+    if (!this.options.orderInbox || !input.state || typeof input.state !== "object") return;
+    const state = input.state as {
+      pipeline?: string;
+      orderFlowStatus?: string;
+      orderDraft?: OrderDraft;
+      order?: OrderDraft;
+    };
+    const draft = state.orderDraft ?? state.order;
+    const created = state.orderFlowStatus === "created" || state.pipeline === "6.Đã tạo đơn";
+    if (!created || !draft?.customerConfirmedAt) return;
+    const confirmedAt =
+      draft.customerConfirmedAt instanceof Date
+        ? draft.customerConfirmedAt
+        : new Date(draft.customerConfirmedAt);
+    await this.options.orderInbox.push({
+      sessionId: input.sessionId,
+      channel: "meta",
+      draft,
+      confirmedAt,
+    });
   }
 
   private async dispatchOutbound(
@@ -362,19 +389,21 @@ export class MetaInboundProcessor {
     };
   }
 
-  private async scheduleFollowup(
-    input: Omit<FollowupCycleSchedule, "anchorSentAt">,
-  ): Promise<void> {
+  private async scheduleFollowup(input: Omit<FollowupCycleSchedule, "anchorSentAt">): Promise<void> {
     if (!this.options.followups) return;
     const scheduled = await this.options.followups.scheduleCycle({
       ...input,
       anchorSentAt: new Date(),
     });
-    this.options.logger.log("info", scheduled.created ? "followup_cycle_scheduled" : "followup_cycle_exists", {
-      conversationId: input.conversationId,
-      cycleId: scheduled.cycleId,
-      anchorOutboundMessageId: input.anchorOutboundMessageId,
-    });
+    this.options.logger.log(
+      "info",
+      scheduled.created ? "followup_cycle_scheduled" : "followup_cycle_exists",
+      {
+        conversationId: input.conversationId,
+        cycleId: scheduled.cycleId,
+        anchorOutboundMessageId: input.anchorOutboundMessageId,
+      },
+    );
   }
 
   private async markProcessed(jobs: readonly MetaInboundJob[]): Promise<void> {

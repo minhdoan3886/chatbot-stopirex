@@ -6,6 +6,7 @@ export type OrderInboxStatus = "pending" | "completed" | "cancelled";
 export type OrderInboxRecord = {
   id: string;
   sessionId: string;
+  idempotencyKey: string;
   channel: string;
   recipientName?: string;
   phone?: string;
@@ -27,11 +28,15 @@ export type PushOrderInboxInput = {
   channel?: string;
   draft: OrderDraft;
   confirmedAt: Date;
+  idempotencyKey?: string;
 };
 
 export type OrderInboxListResult = {
   total: number;
   pending: number;
+  completed: number;
+  cancelled: number;
+  today: number;
   records: OrderInboxRecord[];
 };
 
@@ -40,19 +45,27 @@ export class OrderInboxService {
 
   /**
    * Ghi đơn mới vào inbox sau khi khách xác nhận ĐỒNG Ý.
-   * Idempotent: nếu session đã có đơn pending thì upsert thay vì tạo mới.
+   * Idempotent theo phiên và thời điểm xác nhận để retry không tạo bản ghi trùng.
    */
   async push(input: PushOrderInboxInput): Promise<OrderInboxRecord> {
-    const { sessionId, channel = "meta", draft, confirmedAt } = input;
+    const {
+      sessionId,
+      channel = "meta",
+      draft,
+      confirmedAt,
+      idempotencyKey = `${sessionId}:${confirmedAt.toISOString()}`,
+    } = input;
     const result = await this.pool.query<OrderInboxRecord>(
       `INSERT INTO order_inbox
-        (session_id, channel, recipient_name, phone, legacy_address, delivery_note,
+        (session_id, idempotency_key, channel, recipient_name, phone, legacy_address, delivery_note,
          sku, quantity, total_vnd, payment_method, confirmed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       ON CONFLICT DO NOTHING
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ON CONFLICT (session_id, idempotency_key)
+       DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
        RETURNING
          id,
          session_id       AS "sessionId",
+         idempotency_key  AS "idempotencyKey",
          channel,
          recipient_name   AS "recipientName",
          phone,
@@ -69,6 +82,7 @@ export class OrderInboxService {
          updated_at       AS "updatedAt"`,
       [
         sessionId,
+        idempotencyKey,
         channel,
         draft.recipientName ?? null,
         draft.phone ?? null,
@@ -82,36 +96,9 @@ export class OrderInboxService {
       ],
     );
 
-    // Nếu ON CONFLICT bắn ra thì lấy bản ghi hiện tại
-    if (result.rows.length === 0) {
-      const existing = await this.pool.query<OrderInboxRecord>(
-        `SELECT
-           id,
-           session_id     AS "sessionId",
-           channel,
-           recipient_name AS "recipientName",
-           phone,
-           legacy_address AS "legacyAddress",
-           delivery_note  AS "deliveryNote",
-           sku,
-           quantity,
-           total_vnd      AS "totalVnd",
-           payment_method AS "paymentMethod",
-           status,
-           note,
-           confirmed_at   AS "confirmedAt",
-           created_at     AS "createdAt",
-           updated_at     AS "updatedAt"
-         FROM order_inbox
-         WHERE session_id = $1
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [sessionId],
-      );
-      return existing.rows[0]!;
-    }
-
-    return result.rows[0]!;
+    const record = result.rows[0];
+    if (!record) throw new Error("order_inbox_upsert_returned_no_record");
+    return record;
   }
 
   /**
@@ -123,16 +110,29 @@ export class OrderInboxService {
     const params: string[] = filter?.status ? [filter.status] : [];
 
     const [countResult, recordsResult] = await Promise.all([
-      this.pool.query<{ total: string; pending: string }>(
+      this.pool.query<{
+        total: string;
+        pending: string;
+        completed: string;
+        cancelled: string;
+        today: string;
+      }>(
         `SELECT
-           COUNT(*)                                    AS total,
-           COUNT(*) FILTER (WHERE status = 'pending') AS pending
+           COUNT(*)                                       AS total,
+           COUNT(*) FILTER (WHERE status = 'pending')    AS pending,
+           COUNT(*) FILTER (WHERE status = 'completed')  AS completed,
+           COUNT(*) FILTER (WHERE status = 'cancelled')  AS cancelled,
+           COUNT(*) FILTER (
+             WHERE confirmed_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh'
+               AND confirmed_at < (date_trunc('day', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '1 day') AT TIME ZONE 'Asia/Ho_Chi_Minh'
+           ) AS today
          FROM order_inbox`,
       ),
       this.pool.query<OrderInboxRecord>(
         `SELECT
            id,
            session_id     AS "sessionId",
+           idempotency_key AS "idempotencyKey",
            channel,
            recipient_name AS "recipientName",
            phone,
@@ -161,6 +161,9 @@ export class OrderInboxService {
     return {
       total: Number(totals.total),
       pending: Number(totals.pending),
+      completed: Number(totals.completed),
+      cancelled: Number(totals.cancelled),
+      today: Number(totals.today),
       records: recordsResult.rows,
     };
   }
@@ -183,6 +186,7 @@ export class OrderInboxService {
        RETURNING
          id,
          session_id     AS "sessionId",
+         idempotency_key AS "idempotencyKey",
          channel,
          recipient_name AS "recipientName",
          phone,

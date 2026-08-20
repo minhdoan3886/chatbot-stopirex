@@ -1,10 +1,17 @@
 services:
+  migration:
+    build: .
+    command: ["npm", "run", "migrate:prod"]
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
   api:
     build: .
     env_file: .env
     ports: ["8080:8080"]
     depends_on:
-      postgres: { condition: service_healthy }
+      migration: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     restart: unless-stopped
   worker:
@@ -12,7 +19,7 @@ services:
     command: ["node", "dist/src/worker.js"]
     env_file: .env
     depends_on:
-      postgres: { condition: service_healthy }
+      migration: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     restart: unless-stopped
   followup-worker:
@@ -20,10 +27,13 @@ services:
     command: ["node", "dist/src/followupWorker.js"]
     env_file: .env
     depends_on:
-      postgres: { condition: service_healthy }
+      migration: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     restart: unless-stopped
   postgres:
     extends: { file: docker-compose.yml, service: postgres }
   redis:
     extends: { file: docker-compose.yml, service: redis }
+
+volumes:
+  stopirex_pg:

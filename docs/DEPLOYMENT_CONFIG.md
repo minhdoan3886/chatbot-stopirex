@@ -65,7 +65,7 @@ Nếu dùng resource kiểu Dockerfile đơn lẻ, cấu hình:
 
 - Branch: `staging`
 - Dockerfile: `/Dockerfile`
-- Port: `8080`
+- Internal port: `8080` (không publish host port; để Traefik/Coolify proxy)
 - Health path: `/ready`
 - Start command: để trống để dùng `CMD` trong Dockerfile
 

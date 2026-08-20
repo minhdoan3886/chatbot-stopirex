@@ -726,10 +726,12 @@ async function stopMatchingProcesses(marker: string): Promise<void> {
 }
 
 async function listProcesses(): Promise<Array<{ pid: number; command: string }>> {
-  const output = await new Promise<string>((resolve, reject) => {
-    execFile("ps", ["-axo", "pid=,command="], { maxBuffer: 2_000_000 }, (error, stdout) => {
-      if (error) reject(error);
-      else resolve(stdout);
+  const output = await new Promise<string>((resolve) => {
+    execFile("ps", ["-o", "pid,args"], { maxBuffer: 2_000_000 }, (err, stdout) => {
+      if (!err && stdout) return resolve(stdout);
+      execFile("ps", ["-axo", "pid=,command="], { maxBuffer: 2_000_000 }, (error, out) => {
+        resolve(out || "");
+      });
     });
   });
   return output

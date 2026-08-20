@@ -52,6 +52,25 @@ khởi động. Migration có bảng `schema_migrations` nên những file đã 
 bỏ qua. Runtime image chứa bản JavaScript đã build và thư mục migrations, vì vậy
 không cần service migration riêng hoặc dev dependency `tsx` trên máy product.
 
+## Coolify
+
+Khuyến nghị dùng resource kiểu Docker Compose với file
+`docker-compose.staging.yml`, branch `staging`, và để Coolify dùng nguyên các
+service `api`, `worker`, `followup-worker`, `postgres`, `redis`. Không thêm lại
+service migration hoặc `service_completed_successfully`.
+
+Nếu dùng resource kiểu Dockerfile đơn lẻ, cấu hình:
+
+- Branch: `staging`
+- Dockerfile: `/Dockerfile`
+- Port: `8080`
+- Health path: `/ready`
+- Start command: để trống để dùng `CMD` trong Dockerfile
+
+Resource Dockerfile đơn chỉ chạy API. Muốn chạy xử lý Messenger đầy đủ, tạo thêm
+resource worker với command `node dist/src/worker.js` và resource follow-up với
+command `node dist/src/followupWorker.js`, dùng cùng image/commit và cùng env.
+
 Triển khai lần đầu nên giữ `META_LIVE_SEND_ENABLED=false`,
 `MULTI_ACTION_ROLLOUT_MODE=shadow` và `FOLLOWUP_MODE=shadow`. Sau khi kiểm tra
 log/health và có phê duyệt mới bật từng tính năng, rồi restart API, worker và

@@ -672,10 +672,21 @@ function isOperationsAuthorized(request: import("node:http").IncomingMessage): b
 }
 
 function isLocalOperationsControlAuthorized(request: import("node:http").IncomingMessage): boolean {
-  if (env.nodeEnv === "production") return false;
+  if (env.nodeEnv === "production" && !isOperationsAuthorized(request)) return false;
   const address = request.socket.remoteAddress ?? "";
-  const loopback = address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
-  if (!loopback) return false;
+  const isPrivateOrLocal =
+    address === "127.0.0.1" ||
+    address === "::1" ||
+    address === "::ffff:127.0.0.1" ||
+    address.startsWith("172.") ||
+    address.startsWith("10.") ||
+    address.startsWith("192.168.") ||
+    address.startsWith("100.") ||
+    address.startsWith("::ffff:172.") ||
+    address.startsWith("::ffff:10.") ||
+    address.startsWith("::ffff:192.168.") ||
+    address.startsWith("::ffff:100.");
+  if (!isPrivateOrLocal) return false;
   const origin = request.headers.origin;
   if (!origin) return true;
   try {

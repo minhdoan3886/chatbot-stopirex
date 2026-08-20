@@ -56,8 +56,10 @@ không cần service migration riêng hoặc dev dependency `tsx` trên máy pro
 
 Khuyến nghị dùng resource kiểu Docker Compose với file
 `docker-compose.staging.yml`, branch `staging`, và để Coolify dùng nguyên các
-service `api`, `worker`, `followup-worker`, `postgres`, `redis`. Không thêm lại
-service migration hoặc `service_completed_successfully`.
+service `api`, `worker`, `followup-worker`, `postgres`, `redis`. Compose này tự
+chứa, không dùng `extends` và không đọc `env_file: .env`; hãy nhập biến môi trường
+trong phần Environment Variables của Coolify. Không thêm lại service migration
+hoặc `service_completed_successfully`.
 
 Nếu dùng resource kiểu Dockerfile đơn lẻ, cấu hình:
 

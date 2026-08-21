@@ -36,6 +36,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-hybrid}
       LLM_ENABLED: ${LLM_ENABLED:-true}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
       LLM_PROMPT_PROFILE: ${LLM_PROMPT_PROFILE:-legacy}
       OPENAI_TIMEOUT_MS: ${OPENAI_TIMEOUT_MS:-30000}

@@ -227,6 +227,65 @@ test("cấu hình hybrid cho phép tách timeout OpenAI và Codex dự phòng", 
   assert.equal(bridge.model, "gpt-5-mini → gpt-codex-test");
 });
 
+test("OpenAI-compatible runner gửi Responses request tới OPENAI_BASE_URL", async () => {
+  let requestPath = "";
+  let authorization = "";
+  const bridge = new CodexLlmBridge({
+    enabled: true,
+    provider: "openai",
+    apiKey: "ak-test-not-a-real-key",
+    baseURL: "https://agentrouter.example/v1/",
+    model: "router-test",
+    timeoutMs: 30_000,
+    maxOutputTokens: 1_200,
+    async fetch(input, init) {
+      const request = input instanceof Request ? input : new Request(input, init);
+      requestPath = new URL(request.url).pathname;
+      authorization = request.headers.get("authorization") ?? "";
+      return Response.json({
+        id: "resp_agentrouter_test",
+        object: "response",
+        created_at: Math.floor(Date.now() / 1_000),
+        status: "completed",
+        model: "router-test",
+        output_text: JSON.stringify({ intent: "other", slots: {} }),
+        output: [
+          {
+            id: "msg_agentrouter_test",
+            type: "message",
+            status: "completed",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({ intent: "other", slots: {} }),
+                annotations: [],
+              },
+            ],
+          },
+        ],
+        usage: {
+          input_tokens: 10,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: 5,
+          output_tokens_details: { reasoning_tokens: 0 },
+          total_tokens: 15,
+        },
+      });
+    },
+  });
+
+  const result = await bridge.interpret({
+    customerMessage: "Xin chào",
+    state,
+  });
+
+  assert.equal(result.status, "interpreted");
+  assert.equal(result.intent, "other");
+  assert.equal(requestPath, "/v1/responses");
+  assert.equal(authorization, "Bearer ak-test-not-a-real-key");
+});
+
 test("prompt compact là profile riêng và production vẫn mặc định legacy", () => {
   const production = CodexLlmBridge.fromEnvironment({
     LLM_PROVIDER: "codex",

@@ -161,6 +161,7 @@ type CodexLlmOptions = {
   enabled: boolean;
   provider?: LlmProviderMode;
   apiKey?: string;
+  baseURL?: string;
   organization?: string;
   project?: string;
   executable?: string;
@@ -170,6 +171,7 @@ type CodexLlmOptions = {
   maxOutputTokens?: number;
   runner?: CodexRunner;
   fallbackRunner?: CodexRunner;
+  fetch?: typeof fetch;
   telemetry?: LlmTelemetrySink;
   fallbackModel?: string;
   cooldownMs?: number;
@@ -239,9 +241,11 @@ export class CodexLlmBridge {
               (apiKey
                 ? createOpenAiRunner({
                     apiKey,
+                    ...(options.baseURL?.trim() ? { baseURL: options.baseURL.trim() } : {}),
                     model: options.model?.trim() || "gpt-5.4-nano",
                     timeoutMs: options.timeoutMs ?? 30_000,
                     maxOutputTokens: options.maxOutputTokens ?? 1_200,
+                    ...(options.fetch ? { fetch: options.fetch } : {}),
                     ...(options.organization?.trim() ? { organization: options.organization.trim() } : {}),
                     ...(options.project?.trim() ? { project: options.project.trim() } : {}),
                   })
@@ -270,9 +274,11 @@ export class CodexLlmBridge {
             : this.provider === "openai"
               ? createOpenAiRunner({
                   apiKey: apiKey!,
+                  ...(options.baseURL?.trim() ? { baseURL: options.baseURL.trim() } : {}),
                   model: this.model,
                   timeoutMs: options.timeoutMs ?? 30_000,
                   maxOutputTokens: options.maxOutputTokens ?? 1_200,
+                  ...(options.fetch ? { fetch: options.fetch } : {}),
                   ...(options.organization?.trim() ? { organization: options.organization.trim() } : {}),
                   ...(options.project?.trim() ? { project: options.project.trim() } : {}),
                 })
@@ -310,6 +316,7 @@ export class CodexLlmBridge {
       ...(provider === "hybrid"
         ? {
             ...(apiKey ? { apiKey } : {}),
+            ...(source.OPENAI_BASE_URL?.trim() ? { baseURL: source.OPENAI_BASE_URL.trim() } : {}),
             model: source.OPENAI_MODEL?.trim() || "gpt-5.4-nano",
             fallbackModel: source.CODEX_LLM_MODEL?.trim() || "Codex CLI default",
             ...(source.CODEX_CLI_PATH ? { executable: source.CODEX_CLI_PATH } : {}),
@@ -339,6 +346,7 @@ export class CodexLlmBridge {
         : provider === "openai"
           ? {
               ...(apiKey ? { apiKey } : {}),
+              ...(source.OPENAI_BASE_URL?.trim() ? { baseURL: source.OPENAI_BASE_URL.trim() } : {}),
               model: source.OPENAI_MODEL?.trim() || "gpt-5.4-nano",
               timeoutMs: source.OPENAI_TIMEOUT_MS
                 ? positiveInteger(source.OPENAI_TIMEOUT_MS, "OPENAI_TIMEOUT_MS")
@@ -915,16 +923,20 @@ class HybridLlmError extends Error {
 
 function createOpenAiRunner(input: {
   apiKey: string;
+  baseURL?: string;
   model: string;
   timeoutMs: number;
   maxOutputTokens: number;
+  fetch?: typeof fetch;
   organization?: string;
   project?: string;
 }): CodexRunner {
   const client = new OpenAI({
     apiKey: input.apiKey,
+    ...(input.baseURL ? { baseURL: input.baseURL.replace(/\/+$/u, "") } : {}),
     timeout: input.timeoutMs,
     maxRetries: 1,
+    ...(input.fetch ? { fetch: input.fetch } : {}),
     ...(input.organization ? { organization: input.organization } : {}),
     ...(input.project ? { project: input.project } : {}),
   });

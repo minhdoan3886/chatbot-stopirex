@@ -603,7 +603,7 @@ async function probePublicWebhook(url: string): Promise<{ ok: boolean; latencyMs
     };
   } catch {
     const target = new URL(url);
-    if (target.hostname.endsWith(".trycloudflare.com")) {
+    if (requiresPublicDnsProbe(target.hostname)) {
       const ok = await probePublicWebhookWithPublicDns(target);
       return {
         ok,
@@ -615,6 +615,10 @@ async function probePublicWebhook(url: string): Promise<{ ok: boolean; latencyMs
       latencyMs: Math.round(performance.now() - startedAt),
     };
   }
+}
+
+function requiresPublicDnsProbe(hostname: string): boolean {
+  return hostname.endsWith(".trycloudflare.com") || hostname.endsWith(".ts.net");
 }
 
 async function probePublicWebhookWithPublicDns(target: URL): Promise<boolean> {

@@ -17,6 +17,7 @@ test("nút vận hành restart gateway và worker rồi kiểm tra các kết n�
     }),
     source: {
       OPENAI_API_KEY: "openai-key",
+      OPENAI_BASE_URL: "https://agentrouter.example/v1/",
       OPENAI_MODEL: "gpt-test",
       CODEX_LLM_ENABLED: "true",
       CODEX_CLI_PATH: "/usr/local/bin/codex",
@@ -66,7 +67,10 @@ test("nút vận hành restart gateway và worker rồi kiểm tra các kết n�
         }
         return Response.json({ id: "page-id", name: "Yến Nhi thích skincare" });
       }
-      if (url.hostname === "api.openai.com") return Response.json({ id: "gpt-test" });
+      if (url.hostname === "agentrouter.example") {
+        assert.equal(url.pathname, "/v1/models/gpt-test");
+        return Response.json({ id: "gpt-test" });
+      }
       return new Response("", { status: 404 });
     },
     now: () => startedAt,

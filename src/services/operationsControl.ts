@@ -516,10 +516,14 @@ export class OperationsControlService {
     const started = performance.now();
     const apiKey = this.source.OPENAI_API_KEY?.trim();
     const model = this.source.OPENAI_MODEL?.trim() || "gpt-5.4-nano";
+    const baseUrl = (this.source.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(
+      /\/+$/u,
+      "",
+    );
     if (!apiKey) return skippedStep("openai-llm", "OpenAI Responses API", "Chưa cấu hình API key", started);
     try {
       const response = await this.fetcher(
-        `https://api.openai.com/v1/models/${encodeURIComponent(model)}`,
+        `${baseUrl}/models/${encodeURIComponent(model)}`,
         {
           headers: { authorization: `Bearer ${apiKey}` },
           signal: AbortSignal.timeout(8_000),

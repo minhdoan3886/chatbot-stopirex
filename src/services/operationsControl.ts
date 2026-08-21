@@ -436,8 +436,8 @@ export class OperationsControlService {
       const response = await this.fetcher(target, { signal: AbortSignal.timeout(8_000) });
       return response.ok && (await response.text()) === challenge;
     } catch {
-      if (this.dependencies.fetch || !target.hostname.endsWith(".trycloudflare.com")) return false;
-      return probeTryCloudflareWithPublicDns(target, challenge);
+      if (this.dependencies.fetch || !requiresPublicDnsProbe(target.hostname)) return false;
+      return probeWebhookWithPublicDns(target, challenge);
     }
   }
 
@@ -574,7 +574,11 @@ export class OperationsControlService {
   }
 }
 
-async function probeTryCloudflareWithPublicDns(
+function requiresPublicDnsProbe(hostname: string): boolean {
+  return hostname.endsWith(".trycloudflare.com") || hostname.endsWith(".ts.net");
+}
+
+async function probeWebhookWithPublicDns(
   target: URL,
   expectedChallenge: string,
 ): Promise<boolean> {

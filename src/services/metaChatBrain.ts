@@ -593,8 +593,8 @@ function contextualKnowledgeQuery(customerMessage: string, state: DemoChatState)
     .replace(/đ/gu, "d")
     .trim();
   const needsPriorContext =
-    customerMessage.trim().length < 55 ||
-    /^(?:the|vay|con|loai nay|cai nay|no|nhu tren|nhu vay)\b/.test(normalized);
+    /^(?:the|vay|con|loai nay|cai nay|no|nhu tren|nhu vay)\b/.test(normalized) ||
+    /^(?:da )?(?:ok|okay|oke|uh|u|duoc|dc|co|khong|ko|k|vang)(?: a| nhe)?$/.test(normalized);
   if (!needsPriorContext) return customerMessage;
   const priorCustomerTurns = state.recentTurns
     .filter((turn) => turn.role === "user")

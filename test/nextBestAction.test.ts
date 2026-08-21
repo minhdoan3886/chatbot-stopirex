@@ -55,6 +55,21 @@ test("đang thu đơn hoặc handoff tuyệt đối không khai thác bán hàng
   assert.equal(handoff.key, "care_or_handoff");
 });
 
+test("đã trả lời mẹ bầu thì không nối thêm câu khai thác bán hàng", () => {
+  const planned = planNextBestAction({
+    ...base,
+    customerMessage: "mẹ bầu dùng được k e",
+    replies: ["Dạ phụ nữ đang mang thai nên tham khảo ý kiến bác sĩ trước khi dùng Stopirex ạ."],
+    intent: "safety",
+    topic: "pregnancy",
+    knowledgeEntityIds: ["audience-pregnancy"],
+  });
+
+  assert.equal(planned.type, "close_without_question");
+  assert.equal(planned.key, "special_population_safety_answered");
+  assert.equal(planned.prompt, undefined);
+});
+
 test("tích hợp: trả lời trước rồi chủ động hỏi, nhưng không lặp câu đã hỏi", () => {
   const chat = new DemoChatService();
   const sessionId = "next-best-action-integration";

@@ -1,4 +1,4 @@
-import type { CustomerIntent, ConsultationSlots } from "./consultation.js";
+import type { CustomerIntent, ConsultationSlots, SemanticTopic } from "./consultation.js";
 import type { PipelineTag } from "./pipeline.js";
 import type { ConversationTopic } from "./responseGovernor.js";
 
@@ -35,6 +35,8 @@ export type NextBestActionInput = {
   customerMessage: string;
   replies: readonly string[];
   intent?: CustomerIntent;
+  topic?: SemanticTopic;
+  knowledgeEntityIds?: readonly string[];
   pipeline: PipelineTag;
   slots: ConsultationSlots;
   answeredTopics: readonly ConversationTopic[];
@@ -94,6 +96,18 @@ export function planNextBestAction(input: NextBestActionInput): PlannedNextBestA
   }
   if (!input.intent || !DISCOVERY_INTENTS.has(input.intent)) {
     return close("intent_not_discovery", "Intent hiện tại không phù hợp để hỏi khai thác.");
+  }
+  if (
+    input.intent === "safety" &&
+    (input.topic === "pregnancy" ||
+      input.topic === "breastfeeding" ||
+      input.knowledgeEntityIds?.includes("audience-pregnancy") ||
+      input.knowledgeEntityIds?.includes("audience-breastfeeding"))
+  ) {
+    return close(
+      "special_population_safety_answered",
+      "Đã trả lời đủ câu hỏi an toàn cho đối tượng đặc biệt; không nối câu khai thác bán hàng.",
+    );
   }
   if (reply.length > 285 || containsDeferral(reply)) {
     return close(

@@ -2303,6 +2303,10 @@ export class DemoChatService {
       customerMessage,
       replies: rawReplies,
       ...(session.lastIntent ? { intent: session.lastIntent } : {}),
+      ...(session.lastDecision?.semantic.topic
+        ? { topic: session.lastDecision.semantic.topic }
+        : {}),
+      knowledgeEntityIds: session.lastDecision?.knowledgeEntityIds ?? [],
       pipeline: session.pipeline,
       slots: session.consultation.slots,
       answeredTopics: session.answeredTopics,
@@ -4050,6 +4054,9 @@ function isKnowledgeFullyCoveredQuestion(text: string, semantic: SemanticUnderst
   }
   if (/\b(?:cho con bu|dang cho bu|me bim sua|me sua)\b/.test(text)) {
     return cited.has("audience-breastfeeding");
+  }
+  if (semantic.topic === "pregnancy") {
+    return cited.has("audience-pregnancy");
   }
   if (/\b(?:da nhay cam|nhay cam)\b/.test(text)) {
     return cited.has("audience-sensitive-skin") || cited.has("lab-test-2025-skin-irritation");

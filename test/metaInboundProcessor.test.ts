@@ -270,6 +270,64 @@ test("Meta brain chỉ nhận câu trả lời AI có citation thuộc knowledge
   );
 });
 
+test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người khi Knowledge đã trả lời đủ", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "pregnancy-after-price";
+  chat.chat(sessionId, "Giá");
+  chat.chat(sessionId, "ok");
+
+  let receivedPregnancyKnowledge = false;
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      receivedPregnancyKnowledge = prompt.includes("audience-pregnancy");
+      return JSON.stringify({
+        summary: "Khách hỏi phụ nữ mang thai có dùng được Stopirex không",
+        skill: "safety-first",
+        intent: "safety",
+        topic: "pregnancy",
+        subject: "customer",
+        scenario: "actual",
+        asksDirectAnswer: true,
+        confidence: 0.92,
+        needsClarification: false,
+        evidence: ["mẹ bầu dùng được k e"],
+        actions: [
+          {
+            type: "answer_question",
+            topic: "pregnancy",
+            confidence: 0.92,
+            evidence: ["mẹ bầu dùng được k e"],
+          },
+          {
+            type: "handoff_to_human",
+            reason: "Chưa có thông tin xác nhận",
+            confidence: 0.8,
+            evidence: ["mẹ bầu dùng được k e"],
+          },
+        ],
+        uncertainties: ["Chưa có thông tin xác nhận"],
+        knowledgeIds: ["audience-pregnancy"],
+        unsupportedQuestions: ["mẹ bầu dùng được k e"],
+        groundingConfidence: 0.92,
+        draftReply:
+          "Dạ phụ nữ đang mang thai nên tham khảo ý kiến bác sĩ trước khi dùng Stopirex ạ.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({ sessionId, text: "mẹ bầu dùng được k e" });
+
+  assert.equal(receivedPregnancyKnowledge, true);
+  assert.equal(response.replies.length, 1, JSON.stringify(response.replies));
+  assert.match(response.reply, /mang thai.*tham khảo ý kiến bác sĩ/isu);
+  assert.doesNotMatch(response.reply, /chưa có thông tin|chuyển bộ phận liên quan/iu);
+  assert.equal(response.state.botPaused, false);
+  assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
+});
+
 test("outbox tiếp tục gửi kế hoạch đã commit khi Meta lỗi tạm thời, không chạy brain lần hai", async () => {
   const context = fixture({ live: true, failFirstSend: true });
   await assert.rejects(

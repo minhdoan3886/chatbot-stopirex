@@ -312,6 +312,7 @@ const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
   price: ["gia", "bao nhieu tien", "bao gia", "chi phi"],
   promotion: ["uu dai", "khuyen mai", "giam gia", "bot them", "bot dong", "tang kem", "qua tang"],
   shipping: ["phi giao", "phi ship", "freeship", "mien phi giao", "bao ship"],
+  pregnancy: ["me bau", "ba bau", "mang thai", "co bau", "phu nu co thai"],
   usage: ["cach dung", "huong dan", "boi", "lan", "su dung"],
   duration: ["dung duoc bao lau", "dung may thang", "mot lo", "thoi gian su dung"],
   sweat: ["mo hoi", "uot ao", "uot sung", "tiet mo hoi", "kho thoang"],

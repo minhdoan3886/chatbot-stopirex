@@ -108,10 +108,11 @@ export class MetaChatBrain {
         : [];
       const withoutRawCitations = { ...rawLlmResult };
       delete withoutRawCitations.knowledgeIds;
-      const llmResult =
+      const groundedLlmResult =
         validCitations.length > 0
           ? { ...rawLlmResult, knowledgeIds: validCitations }
           : repairMissingKnowledgeCitations(withoutRawCitations, citationCandidates);
+      const llmResult = reconcileKnowledgeBackedPopulationSafety(groundedLlmResult);
       interpreted = llmResult;
       interpretationStatus = llmResult.status;
       interpretationReason = llmResult.reason;
@@ -333,6 +334,44 @@ export class MetaChatBrain {
       state,
     };
   }
+}
+
+function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstanding>(semantic: T): T {
+  if (
+    semantic.intent !== "safety" ||
+    (semantic.groundingConfidence ?? 0) < 0.8 ||
+    !semantic.actions?.some((action) => action.type === "answer_question") ||
+    semantic.actions.some(
+      (action) => action.type !== "answer_question" && action.type !== "handoff_to_human",
+    )
+  ) {
+    return semantic;
+  }
+
+  const citedPopulationTopics = [
+    ["audience-pregnancy", "pregnancy"],
+    ["audience-breastfeeding", "breastfeeding"],
+  ] as const;
+  const supported = citedPopulationTopics.filter(([knowledgeId]) =>
+    semantic.knowledgeIds?.includes(knowledgeId),
+  );
+  if (supported.length !== 1) return semantic;
+
+  const topic = supported[0]?.[1];
+  if (!topic) return semantic;
+  return {
+    ...semantic,
+    topic,
+    subject: "customer",
+    actions: semantic.actions
+      .filter((action) => action.type !== "handoff_to_human")
+      .map((action) =>
+        action.type === "answer_question"
+          ? { ...action, topic }
+          : action,
+      ),
+    unsupportedQuestions: [],
+  } as T;
 }
 
 type QuestionCoverageAssessment = {

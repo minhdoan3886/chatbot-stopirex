@@ -285,7 +285,9 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
         summary: "Khách hỏi phụ nữ mang thai có dùng được Stopirex không",
         skill: "safety-first",
         intent: "safety",
-        topic: "pregnancy",
+        // Reproduce the production Mini mistake: the citation and draft are
+        // pregnancy-grounded, but the structured topic/action are child_age.
+        topic: "child_age",
         subject: "customer",
         scenario: "actual",
         asksDirectAnswer: true,
@@ -295,7 +297,7 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
         actions: [
           {
             type: "answer_question",
-            topic: "pregnancy",
+            topic: "child_age",
             confidence: 0.92,
             evidence: ["mẹ bầu dùng được k e"],
           },
@@ -311,7 +313,7 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
         unsupportedQuestions: ["mẹ bầu dùng được k e"],
         groundingConfidence: 0.92,
         draftReply:
-          "Dạ phụ nữ đang mang thai nên tham khảo ý kiến bác sĩ trước khi dùng Stopirex ạ.",
+          "Dạ mẹ bầu nên tham khảo ý kiến bác sĩ trước khi dùng Stopirex ạ. Em chuyển bộ phận liên quan kiểm tra và hỗ trợ mình tiếp nhé.",
         slots: {},
       });
     },
@@ -326,6 +328,13 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
   assert.doesNotMatch(response.reply, /chưa có thông tin|chuyển bộ phận liên quan/iu);
   assert.equal(response.state.botPaused, false);
   assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(response.state.decisionTrace?.semantic.topic, "pregnancy");
+  assert.equal(
+    response.state.decisionTrace?.actionPlan?.accepted.some(
+      (action) => action.type === "handoff_to_human",
+    ),
+    false,
+  );
 });
 
 test("outbox tiếp tục gửi kế hoạch đã commit khi Meta lỗi tạm thời, không chạy brain lần hai", async () => {

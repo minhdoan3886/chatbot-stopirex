@@ -2054,7 +2054,9 @@ function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string
     throw actionGroundingError("Câu trả lời nói đã tạo đơn nhưng chưa có orderId");
   }
   if (
-    /(?:đã |em )?(?:chuyển|gửi).*(?:nhân viên|chuyên viên)/iu.test(normalized) &&
+    /(?:đã |em )?(?:chuyển|gửi).*(?:nhân viên|chuyên viên|bộ phận liên quan|cskh|sale)/iu.test(
+      normalized,
+    ) &&
     state.pipeline !== "C3.Chờ CSKH" &&
     !state.handoffReason
   ) {

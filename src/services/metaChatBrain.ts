@@ -33,6 +33,7 @@ import {
   isLikelyAdministrativeFragment,
   isOutOfScopeAssistantProbe,
   isOrderCaptureMessage,
+  isPriorAddressReference,
   isQuantityShippingPolicyQuestion,
   isWholesaleDealerInquiry,
   type DemoChatResponse,
@@ -682,6 +683,7 @@ export function isFastTransition(customerMessage: string, state: DemoChatState):
   if (
     state.selectedQuantity &&
     state.orderMissing.length > 0 &&
+    !isPriorAddressReference(customerMessage) &&
     !/[?？]/u.test(customerMessage) &&
     !/\b(?:gia|giam|khuyen mai|uu dai|ma giam|voucher|ship|freeship|free ship|phi giao)\b/.test(text) &&
     (/(?<!\d)0\d{9}(?!\d)/u.test(customerMessage) ||

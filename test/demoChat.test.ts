@@ -2598,6 +2598,47 @@ test("đơn chỉ thiếu phường nhận đúng một cụm địa danh nối 
   assert.doesNotMatch(completed.reply, /mồ hôi|mùi cơ thể|phương án 1 lọ/iu);
 });
 
+test("LLM hiểu tham chiếu địa chỉ trên và state reducer khôi phục phần địa chỉ ở lượt trước", () => {
+  const chat = new DemoChatService();
+  const sessionId = "restore-address-reference-after-handoff";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "1 lọ");
+  chat.chat(sessionId, "Tài Test\n0900000000\n82 Nguyễn Tuân, Quận Thanh Xuân, Hà Nội");
+
+  const snapshot = chat.exportSession(sessionId) as {
+    history: Array<{ role: "user" | "assistant"; text: string }>;
+    pipeline: string;
+    orderCollectionPaused: boolean;
+  };
+  snapshot.history.push({ role: "user", text: "Thanh xuân trung" });
+  snapshot.pipeline = "C3.Chờ CSKH";
+  snapshot.orderCollectionPaused = true;
+  assert.equal(chat.discardSession(sessionId), true);
+  assert.equal(chat.restoreSession(sessionId, snapshot), true);
+
+  const result = chat.chat(sessionId, "Uh\nGuit về địa chỉ trên cho a", {
+    slots: {},
+    intent: "order_support",
+    topic: "order",
+    confidence: 0.99,
+    needsClarification: false,
+    actions: [
+      {
+        type: "continue_order_collection",
+        confidence: 0.99,
+        evidence: ["Guit về địa chỉ trên"],
+        source: "llm",
+      },
+    ],
+  });
+
+  assert.deepEqual(result.state.orderMissing, []);
+  assert.equal(result.state.decisionTrace?.selectedRoute, "order_collection");
+  assert.match(result.state.orderDraft?.legacyAddress ?? "", /Phường\/xã Thanh Xuân Trung/iu);
+  assert.match(result.reply, /ĐỒNG Ý/u);
+  assert.doesNotMatch(result.reply, /chưa hiểu chắc|chuyển bộ phận/iu);
+});
+
 test("câu dò AI khi đang thu đơn được trả lời đúng phạm vi và vẫn giữ đơn", () => {
   const chat = new DemoChatService();
   const sessionId = "unrelated-question-during-order";

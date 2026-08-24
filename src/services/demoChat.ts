@@ -616,6 +616,14 @@ export class DemoChatService {
         session.activeSkill = "order-closing";
         session.skillReason = "Address history resolver đã khôi phục địa chỉ được khách tham chiếu.";
         if (orderHasAllFields(session.order)) session.pendingAction = "confirm_order";
+        overrideDecisionClassification(
+          session,
+          "order_support",
+          "order",
+          [],
+          "LLM đọc ý định dùng lại địa chỉ; State Reducer khôi phục dữ liệu đã lưu mà không yêu cầu khách nhập lại.",
+        );
+        if (session.lastDecision) session.lastDecision.selectedRoute = "order_collection";
         return this.respond(session, orderCollectionReply(session));
       }
     }
@@ -5695,14 +5703,36 @@ function resolveAddressUpdate(session: DemoSession, raw: string): AddressUpdate 
   return undefined;
 }
 
-function isPriorAddressReference(raw: string): boolean {
+export function isPriorAddressReference(raw: string): boolean {
   const text = normalize(raw);
-  return /\bnhu (?:minh|toi|em|anh|chi)?\s*(?:noi|gui|nhan)?\s*(?:ban nay|luc truoc|truoc do)\b|\bquay ve\b.{0,60}\bnhu ban nay\b/.test(text);
+  return (
+    /\bnhu (?:minh|toi|em|anh|chi)?\s*(?:noi|gui|nhan)?\s*(?:ban nay|luc truoc|truoc do)\b|\bquay ve\b.{0,60}\bnhu ban nay\b/.test(
+      text,
+    ) ||
+    /\b(?:gui|guit|giao|ship|chuyen|dung|lay)\b.{0,50}\b(?:ve|toi|den|theo)\b.{0,35}\b(?:dia chi\s+)?(?:tren|cu|truoc|vua gui|vua noi|luc truoc|truoc do)\b/.test(
+      text,
+    )
+  );
 }
 
 function resolveRememberedAddress(session: DemoSession, raw: string): string | undefined {
   const text = normalize(raw);
   const history = session.locationMemory.history ?? [];
+  const currentAddress = session.order.legacyAddress;
+  if (currentAddress && isPriorAddressReference(raw)) {
+    const missing = missingLegacyAddressComponents(currentAddress);
+    if (missing.length === 1) {
+      const recentFragment = session.history
+        .slice(0, -1)
+        .reverse()
+        .filter((turn) => turn.role === "user")
+        .map((turn) => extractSingleMissingAdministrativeAddress(turn.text, session.order))
+        .find((fragment): fragment is string => Boolean(fragment));
+      if (recentFragment) {
+        return canonicalizeLegacyAddress(`${currentAddress}, ${recentFragment}`);
+      }
+    }
+  }
   const explicitReference = text.match(
     /(?:quay ve|tro ve|nhan o|giao ve)\s+(?:nhan\s+o\s+|o\s+)?(.+?)(?=\s+nhu ban nay|,|$)/,
   )?.[1];
@@ -5721,7 +5751,11 @@ function resolveRememberedAddress(session: DemoSession, raw: string): string | u
       return tokens.some((token) => text.includes(token));
     });
   if (named) return named.legacyAddress;
-  return history.at(-2)?.legacyAddress ?? session.locationMemory.legacyAddress;
+  const latestComplete = history
+    .slice()
+    .reverse()
+    .find((item) => missingLegacyAddressComponents(item.legacyAddress).length === 0);
+  return latestComplete?.legacyAddress ?? history.at(-2)?.legacyAddress ?? session.locationMemory.legacyAddress;
 }
 
 function extractChangedAddress(raw: string): string | undefined {

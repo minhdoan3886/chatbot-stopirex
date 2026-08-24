@@ -926,3 +926,15 @@ test("phần bổ sung địa chỉ đang thu đơn dùng rule nội bộ, khôn
 
   assert.equal(isFastTransition("thanh xuan trung thanh xuan", chat.peek(sessionId)), true);
 });
+
+test("tham chiếu địa chỉ trên có lỗi gõ phải đi qua LLM trước state reducer", () => {
+  const chat = new DemoChatService();
+  const sessionId = "prior-address-reference-llm-first";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "1 lọ");
+  chat.chat(sessionId, "Tài Test\n0900000000\n82 Nguyễn Tuân, Quận Thanh Xuân, Hà Nội");
+
+  const state = chat.peek(sessionId);
+  assert.deepEqual(state.orderMissing, ["legacyAddress"]);
+  assert.equal(isFastTransition("Uh\nGuit về địa chỉ trên cho a", state), false);
+});

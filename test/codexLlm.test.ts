@@ -339,7 +339,8 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
     assert.match(compact, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"));
   }
   assert.match(compact, /không mở đầu 'Dạ có'/u);
-  assert.match(compact, /không xin lại dữ liệu đã có/u);
+  assert.match(compact, /answer_question \+ pause_order/u);
+  assert.match(compact, /cấm xin số lượng\/Tên\/SĐT\/Địa chỉ/u);
 });
 
 test("ép OpenAI nhưng thiếu key thì bridge không tự báo sẵn sàng", () => {
@@ -623,6 +624,74 @@ test("single-pass draft không được nói đã chọn combo khi state chưa t
   assert.equal(result.status, "fallback");
   assert.equal(result.reason, "action_grounding_guard");
   assert.equal(result.reply.includes("ghi nhận combo"), false);
+});
+
+test("single-pass không được xin dữ liệu đơn khi action plan đang pause_order", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const answerAction = {
+    type: "answer_question" as const,
+    topic: "effectiveness" as const,
+    confidence: 0.97,
+    evidence: ["ngồi không cũng ướt"],
+    source: "llm" as const,
+  };
+  const continueAction = {
+    type: "continue_order_collection" as const,
+    confidence: 0.9,
+    evidence: ["đơn đang dở"],
+    source: "llm" as const,
+  };
+  const pauseAction = {
+    type: "pause_order" as const,
+    reason: "answer_current_question_first",
+    confidence: 1,
+    evidence: ["ngồi không cũng ướt"],
+    source: "state" as const,
+  };
+  const pausedState: DemoChatState = {
+    ...state,
+    selectedQuantity: 1,
+    orderFlowStatus: "paused",
+    decisionTrace: {
+      semantic: {
+        intent: "product_effect",
+        topic: "sweat",
+        confidence: 0.97,
+        needsClarification: false,
+        evidence: ["ngồi không cũng ướt"],
+      },
+      ruleMatches: [],
+      conflicts: [],
+      selectedRoute: "direct_intent",
+      selectedIntent: "product_effect",
+      reason: "Ưu tiên trả lời câu hiện tại.",
+      knowledgeEntityIds: ["product-comparison-traditional-rollon"],
+      actionPlan: {
+        accepted: [answerAction, continueAction, pauseAction],
+        rejected: [],
+        conflicts: [],
+        primaryIntent: "product_effect",
+        answerTopics: ["effectiveness"],
+        shouldClarify: false,
+        hasMultipleActions: true,
+      },
+    },
+  };
+  const baseReply =
+    "Dạ có ạ. Stopirex hỗ trợ kiểm soát mồ hôi khi mình ra nhiều mồ hôi cả lúc ngồi yên.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "lăn cái này có tốt k, a ra nhiều mồ hôi, ngồi ko cũng ướt",
+    draftReply:
+      "Dạ có ạ. Stopirex hỗ trợ kiểm soát mồ hôi khi mình ra nhiều mồ hôi cả lúc ngồi yên. Mình gửi em tên người nhận, SĐT và địa chỉ nhé?",
+    baseReply,
+    actions: [answerAction, continueAction],
+    state: pausedState,
+  });
+
+  assert.equal(result.status, "fallback");
+  assert.equal(result.reason, "action_grounding_guard");
+  assert.equal(result.reply, baseReply);
+  assert.doesNotMatch(result.reply, /tên người nhận|SĐT|địa chỉ/iu);
 });
 
 test("single-pass chỉ nhận câu trả lời có knowledge id thật đã được truy xuất", () => {

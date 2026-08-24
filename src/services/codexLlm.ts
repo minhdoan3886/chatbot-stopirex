@@ -1305,6 +1305,7 @@ function buildInterpretPrompt(input: {
     "Nếu bot vừa hỏi muốn gửi phương án 1 lọ hay cả 1 lọ và combo, khách trả lời 'ừ', 'uh', 'ok', 'được' => intent price_request, replyTo offer_price, affirmation true. Không được quay lại intent product_effect từ các lượt cũ.",
     "Nếu cùng câu hỏi giá đó mà khách trả lời '1 lọ', 'combo' hoặc 'cả hai' => intent price_request, replyTo offer_price; đây là lựa chọn nội dung giá muốn xem, chưa phải xác nhận mua.",
     "Ngay cả khi bot đang xin Tên/SĐT/Địa chỉ, khách vẫn có thể ngắt để hỏi giá, xin giảm giá, hỏi freeship, cách dùng hoặc an toàn. Hãy phân loại theo câu hỏi hiện tại; không gán order_support nếu tin nhắn không thực sự chứa dữ liệu đơn.",
+    "Nếu đơn đang dở và khách chuyển sang một câu hỏi trực tiếp, actions phải có answer_question và pause_order. draftReply kết thúc sau phần trả lời hiện tại; không xin số lượng, Tên người nhận, SĐT hoặc Địa chỉ trong cùng lượt. Chỉ tiếp tục đơn ở lượt sau.",
     "Ví dụ bot đang xin thông tin đơn, khách hỏi 'giảm giá nữa k' => intent negotiation, topic price, asksDirectAnswer true; không phải order_support và không phải dữ liệu người nhận.",
     "Nếu khách vừa hỏi trực tiếp vừa mô tả tình trạng, vẫn điền cả intent và các slot tình trạng.",
     "Quy ước: chơi thể thao, pickleball/pick, padel, gym, chạy, lao động, công trình hoặc đi nắng => outdoor_heavy.",
@@ -1372,7 +1373,7 @@ function buildCompactInterpretPrompt(input: {
     "Quên dùng tối hỏi bôi bù sáng: usage_time; không bôi bù, giải thích dùng tối khi tuyến mồ hôi ít hoạt động, bôi sáng kém hiệu quả hơn, dùng source usage-timing-missed-evening-application.",
     "Bất biến đa hành động: câu điều kiện hiệu quả + yêu cầu số lượng phải có đủ answer_question, select_quantity và continue_order_collection; không được gộp ba việc thành một action.",
     "Bất biến an toàn: khách đang đỏ/rát/ngứa thật + nói sẽ mua khi ổn phải có đủ start_customer_care, answer_question và pause_order; cấm select_quantity và cấm nói đã ghi nhận/chốt hàng.",
-    "Phân biệt actual/past/hypothetical và đúng sản phẩm gây sự cố. Phản ứng với sản phẩm khác là băn khoăn trước mua, không phải khiếu nại Stopirex. Tin ngắn phải hiểu theo lượt gần nhất. Câu hỏi mới được ngắt bước thu đơn; giữ state đơn và không xin lại dữ liệu đã có.",
+    "Phân biệt actual/past/hypothetical và đúng sản phẩm gây sự cố. Phản ứng với sản phẩm khác là băn khoăn trước mua, không phải khiếu nại Stopirex. Tin ngắn phải hiểu theo lượt gần nhất. Nếu đơn đang dở mà khách hỏi trực tiếp việc khác: tạo answer_question + pause_order, giữ state đơn, draftReply chỉ trả lời câu hiện tại và cấm xin số lượng/Tên/SĐT/Địa chỉ trong cùng lượt.",
     "Chỉ phản ánh triệu chứng khách đã nêu; cấm tự thêm viêm, không hiệu quả, bệnh hoặc trải nghiệm chưa được nói. Knowledge đã đủ thì cấm handoff bừa.",
     "Với câu hỏi Có/Không, trả lời đúng cực tính ngay đầu; không dùng 'Dạ có' cho hậu quả xấu hoặc câu hỏi hai lựa chọn. Không tự thêm 'tùy cơ địa/không cam kết/không đảm bảo' nếu khách không hỏi cam kết tuyệt đối.",
     "Nếu khách nêu tin sai/chưa xác nhận, đính chính mềm: ghi nhận trung tính → nêu dữ liệu đúng đã duyệt → giải đáp nỗi lo. Cấm nói kiểu 'bạn sai', 'thông tin đó là sai', dạy đời, mỉa mai, tranh cãi hoặc bắt chước lời chửi của khách.",
@@ -2048,6 +2049,17 @@ function isExplicitGuaranteeQuestion(value: string): boolean {
 
 function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string): void {
   const normalized = generatedReply.toLocaleLowerCase("vi-VN");
+  const orderPaused = state.decisionTrace?.actionPlan?.accepted.some(
+    (action) => action.type === "pause_order",
+  );
+  if (
+    orderPaused &&
+    /(?:gửi|cho|xin|cung cấp)[^.!?\n]{0,100}(?:tên người nhận|sđt|số điện thoại|địa chỉ)/iu.test(
+      normalized,
+    )
+  ) {
+    throw actionGroundingError("Câu trả lời xin dữ liệu đơn trong khi action plan đang tạm dừng đơn");
+  }
   const claimedCombo = normalized.match(
     /(?:đã |em )?(?:ghi nhận|chọn|chốt|lên đơn).*(?:combo\s*)?([2-5])\s*lọ/iu,
   )?.[1];

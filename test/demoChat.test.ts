@@ -1290,6 +1290,62 @@ test("da mỏng hỏi nguy cơ trước khi dùng không bị mở nhầm ca khi
   assert.doesNotMatch(result.reply, /rất tiếc|đang bị khó chịu sau khi dùng|Mã tiếp nhận|CSKH trực ca/iu);
 });
 
+test("chưa dùng nhưng sợ bị rát vẫn là câu hỏi an toàn dù LLM đề xuất mở CSKH", () => {
+  const chat = new DemoChatService();
+  const sessionId = "pre-use-irritation-question-during-order";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "Mình lấy 1 lọ");
+  chat.chat(sessionId, "Cho mình xem lại giá");
+
+  const result = chat.chat(
+    sessionId,
+    "Da mình khá nhạy cảm, chưa dùng nhưng sợ bị rát thì dùng thế nào cho an toàn?",
+    {
+      skill: "safety-first",
+      intent: "safety",
+      topic: "irritation",
+      subject: "customer",
+      scenario: "actual",
+      asksDirectAnswer: true,
+      confidence: 0.98,
+      needsClarification: false,
+      evidence: ["chưa dùng", "sợ bị rát", "dùng thế nào cho an toàn"],
+      slots: {},
+      actions: [
+        {
+          type: "start_customer_care",
+          issue: "irritation",
+          confidence: 0.98,
+          evidence: ["sợ bị rát"],
+          source: "llm",
+        },
+        {
+          type: "answer_question",
+          topic: "irritation",
+          confidence: 0.98,
+          evidence: ["dùng thế nào cho an toàn"],
+          source: "llm",
+        },
+      ],
+    },
+    { actionExecutionMode: "multi_action" },
+  );
+
+  assert.equal(result.state.mode, "sales");
+  assert.equal(result.state.careIssue, undefined);
+  assert.equal(result.state.decisionTrace?.selectedRoute, "direct_intent");
+  assert.equal(result.state.decisionTrace?.selectedIntent, "safety");
+  assert.equal(result.state.orderFlowStatus, "paused");
+  assert.match(result.reply, /da nhạy cảm|công thức dịu nhẹ/iu);
+  assert.match(result.reply, /da sạch, khô|lăn một lớp mỏng/iu);
+  assert.doesNotMatch(result.reply, /rất tiếc|tạm ngưng sử dụng|đang bị khó chịu|mã tiếp nhận/iu);
+  assert.ok(
+    result.state.decisionTrace?.actionPlan?.rejected.some(
+      (item) => item.reason === "non_current_care_scenario",
+    ),
+  );
+});
+
 test("chỉ lời xác nhận đã dùng và hiện bị ngứa rát mới mở ca CSKH", () => {
   const chat = new DemoChatService();
   const result = chat.chat("actual-irritation-after-use", "Mình đã dùng rồi và hiện đang bị ngứa rát");

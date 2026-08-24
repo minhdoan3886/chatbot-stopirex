@@ -204,6 +204,44 @@ test("Reconciler không mở ca kích ứng từ câu hỏi giả định về s
   assert.equal(plan.accepted.some((action) => action.type === "answer_question"), true);
 });
 
+test("Reconciler loại action mở CSKH do LLM đề xuất khi khách nói rõ chưa dùng", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "Da mình khá nhạy cảm, chưa dùng nhưng sợ bị rát thì dùng thế nào cho an toàn?",
+    semantic: semantic({
+      intent: "safety",
+      topic: "irritation",
+      scenario: "actual",
+      actions: [
+        {
+          type: "start_customer_care",
+          issue: "irritation",
+          confidence: 0.98,
+          evidence: ["sợ bị rát"],
+          source: "llm",
+        },
+        {
+          type: "answer_question",
+          topic: "irritation",
+          confidence: 0.98,
+          evidence: ["dùng thế nào cho an toàn"],
+          source: "llm",
+        },
+      ],
+    }),
+    exactIntent: "safety",
+    detectedCareIssue: "irritation",
+    careScenario: "hypothetical",
+    optOut: false,
+    collectingOrder: true,
+  });
+
+  assert.equal(plan.careIssue, undefined);
+  assert.equal(plan.accepted.some((action) => action.type === "start_customer_care"), false);
+  assert.equal(plan.accepted.some((action) => action.type === "answer_question"), true);
+  assert.equal(plan.accepted.some((action) => action.type === "pause_order"), true);
+  assert.ok(plan.rejected.some((item) => item.reason === "non_current_care_scenario"));
+});
+
 test("phần chưa có nguồn tự tạo handoff nhưng vẫn giữ action trả lời phần đã biết", () => {
   const plan = reconcileConversationActions({
     customerMessage: "Sáng tắm xà phòng có mất tác dụng không và có VAT không?",

@@ -3277,6 +3277,13 @@ export function isPrePurchaseAdverseEffectQuestion(value: string): boolean {
     );
   if (actualUseEvidence) return false;
 
+  const explicitlyBeforeUse =
+    /\b(?:chua|chua tung) (?:dung|su dung|lan|boi)\b/.test(text) ||
+    /\b(?:so|lo|ngai) (?:se |co |minh |lai )?(?:bi |gay )?(?:rat|ngua|do da|kich ung|tham nach|sam nach|den nach)\b/.test(
+      text,
+    );
+  if (explicitlyBeforeUse) return true;
+
   const asksRisk =
     /\b(?:co bi|co gay|co lam|lieu co|se bi)\b/.test(text) ||
     /\b(?:rat|ngua|do da|kich ung|tham nach|sam nach|den nach|kho tham)\b.*\b(?:khong|ko|k)\b/.test(text);

@@ -50,6 +50,7 @@ export type RejectedConversationAction = {
     | "conflicting_purchase_decision"
     | "invalid_order_update"
     | "wrong_product_attribution"
+    | "non_current_care_scenario"
     | "unverifiable_purchase_condition"
     | "inapplicable_return_logistics"
     | "inapplicable_recurrence_statistic";
@@ -227,6 +228,13 @@ export function reconcileConversationActions(input: {
     }
     if (candidate.type === "start_customer_care" && input.priorOtherProductAdverseExperience) {
       rejected.push({ action: candidate, reason: "wrong_product_attribution" });
+      continue;
+    }
+    if (
+      candidate.type === "start_customer_care" &&
+      (input.careScenario === "hypothetical" || input.careScenario === "past")
+    ) {
+      rejected.push({ action: candidate, reason: "non_current_care_scenario" });
       continue;
     }
     if (

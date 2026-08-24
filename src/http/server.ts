@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { loadEnv } from "../config/env.js";
 import { verifyMetaChallenge, verifyMetaSignature } from "../adapters/metaWebhook.js";
 import { isBotAuthoredEcho, parseMetaWebhook } from "../adapters/metaEvents.js";
@@ -99,14 +99,17 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "GET" && url.pathname === "/operations") {
+    if (!isOperationsAuthorized(request)) return unauthorized(response);
     return html(response, 200, operationsPage);
   }
 
   if (request.method === "GET" && url.pathname === "/product") {
+    if (!isOperationsAuthorized(request)) return unauthorized(response);
     return html(response, 200, productPage);
   }
 
   if (request.method === "GET" && url.pathname === "/orders") {
+    if (!isOperationsAuthorized(request)) return unauthorized(response);
     return html(response, 200, ordersPage);
   }
 
@@ -777,8 +780,30 @@ function html(response: import("node:http").ServerResponse, status: number, body
 
 function isOperationsAuthorized(request: import("node:http").IncomingMessage): boolean {
   if (env.nodeEnv !== "production") return true;
+  if (!env.adminApiKey) return false;
   const supplied = request.headers["x-admin-api-key"];
-  return Boolean(env.adminApiKey && supplied === env.adminApiKey);
+  if (typeof supplied === "string" && safeSecretEquals(supplied, env.adminApiKey)) return true;
+  const authorization = request.headers.authorization;
+  if (!authorization?.startsWith("Basic ")) return false;
+  try {
+    const decoded = Buffer.from(authorization.slice(6), "base64").toString("utf8");
+    const separator = decoded.indexOf(":");
+    if (separator < 0) return false;
+    return safeSecretEquals(decoded.slice(separator + 1), env.adminApiKey);
+  } catch {
+    return false;
+  }
+}
+
+function safeSecretEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function unauthorized(response: import("node:http").ServerResponse): void {
+  response.setHeader("www-authenticate", 'Basic realm="Stopirex Operations", charset="UTF-8"');
+  return json(response, 401, { error: "unauthorized" });
 }
 
 function isLocalOperationsControlAuthorized(request: import("node:http").IncomingMessage): boolean {

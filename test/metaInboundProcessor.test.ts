@@ -302,6 +302,75 @@ test("Meta brain chỉ nhận câu trả lời AI có citation thuộc knowledge
   );
 });
 
+test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge thay vì handoff", async () => {
+  const prompts: string[] = [];
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      prompts.push(prompt);
+      return JSON.stringify({
+        summary: "Khách hỏi hiệu quả, thâm, ố áo, giá combo 2 và giao TP.HCM",
+        skill: "pricing-objection",
+        intent: "price_request",
+        topic: "price",
+        subject: "product",
+        scenario: "actual",
+        asksDirectAnswer: true,
+        confidence: 0.97,
+        needsClarification: false,
+        evidence: ["giá s zậy mua 2 chây có đc fs zìa sg khum"],
+        actions: [
+          {
+            type: "answer_question",
+            topic: "effectiveness",
+            confidence: 0.98,
+            evidence: ["mồ hôi vs thâm lém", "áo trắng có bị ố dính dính khôm"],
+          },
+          {
+            type: "answer_question",
+            topic: "price",
+            confidence: 0.98,
+            evidence: ["giá s zậy mua 2 chây"],
+          },
+          {
+            type: "answer_question",
+            topic: "shipping",
+            confidence: 0.98,
+            evidence: ["fs zìa sg khum"],
+          },
+        ],
+        uncertainties: [],
+        knowledgeIds: [
+          "effectiveness-usage-journey",
+          "usage-underarm-darkening-prevention",
+          "usage-application-feel-clothing",
+          "pricing-approved-options-2026-08",
+        ],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.97,
+        draftReply:
+          "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Dùng đúng hướng dẫn, sản phẩm không gây thâm, không bết và không gây ố vàng áo. Combo 2 lọ giá 510.000đ, miễn phí giao về TP.HCM ạ.",
+        slots: { primarySymptom: "sweat", sweatPresent: true },
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId: "dialect-compound-knowledge",
+    text: "shop uii cho dỏi xí, cái lăn ni xài êm khum dạ? nách tui cơ địa mồ hôi vs thâm lém lun chẩy ướt cả áo ớ. xài cái bôi bôi này áo trắng có bị ố dính dính khôm? giá s zậy mua 2 chây có đc fs zìa sg khum sốp",
+  });
+
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0] ?? "", /510\.000đ/u);
+  assert.match(prompts[0] ?? "", /không gây ố vàng/iu);
+  assert.equal(response.state.decisionTrace?.selectedIntent, "price_request");
+  assert.match(response.reply, /510\.000đ/u);
+  assert.match(response.reply, /miễn phí giao.*TP\.HCM/iu);
+  assert.match(response.reply, /không gây thâm/iu);
+  assert.doesNotMatch(response.reply, /chuyển bộ phận|chưa có đủ thông tin/iu);
+});
+
 test("citation mang thai của LLM được ưu tiên hơn retrieval cho con bú đứng đầu", () => {
   const reconciled = reconcileKnowledgeBackedPopulationSafety(
     {

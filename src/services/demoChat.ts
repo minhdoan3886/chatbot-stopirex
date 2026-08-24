@@ -21,14 +21,8 @@ import {
   type ConversationAction,
   type SupportedOrderQuantity,
 } from "../domain/conversationActions.js";
-import {
-  reduceOrderTransaction,
-  type OrderMutationAction,
-} from "../domain/conversationTransaction.js";
-import {
-  planNextBestAction,
-  type PlannedNextBestAction,
-} from "../domain/nextBestAction.js";
+import { reduceOrderTransaction, type OrderMutationAction } from "../domain/conversationTransaction.js";
+import { planNextBestAction, type PlannedNextBestAction } from "../domain/nextBestAction.js";
 import type { ActionExecutionMode } from "../domain/actionRollout.js";
 import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import { ClaimRegistry, defaultBlockedClaims } from "../domain/claims.js";
@@ -251,6 +245,13 @@ export class DemoChatService {
       requestedQuantity,
     );
     const semantic = resolveContextualSemantic(session, raw, normalizeSemanticInput(semanticInput));
+    const multiActionEnabled = context.actionExecutionMode !== "legacy";
+    const semanticHasMultipleAnswerTopics =
+      new Set(
+        (semantic.actions ?? [])
+          .filter((action) => action.type === "answer_question")
+          .map((action) => action.topic),
+      ).size > 1;
     let semanticSlots = semantic.slots;
     const bottleLongevityConcern =
       isBottleLongevityQuestion(text) || semantic.knowledgeIds?.includes("usage-bottle-duration") === true;
@@ -337,7 +338,9 @@ export class DemoChatService {
       customerMessage: raw,
       semantic,
       ...(exactIntent ? { exactIntent } : {}),
-      ...(protectedApplicationConcern ? { exactAnswerTopic: "effectiveness" as const } : {}),
+      ...(!(multiActionEnabled && semanticHasMultipleAnswerTopics) && protectedApplicationConcern
+        ? { exactAnswerTopic: "effectiveness" as const }
+        : {}),
       ...(detectedCareIssue ? { detectedCareIssue } : {}),
       ...(detectedCareScenario ? { careScenario: detectedCareScenario } : {}),
       priorOtherProductAdverseExperience,
@@ -349,13 +352,15 @@ export class DemoChatService {
       session.pipeline !== "6.Đã tạo đơn" &&
       Boolean(
         session.selectedQuantity ||
-          (semantic.intent === "buying" && requestedQuantity && requestedQuantity <= 5),
+        (semantic.intent === "buying" && requestedQuantity && requestedQuantity <= 5),
       ) &&
       applySemanticOrderUpdates(session, actionPlan.accepted, raw);
-    const multiActionEnabled = context.actionExecutionMode !== "legacy";
     const exactRouteIsHardGuard = Boolean(
       exactIntent &&
-      (!semanticRoutingReady || protectedKnownAnswerConcern || isCommerceGuardIntent(exactIntent)),
+      (!semanticRoutingReady ||
+        isCommerceGuardIntent(exactIntent) ||
+        (protectedKnownAnswerConcern &&
+          !(multiActionEnabled && semanticHasMultipleAnswerTopics && semanticRoutingReady))),
     );
     const effectiveExactIntent = multiActionEnabled
       ? exactRouteIsHardGuard
@@ -395,7 +400,7 @@ export class DemoChatService {
       semantic,
       ...(session.pendingAction ? { pendingAction: session.pendingAction } : {}),
       ...(effectiveExactIntent ? { exactIntent: effectiveExactIntent } : {}),
-      ...(protectedKnownAnswerConcern ? { exactIntentKind: "hard" as const } : {}),
+      ...(exactRouteIsHardGuard ? { exactIntentKind: "hard" as const } : {}),
       ...(effectiveCareIssue ? { careIssue: effectiveCareIssue } : {}),
       ...(detectedCareScenario ? { careScenario: detectedCareScenario } : {}),
       optOut: isOptOut(text),
@@ -413,9 +418,7 @@ export class DemoChatService {
         !effectiveCareIssue &&
         (semanticOrderDataRecorded ||
           Boolean(
-            observedEntities.recipientName ||
-              observedEntities.deliveryNote ||
-              observedEntities.address,
+            observedEntities.recipientName || observedEntities.deliveryNote || observedEntities.address,
           ) ||
           isLikelyOrderData(raw, session.order)),
       explicitPurchaseSelection: Boolean(extractExplicitOrderQuantity(text) || actionPlan.quantity),
@@ -512,7 +515,8 @@ export class DemoChatService {
       session.orderCollectionPaused = false;
       session.lastIntent = "buying";
       session.activeSkill = "order-closing";
-      session.skillReason = "Quantity reducer đã thực thi chuỗi thay đổi và phép trừ người dùng trong cùng lượt.";
+      session.skillReason =
+        "Quantity reducer đã thực thi chuỗi thay đổi và phép trừ người dùng trong cùng lượt.";
       recordKnowledge(session, ["pricing-approved-options-2026-08"]);
       overrideDecisionClassification(
         session,
@@ -652,9 +656,7 @@ export class DemoChatService {
     if (isResumeExistingRetailOrder(session, text) && orderHasAllFields(session.order)) {
       session.orderCollectionPaused = false;
       delete session.pendingAction;
-      commitOrderMutations(session, [
-        { type: "confirm_order", confirmedAt: new Date(), evidence: raw },
-      ]);
+      commitOrderMutations(session, [{ type: "confirm_order", confirmedAt: new Date(), evidence: raw }]);
       assertOrderReady(session.order);
       this.move(session, "order_created");
       session.signal = undefined;
@@ -762,10 +764,7 @@ export class DemoChatService {
       session.activeSkill = "order-closing";
       session.skillReason = "Số lượng từ 6 lọ trở lên bắt buộc chuyển tư vấn viên hỗ trợ riêng.";
       recordKnowledge(session, ["wholesale-dealer-handoff"]);
-      return this.respond(
-        session,
-        wholesaleDealerHandoffReply(raw, requestedQuantity),
-      );
+      return this.respond(session, wholesaleDealerHandoffReply(raw, requestedQuantity));
     }
 
     if (isQuantityShippingPolicyQuestion(text) || isPriceAndShippingPolicyQuestion(text)) {
@@ -852,10 +851,7 @@ export class DemoChatService {
           : session.locationMemory.legacyAddress
             ? `Dạ em đã ghi nhận khu vực ${session.locationMemory.legacyAddress}. Thời gian giao chính xác được kiểm tra theo đơn và vận đơn sau khi lên đơn ạ.`
             : "Dạ thời gian giao chính xác được kiểm tra theo đơn và vận đơn sau khi lên đơn ạ.";
-      return this.respond(
-        session,
-        etaReply,
-      );
+      return this.respond(session, etaReply);
     }
 
     if (isHouseholdSharedUseQuestion(text)) {
@@ -959,8 +955,7 @@ export class DemoChatService {
     if (isHairRemovalSafetyQuestion(text)) {
       session.lastIntent = "usage_guidance";
       session.activeSkill = "solution-guidance";
-      session.skillReason =
-        "Safety rule độc lập cho thao tác nhổ/cạo/wax/triệt trước khi dùng.";
+      session.skillReason = "Safety rule độc lập cho thao tác nhổ/cạo/wax/triệt trước khi dùng.";
       session.pipeline = "2.Đang tư vấn";
       session.consultation = { ...session.consultation, stage: "S5.guidance" };
       recordKnowledge(session, ["usage-after-hair-removal"]);
@@ -972,7 +967,7 @@ export class DemoChatService {
       );
     }
 
-    if (isUnderarmDarkeningObjection(text)) {
+    if (isUnderarmDarkeningObjection(text) && !(multiActionEnabled && semanticHasMultipleAnswerTopics)) {
       session.lastIntent = "product_effect";
       session.activeSkill = "solution-guidance";
       session.skillReason =
@@ -1145,9 +1140,7 @@ export class DemoChatService {
         session.activeSkill = "knowledge-handoff";
         session.skillReason =
           "Trả lời chính sách có nguồn trước, rồi chuyển người xử lý phần nghiệp vụ còn thiếu.";
-        recordKnowledge(session, [
-          ...knowledgeForActionTopics(actionPlan.answerTopics, text),
-        ]);
+        recordKnowledge(session, [...knowledgeForActionTopics(actionPlan.answerTopics, text)]);
         return this.respond(session, [
           multiActionAnswer(actionPlan.answerTopics, raw, semanticSlots),
           unsupportedQuestionHandoffReply(raw, semantic.unsupportedQuestions ?? []),
@@ -1158,8 +1151,7 @@ export class DemoChatService {
 
     if (isInternalSystemProbe(text) && isMaliciousCommercialOverride(text)) {
       actionPlan.accepted = actionPlan.accepted.filter(
-        (action) =>
-          !["select_quantity", "update_order", "continue_order_collection"].includes(action.type),
+        (action) => !["select_quantity", "update_order", "continue_order_collection"].includes(action.type),
       );
       delete actionPlan.quantity;
       session.lastIntent = "bot_identity";
@@ -1212,9 +1204,7 @@ export class DemoChatService {
       session.activeSkill = "knowledge-handoff";
       session.skillReason =
         "Trả lời phần có nguồn trước, chuyển người cho phần thiếu và chưa tiếp tục thu thông tin đơn.";
-      recordKnowledge(session, [
-        ...knowledgeForActionTopics(actionPlan.answerTopics, text),
-      ]);
+      recordKnowledge(session, [...knowledgeForActionTopics(actionPlan.answerTopics, text)]);
       const handoff = unsupportedQuestionHandoffReply(raw, semantic.unsupportedQuestions ?? []);
       return this.respond(session, [
         answer,
@@ -1248,8 +1238,7 @@ export class DemoChatService {
     // approved source IDs, so the legacy discovery flow must not replace the
     // product answer with an unrelated question.
     const batchedMultiTopicQuestion =
-      raw.split(/\r?\n/u).filter((line) => line.trim()).length > 1 &&
-      actionPlan.answerTopics.length > 1;
+      raw.split(/\r?\n/u).filter((line) => line.trim()).length > 1 && actionPlan.answerTopics.length > 1;
     if (
       multiActionEnabled &&
       actionPlan.answerTopics.length > 0 &&
@@ -1362,10 +1351,7 @@ export class DemoChatService {
       session.pendingAction = "choose_quantity";
       session.lastDecision.pendingActionAfter = "choose_quantity";
       session.orderCollectionPaused = false;
-      return this.respond(
-        session,
-        "Dạ mình muốn lấy mấy lọ Stopirex (1–5 lọ) để em ghi nhận chính xác ạ?",
-      );
+      return this.respond(session, "Dạ mình muốn lấy mấy lọ Stopirex (1–5 lọ) để em ghi nhận chính xác ạ?");
     }
 
     const compoundOrderQuantity = session.selectedQuantity
@@ -1416,20 +1402,14 @@ export class DemoChatService {
       session.lastIntent = "price_request";
       return this.respond(session, priceReply(continuationQuestion(continuation)));
     }
-    if (
-      decision.route === "pending_action" &&
-      session.pendingAction === "send_authenticity_legal_summary"
-    ) {
+    if (decision.route === "pending_action" && session.pendingAction === "send_authenticity_legal_summary") {
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
       session.lastIntent = "authenticity_question";
       session.activeSkill = "direct-answer";
       session.skillReason =
         "Khách xác nhận đề nghị ngay trước đó; gửi đúng phần pháp lý đã hứa và không mở luồng chọn số lượng.";
-      recordKnowledge(session, [
-        "authenticity-legal-summary",
-        "regulatory-product-notification-2022",
-      ]);
+      recordKnowledge(session, ["authenticity-legal-summary", "regulatory-product-notification-2022"]);
       return this.respond(session, authenticityLegalSummaryReply());
     }
     if (
@@ -1503,9 +1483,7 @@ export class DemoChatService {
       session.orderCollectionPaused = false;
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
-      commitOrderMutations(session, [
-        { type: "confirm_order", confirmedAt: new Date(), evidence: raw },
-      ]);
+      commitOrderMutations(session, [{ type: "confirm_order", confirmedAt: new Date(), evidence: raw }]);
       assertOrderReady(session.order);
       this.move(session, "order_created");
       session.signal = undefined;
@@ -1732,13 +1710,10 @@ export class DemoChatService {
         hypotheticalIrritationRefund
           ? ["safety-irritation-hypothetical", "refund-used-ineffective"]
           : usedIneffectiveRefund
-          ? ["refund-used-ineffective"]
-          : ["returns-eligibility", "returns-exclusions", "returns-process-fees-refund"],
+            ? ["refund-used-ineffective"]
+            : ["returns-eligibility", "returns-exclusions", "returns-process-fees-refund"],
       );
-      if (
-        !usedIneffectiveRefund &&
-        /vo hop|boc rach|vut (?:vo|hop)|mat vo|khong con vo/.test(text)
-      ) {
+      if (!usedIneffectiveRefund && /vo hop|boc rach|vut (?:vo|hop)|mat vo|khong con vo/.test(text)) {
         pauseForHumanReview(session, "return_logistics_requires_review");
         session.activeSkill = "knowledge-handoff";
         session.skillReason =
@@ -1753,10 +1728,7 @@ export class DemoChatService {
       session.activeSkill = "knowledge-handoff";
       session.skillReason = "Nhu cầu sỉ/đại lý phải chuyển nhân viên kinh doanh xác nhận chính sách.";
       recordKnowledge(session, ["wholesale-dealer-handoff"]);
-      return this.respond(
-        session,
-        wholesaleDealerHandoffReply(raw),
-      );
+      return this.respond(session, wholesaleDealerHandoffReply(raw));
     }
 
     if (directIntent === "safety") {
@@ -1897,10 +1869,7 @@ export class DemoChatService {
       };
       const nextQuestion = session.orderCollectionPaused
         ? undefined
-        : nextProductEffectQuestion(
-            session.consultation.asked,
-            hasRecentlySentPrice(session),
-          );
+        : nextProductEffectQuestion(session.consultation.asked, hasRecentlySentPrice(session));
       if (nextQuestion) {
         session.consultation = {
           ...session.consultation,
@@ -1911,11 +1880,7 @@ export class DemoChatService {
       if (session.pipeline === "1.Phân loại") this.move(session, "classified");
       recordKnowledge(session, [
         ...(isEffectivenessJourneyQuestion(text)
-          ? [
-              "effectiveness-usage-journey",
-              "product-training-72h-conditional-claim",
-              "usage-general",
-            ]
+          ? ["effectiveness-usage-journey", "product-training-72h-conditional-claim", "usage-general"]
           : ["product-comparison-traditional-rollon"]),
         ...(isApplicationFeelOrClothingConcern(text) ? ["usage-application-feel-clothing"] : []),
         ...(isSweatWashOffConcern(text) ? ["usage-exercise-sweat-washoff"] : []),
@@ -1924,10 +1889,7 @@ export class DemoChatService {
           ? ["usage-morning-fragrance-layering", "usage-application-feel-clothing"]
           : []),
       ]);
-      return this.respond(
-        session,
-        productEffectReply(topic, nextQuestion, text, semanticSlots.workContext),
-      );
+      return this.respond(session, productEffectReply(topic, nextQuestion, text, semanticSlots.workContext));
     }
 
     if (directIntent === "usage_time") {
@@ -2008,11 +1970,11 @@ export class DemoChatService {
           ? morningFragranceLayeringReply()
           : bottleLongevityConcern && isUsageDurationOrFrequencyQuestion(text)
             ? "Dạ một lọ thường dùng khoảng 3–4 tháng ạ. Mình không cần bôi hằng ngày; lúc mới dùng chỉ lăn một lớp mỏng 2–3 lần/tuần vào buổi tối trên da sạch, khô hoàn toàn."
-          : bottleLongevityConcern
-            ? bottleLongevityReply(raw)
-            : isUsageDurationOrFrequencyQuestion(text)
-              ? usageDurationAndFrequencyReply(text)
-              : generalUsageGuidanceReply(),
+            : bottleLongevityConcern
+              ? bottleLongevityReply(raw)
+              : isUsageDurationOrFrequencyQuestion(text)
+                ? usageDurationAndFrequencyReply(text)
+                : generalUsageGuidanceReply(),
       );
     }
 
@@ -2071,16 +2033,12 @@ export class DemoChatService {
       if (destination) commitLegacyAddress(session, destination, "append", raw);
       const deliveryNote = extractDeliveryNote(raw);
       if (deliveryNote) {
-        commitOrderMutations(session, [
-          { type: "set_delivery_note", deliveryNote, evidence: raw },
-        ]);
+        commitOrderMutations(session, [{ type: "set_delivery_note", deliveryNote, evidence: raw }]);
       }
       const collectionReply = orderCollectionReply(session);
       return this.respond(
         session,
-        isPriceRequest(text)
-          ? [selectedOrderPriceReply(quantity), collectionReply]
-          : collectionReply,
+        isPriceRequest(text) ? [selectedOrderPriceReply(quantity), collectionReply] : collectionReply,
       );
     }
 
@@ -2423,16 +2381,12 @@ export class DemoChatService {
 
   private respond(session: DemoSession, reply: string | readonly string[]): DemoChatResponse {
     const rawReplies = typeof reply === "string" ? [reply] : [...reply];
-    const customerMessage = [...session.history]
-      .reverse()
-      .find((turn) => turn.role === "user")?.text ?? "";
+    const customerMessage = [...session.history].reverse().find((turn) => turn.role === "user")?.text ?? "";
     const nextBestAction = planNextBestAction({
       customerMessage,
       replies: rawReplies,
       ...(session.lastIntent ? { intent: session.lastIntent } : {}),
-      ...(session.lastDecision?.semantic.topic
-        ? { topic: session.lastDecision.semantic.topic }
-        : {}),
+      ...(session.lastDecision?.semantic.topic ? { topic: session.lastDecision.semantic.topic } : {}),
       knowledgeEntityIds: session.lastDecision?.knowledgeEntityIds ?? [],
       pipeline: session.pipeline,
       slots: session.consultation.slots,
@@ -2445,8 +2399,7 @@ export class DemoChatService {
       optedOut: session.optedOut,
     });
     const nextBestActionFits =
-      !nextBestAction.prompt ||
-      rawReplies.join("\n\n").length + nextBestAction.prompt.length + 2 <= 280;
+      !nextBestAction.prompt || rawReplies.join("\n\n").length + nextBestAction.prompt.length + 2 <= 280;
     session.lastNextBestAction = nextBestActionFits
       ? nextBestAction
       : {
@@ -2552,9 +2505,7 @@ function stateOf(session: DemoSession): DemoChatState {
     ...(session.orderTransactionTrace
       ? { orderTransactionTrace: structuredClone(session.orderTransactionTrace) }
       : {}),
-    ...(session.lastNextBestAction
-      ? { nextBestAction: structuredClone(session.lastNextBestAction) }
-      : {}),
+    ...(session.lastNextBestAction ? { nextBestAction: structuredClone(session.lastNextBestAction) } : {}),
     answeredTopics: [...session.answeredTopics],
     askedTopics: [...session.askedTopics],
     ...(session.pendingQuestionTopic ? { pendingQuestionTopic: session.pendingQuestionTopic } : {}),
@@ -3110,7 +3061,17 @@ export function isQuantityShippingPolicyQuestion(value: string): boolean {
   for (const match of text.matchAll(/\b(1|2|3|4|5|mot|hai|ba|bon|nam)\s+lo\b/g)) {
     const token = match[1];
     const quantity =
-      token === "mot" ? 1 : token === "hai" ? 2 : token === "ba" ? 3 : token === "bon" ? 4 : token === "nam" ? 5 : Number(token);
+      token === "mot"
+        ? 1
+        : token === "hai"
+          ? 2
+          : token === "ba"
+            ? 3
+            : token === "bon"
+              ? 4
+              : token === "nam"
+                ? 5
+                : Number(token);
     if (Number.isInteger(quantity)) quantities.add(quantity);
   }
   const wordToQuantity: Record<string, number> = {
@@ -3146,8 +3107,12 @@ export function isDomesticDeliveryInspectionQuestion(value: string): boolean {
 export function isDomesticDeliveryEtaQuestion(value: string): boolean {
   const text = normalize(value);
   const asksEta =
-    /\b(?:may ngay|bao lau|khi nao|bao gio)\b.{0,50}\b(?:nhan(?: duoc)?(?: hang)?|giao hang|ship|giao den|giao toi)\b/.test(text) ||
-    /\b(?:ship|giao)\b.{0,60}\b(?:may ngay|bao lau|khi nao|bao gio)\b.{0,15}(?:\btoi\b|\bden\b|\bnhan\b|$)/.test(text) ||
+    /\b(?:may ngay|bao lau|khi nao|bao gio)\b.{0,50}\b(?:nhan(?: duoc)?(?: hang)?|giao hang|ship|giao den|giao toi)\b/.test(
+      text,
+    ) ||
+    /\b(?:ship|giao)\b.{0,60}\b(?:may ngay|bao lau|khi nao|bao gio)\b.{0,15}(?:\btoi\b|\bden\b|\bnhan\b|$)/.test(
+      text,
+    ) ||
     /\b(?:ship|giao)\b.{0,25}\b(?:cham|tre|lau|kip)\b/.test(text);
   return asksEta && !isInternationalShippingQuestion(value);
 }
@@ -3202,7 +3167,10 @@ function isMorningWashAndFragranceQuestion(value: string): boolean {
 function isHandsOrFeetApplicationQuestion(value: string): boolean {
   const text = normalize(value);
   const mentionsArea = /\b(?:mo hoi )?(?:tay|chan|ban tay|ban chan|long ban tay|long ban chan)\b/.test(text);
-  const asksApplication = /\b(?:lan|boi|dung|xai|quet)\b.{0,45}\b(?:tay|chan|ban tay|ban chan)\b|\b(?:tay|chan|ban tay|ban chan)\b.{0,45}\b(?:lan|boi|dung|xai|quet)\b/.test(text);
+  const asksApplication =
+    /\b(?:lan|boi|dung|xai|quet)\b.{0,45}\b(?:tay|chan|ban tay|ban chan)\b|\b(?:tay|chan|ban tay|ban chan)\b.{0,45}\b(?:lan|boi|dung|xai|quet)\b/.test(
+      text,
+    );
   return mentionsArea && asksApplication;
 }
 
@@ -3453,11 +3421,14 @@ export function isApplicationFeelOrClothingConcern(value: string): boolean {
 
 function isClothingCompensationQuestion(value: string): boolean {
   const text = normalize(value);
-  const mentionsClothingDamage = /\b(?:o|vang|hong|hu|lam ban)\b.{0,45}\b(?:ao|vai|quan ao)\b|\b(?:ao|vai|quan ao)\b.{0,45}\b(?:o|vang|hong|hu|lam ban)\b/.test(
-    text,
-  );
+  const mentionsClothingDamage =
+    /\b(?:o|vang|hong|hu|lam ban)\b.{0,45}\b(?:ao|vai|quan ao)\b|\b(?:ao|vai|quan ao)\b.{0,45}\b(?:o|vang|hong|hu|lam ban)\b/.test(
+      text,
+    );
   const asksCompensation =
-    /\b(?:shop|ben (?:em|minh))?\s*(?:co|se|phai)?\s*den(?: tien)?\s+(?:ao|vai|quan ao|tai san)\b/.test(text) ||
+    /\b(?:shop|ben (?:em|minh))?\s*(?:co|se|phai)?\s*den(?: tien)?\s+(?:ao|vai|quan ao|tai san)\b/.test(
+      text,
+    ) ||
     /\bboi thuong\b.{0,35}\b(?:ao|vai|quan ao|tai san)\b/.test(text) ||
     /\btra tien\b.{0,20}\b(?:ao|vai|quan ao|tai san)\b/.test(text);
   return mentionsClothingDamage && asksCompensation;
@@ -3672,7 +3643,9 @@ function productEffectTopic(text: string, semanticSlots: ConsultationSlots): Pri
 
 function isProductPurposeQuestion(value: string): boolean {
   const text = normalize(value);
-  return /(?:dung|de) (?:lam gi|tac dung gi|cong dung gi)|(?:co )?(?:tac dung|cong dung) (?:la )?gi/.test(text);
+  return /(?:dung|de) (?:lam gi|tac dung gi|cong dung gi)|(?:co )?(?:tac dung|cong dung) (?:la )?gi/.test(
+    text,
+  );
 }
 
 function isDetailedMechanismComparisonQuestion(value: string): boolean {
@@ -3843,9 +3816,7 @@ function wholesaleDealerHandoffReply(value: string, quantity?: number): string {
   if (/tu ke|banner|vat pham|trung bay/.test(text)) topics.push("tủ kệ/file banner");
   if (topics.length === 0) topics.push("chính sách sỉ");
   const need = topics.length === 1 ? topics[0] : `${topics.slice(0, -1).join(", ")} và ${topics.at(-1)}`;
-  const demand = quantity
-    ? `nhu cầu nhập ${quantity} lọ cho tiệm`
-    : "nhu cầu nhập hàng cho tiệm thuốc";
+  const demand = quantity ? `nhu cầu nhập ${quantity} lọ cho tiệm` : "nhu cầu nhập hàng cho tiệm thuốc";
   return `Dạ em ghi nhận ${demand} ạ. Phần ${need} cần xác nhận riêng; em chuyển bộ phận liên quan hỗ trợ trực tiếp cho mình.`;
 }
 
@@ -3877,12 +3848,12 @@ function isRetailEscapeFromWholesaleHandoff(
 
 function isAlcoholAndScentPremiseQuestion(value: string): boolean {
   const text = normalize(value);
-  const asksAlcohol = /(?:100\s*%|hoan toan)?.{0,20}khong con|khong con.{0,20}(?:100\s*%|hoan toan)|co con khong/.test(
-    text,
-  );
-  const asksScent = /(?:hoan toan|100\s*%)?.{0,20}khong mui|khong mui.{0,30}(?:nuoc hoa|lan mui|lon mui)|(?:nuoc hoa|mui).{0,40}(?:lon mui|lan mui)/.test(
-    text,
-  );
+  const asksAlcohol =
+    /(?:100\s*%|hoan toan)?.{0,20}khong con|khong con.{0,20}(?:100\s*%|hoan toan)|co con khong/.test(text);
+  const asksScent =
+    /(?:hoan toan|100\s*%)?.{0,20}khong mui|khong mui.{0,30}(?:nuoc hoa|lan mui|lon mui)|(?:nuoc hoa|mui).{0,40}(?:lon mui|lan mui)/.test(
+      text,
+    );
   return asksAlcohol && asksScent;
 }
 
@@ -3899,9 +3870,10 @@ function alcoholAndPermanentReply(): string {
 function isHairRemovalMorningClothingQuestion(value: string): boolean {
   const text = normalize(value);
   const recentRemoval = /(?:vua|moi|sang nay).{0,30}(?:nho|cao|wax|triet).{0,20}(?:long )?nach/.test(text);
-  const wantsImmediateUse = /(?:quet|boi|lan|dung).{0,20}(?:luon|sang|sang nay)|(?:sang|sang nay).{0,30}(?:quet|boi|lan|dung)/.test(
-    text,
-  );
+  const wantsImmediateUse =
+    /(?:quet|boi|lan|dung).{0,20}(?:luon|sang|sang nay)|(?:sang|sang nay).{0,30}(?:quet|boi|lan|dung)/.test(
+      text,
+    );
   const clothing = /o vang|ao so mi|vang nach ao|bet.*ao/.test(text);
   return recentRemoval && wantsImmediateUse && clothing;
 }
@@ -3909,9 +3881,8 @@ function isHairRemovalMorningClothingQuestion(value: string): boolean {
 function isHairRemovalSafetyQuestion(value: string): boolean {
   const text = normalize(value);
   const recentRemoval = /(?:vua|moi|sang nay)?.{0,20}(?:nho|cao|wax|triet).{0,20}(?:long )?nach/.test(text);
-  const immediateUse = /(?:boi|lan|quet|dung).{0,25}(?:luon|ngay)|(?:luon|ngay).{0,25}(?:boi|lan|quet|dung)/.test(
-    text,
-  );
+  const immediateUse =
+    /(?:boi|lan|quet|dung).{0,25}(?:luon|ngay)|(?:luon|ngay).{0,25}(?:boi|lan|quet|dung)/.test(text);
   return recentRemoval && immediateUse;
 }
 
@@ -3946,8 +3917,9 @@ function isHypotheticalIrritationRefundQuestion(value: string): boolean {
 function isUsedIneffectiveRefundQuestion(value: string): boolean {
   const text = normalize(value);
   return (
-    /da dung dung|dung khong do|khong hieu qua|chua hieu qua|khong do|khong cai thien|(?:nhỡ|nho|neu).{0,50}(?:khong do|khong hieu qua)|(?:sau|du)\s*2\s*tuan.{0,45}(?:van uot|van ra mo hoi|khong kho|khong cai thien)/.test(text) &&
-    /hoan tien|gui tra|tra hang|doi tra/.test(text)
+    /da dung dung|dung khong do|khong hieu qua|chua hieu qua|khong do|khong cai thien|(?:nhỡ|nho|neu).{0,50}(?:khong do|khong hieu qua)|(?:sau|du)\s*2\s*tuan.{0,45}(?:van uot|van ra mo hoi|khong kho|khong cai thien)/.test(
+      text,
+    ) && /hoan tien|gui tra|tra hang|doi tra/.test(text)
   );
 }
 
@@ -3961,7 +3933,9 @@ function isRefundPolicyFollowup(session: DemoSession, text: string): boolean {
       .some((turn) => isUsedIneffectiveRefundQuestion(turn.text));
   return (
     contextActive &&
-    /\b(?:luc day|truong hop day|nhung|the).{0,45}(?:vo hop|hop giay|boc rach|vut|mat vo|khong con vo)\b|\b(?:vo hop|hop giay).{0,30}(?:vut|rach|mat|khong con)\b/.test(text)
+    /\b(?:luc day|truong hop day|nhung|the).{0,45}(?:vo hop|hop giay|boc rach|vut|mat vo|khong con vo)\b|\b(?:vo hop|hop giay).{0,30}(?:vut|rach|mat|khong con)\b/.test(
+      text,
+    )
   );
 }
 
@@ -3975,9 +3949,7 @@ function refundFollowupReply(text: string): string {
 export function isMissedEveningApplicationQuestion(value: string): boolean {
   const text = normalize(value);
   const missedNight =
-    /(?:quen|lo|bo).*(?:boi|lan|dung).*(?:buoi )?toi|xin qua.*(?:quen|lo).*(?:buoi )?toi/.test(
-      text,
-    );
+    /(?:quen|lo|bo).*(?:boi|lan|dung).*(?:buoi )?toi|xin qua.*(?:quen|lo).*(?:buoi )?toi/.test(text);
   const asksMorning =
     /(?:sang|sang day|buoi sang).*(?:boi|lan|quet|dung)|(?:boi bu|lan bu|quet).*(?:sang|buoi sang)/.test(
       text,
@@ -4188,10 +4160,7 @@ function isEffectivenessJourneyQuestion(value: string): boolean {
 
 function isKnowledgeFullyCoveredQuestion(text: string, semantic: SemanticUnderstanding): boolean {
   if (isUsedIneffectiveRefundQuestion(text)) return true;
-  if (
-    isPermanentControlQuestion(text) &&
-    /tai phat|sau 1 nam|bao nhieu phan tram|ty le|ti le/.test(text)
-  ) {
+  if (isPermanentControlQuestion(text) && /tai phat|sau 1 nam|bao nhieu phan tram|ty le|ti le/.test(text)) {
     return true;
   }
   if (isMissedEveningApplicationQuestion(text)) return true;
@@ -4413,7 +4382,9 @@ function isBuyingIntent(text: string): boolean {
 function isCorrectConfirmation(text: string): boolean {
   return (
     /^(dung|dung roi|xac nhan dung|dong y|toi dong y|xac nhan dong y|dong y tao don)$/.test(text) ||
-    /\b(?:dung|dung roi|dung thong tin|thong tin dung|xac nhan dung)\b.{0,60}\b(?:gui|giao|len don|chot)\b/.test(text)
+    /\b(?:dung|dung roi|dung thong tin|thong tin dung|xac nhan dung)\b.{0,60}\b(?:gui|giao|len don|chot)\b/.test(
+      text,
+    )
   );
 }
 
@@ -4501,9 +4472,7 @@ function applyQuantityOperation(
       : command.operation === "add"
         ? current + command.operand
         : current - command.operand;
-  return Number.isInteger(next) && next >= 1 && next <= 5
-    ? (next as SupportedOrderQuantity)
-    : undefined;
+  return Number.isInteger(next) && next >= 1 && next <= 5 ? (next as SupportedOrderQuantity) : undefined;
 }
 
 function quantityUpdatePriceReply(quantity: SupportedOrderQuantity): string {
@@ -4815,9 +4784,7 @@ function llmFailureKnowledgeAnswer(
 }
 
 function asksAboutProductScent(text: string): boolean {
-  return /\b(?:mui gi|co mui|khong mui|mui huong|mui nong|huong hoa|lon mui|lan mui|nuoc hoa)\b/.test(
-    text,
-  );
+  return /\b(?:mui gi|co mui|khong mui|mui huong|mui nong|huong hoa|lon mui|lan mui|nuoc hoa)\b/.test(text);
 }
 
 function knowledgeForActionTopics(topics: readonly SemanticTopic[], text: string): string[] {
@@ -4884,11 +4851,11 @@ function knowledgeForActionTopics(topics: readonly SemanticTopic[], text: string
           ? "usage-morning-wash-with-soap"
           : isMissedEveningApplicationQuestion(text)
             ? "usage-timing-missed-evening-application"
-          : isMorningFragranceLayeringQuestion(text)
-            ? "usage-morning-fragrance-layering"
-            : isBottleLongevityQuestion(text)
-              ? "usage-bottle-duration"
-              : "usage-general",
+            : isMorningFragranceLayeringQuestion(text)
+              ? "usage-morning-fragrance-layering"
+              : isBottleLongevityQuestion(text)
+                ? "usage-bottle-duration"
+                : "usage-general",
       );
       if (isMorningFragranceLayeringQuestion(text) && asksWeeklyFrequency(text)) {
         ids.add("usage-general");
@@ -4914,7 +4881,8 @@ function isMorningSoapWashQuestion(value: string): boolean {
   const text = normalize(value);
   const morning = /\b(?:sang|sang hom sau|hom sau|sang ngu day|sang day)\b/.test(text);
   const washing = /\b(?:tam|rua|ve sinh|xa phong|soap)\b/.test(text);
-  const priorEveningLayer = /\b(?:lop lan|lop boi|boi|lan)\b.{0,40}\b(?:toi hom truoc|tu toi|buoi toi|dem truoc)\b/.test(text);
+  const priorEveningLayer =
+    /\b(?:lop lan|lop boi|boi|lan)\b.{0,40}\b(?:toi hom truoc|tu toi|buoi toi|dem truoc)\b/.test(text);
   const asksNeedOrEffect =
     /\b(?:co can|can phai|phai|khong can)\b.{0,55}\b(?:tam|rua|ve sinh|xa phong|soap)\b/.test(text) ||
     /\b(?:mat tac dung|troi|con tac dung|anh huong)\b/.test(text);
@@ -5155,10 +5123,7 @@ function assertCustomerFacingCopy(reply: string): void {
 
 type PriceContinuation = "discover_symptom" | "choose_quantity";
 
-function showPrice(
-  session: DemoSession,
-  forcedContinuation?: PriceContinuation,
-): PriceContinuation {
+function showPrice(session: DemoSession, forcedContinuation?: PriceContinuation): PriceContinuation {
   if (session.pipeline !== "3.Đã báo giá") {
     if (session.pipeline === "0.Chưa tư vấn") session.pipeline = "1.Phân loại";
     try {
@@ -5205,10 +5170,7 @@ function priceReply(nextQuestion = continuationQuestion("choose_quantity")): str
   return formatPriceOffer(single, combo, visibleAdditionalOffers, nextQuestion);
 }
 
-function priceReplyForRequest(
-  text: string,
-  nextQuestion = continuationQuestion("choose_quantity"),
-): string {
+function priceReplyForRequest(text: string, nextQuestion = continuationQuestion("choose_quantity")): string {
   const requestedQuantity = detectQuantity(text);
   return requestedQuantity
     ? `${selectedOrderPriceReply(requestedQuantity)}\n\n${nextQuestion}`
@@ -5226,9 +5188,7 @@ function quote(quantity: SupportedOrderQuantity) {
 }
 
 function selectQuantity(session: DemoSession, quantity: SupportedOrderQuantity): void {
-  commitOrderMutations(session, [
-    { type: "set_quantity", quantity, evidence: "resolved_quantity_action" },
-  ]);
+  commitOrderMutations(session, [{ type: "set_quantity", quantity, evidence: "resolved_quantity_action" }]);
   session.orderCollectionPaused = false;
   session.consultation = { ...session.consultation, stage: "S8.order" };
 }
@@ -5260,9 +5220,7 @@ function commitOrderMutations(
     delete session.selectedQuantity;
   }
   if (transaction.after.order.legacyAddress) {
-    transaction.after.order.legacyAddress = canonicalizeLegacyAddress(
-      transaction.after.order.legacyAddress,
-    );
+    transaction.after.order.legacyAddress = canonicalizeLegacyAddress(transaction.after.order.legacyAddress);
   }
   session.order = transaction.after.order;
   const priorTrace = session.orderTransactionTrace;
@@ -5369,9 +5327,7 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
     }
   }
   const phoneMatch = orderRaw.match(/(?<!\d)(0\d{9})(?!\d)/);
-  const invalidPhoneMatch = phoneMatch
-    ? undefined
-    : orderRaw.match(/(?<!\d)(0\d{7,10})(?!\d)/u);
+  const invalidPhoneMatch = phoneMatch ? undefined : orderRaw.match(/(?<!\d)(0\d{7,10})(?!\d)/u);
   const phone = phoneMatch?.[1] ?? extractPhoneNumber(raw);
   if (phone) {
     commitOrderMutations(session, [{ type: "set_phone", phone, evidence: raw }]);
@@ -5382,9 +5338,7 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
       orderRaw.slice(0, invalidPhoneMatch.index).replace(/[,;:\s-]+$/gu, ""),
     );
     const afterCandidate = cleanLabel(
-      orderRaw
-        .slice(invalidPhoneMatch.index + invalidPhoneMatch[1].length)
-        .replace(/^[,;:\s-]+/gu, ""),
+      orderRaw.slice(invalidPhoneMatch.index + invalidPhoneMatch[1].length).replace(/^[,;:\s-]+/gu, ""),
     );
     if (!addressHandled && looksLikeAddress(beforeCandidate)) {
       found = commitLegacyAddress(session, beforeCandidate, "append", raw) || found;
@@ -5403,9 +5357,7 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
   }
   const deliveryNote = extractDeliveryNote(raw);
   if (deliveryNote) {
-    commitOrderMutations(session, [
-      { type: "set_delivery_note", deliveryNote, evidence: raw },
-    ]);
+    commitOrderMutations(session, [{ type: "set_delivery_note", deliveryNote, evidence: raw }]);
     found = true;
   }
   const parts = orderRaw
@@ -5605,11 +5557,7 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
         evidence: raw,
       });
     }
-    if (
-      collectingOrderBeforeTurn &&
-      administrativeAddress &&
-      (destination || session.order.legacyAddress)
-    ) {
+    if (collectingOrderBeforeTurn && administrativeAddress && (destination || session.order.legacyAddress)) {
       actions.push({
         type: "set_address",
         address: administrativeAddress,
@@ -5647,7 +5595,10 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
         rememberLocation(
           session,
           session.order.legacyAddress,
-          destination ?? administrativeAddress ?? singleMissingAdministrativeAddress ?? session.order.legacyAddress,
+          destination ??
+            administrativeAddress ??
+            singleMissingAdministrativeAddress ??
+            session.order.legacyAddress,
         );
         changes.address = session.order.legacyAddress;
       }
@@ -5670,7 +5621,9 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
 function rememberLocation(session: DemoSession, address: string, evidence: string): void {
   const canonical = canonicalizeLegacyAddress(address);
   const history = [...(session.locationMemory.history ?? [])];
-  if (!history.some((item) => normalizeForComparison(item.legacyAddress) === normalizeForComparison(canonical))) {
+  if (
+    !history.some((item) => normalizeForComparison(item.legacyAddress) === normalizeForComparison(canonical))
+  ) {
     history.push({ legacyAddress: canonical, evidence, sourceTurn: session.messages + 1 });
   }
   session.locationMemory = {
@@ -5686,9 +5639,7 @@ function resolveAddressUpdate(session: DemoSession, raw: string): AddressUpdate 
     const referenced = resolveRememberedAddress(session, raw);
     return {
       operation: "reference",
-      ...(referenced
-        ? { address: referenced }
-        : {}),
+      ...(referenced ? { address: referenced } : {}),
     };
   }
 
@@ -5755,7 +5706,9 @@ function resolveRememberedAddress(session: DemoSession, raw: string): string | u
     .slice()
     .reverse()
     .find((item) => {
-      const tokens = normalizeForComparison(item.legacyAddress).split(" ").filter((token) => token.length >= 4);
+      const tokens = normalizeForComparison(item.legacyAddress)
+        .split(" ")
+        .filter((token) => token.length >= 4);
       return tokens.some((token) => text.includes(token));
     });
   if (named) return named.legacyAddress;
@@ -5763,7 +5716,9 @@ function resolveRememberedAddress(session: DemoSession, raw: string): string | u
     .slice()
     .reverse()
     .find((item) => missingLegacyAddressComponents(item.legacyAddress).length === 0);
-  return latestComplete?.legacyAddress ?? history.at(-2)?.legacyAddress ?? session.locationMemory.legacyAddress;
+  return (
+    latestComplete?.legacyAddress ?? history.at(-2)?.legacyAddress ?? session.locationMemory.legacyAddress
+  );
 }
 
 function extractChangedAddress(raw: string): string | undefined {
@@ -5817,12 +5772,12 @@ function mergeRetailEscapeOrderData(session: DemoSession, raw: string): void {
 export function extractPhoneNumber(raw: string): string | undefined {
   const direct = raw.match(/(?<!\d)(0\d{9})(?!\d)/u)?.[1];
   if (direct) return direct;
-  const normalizedRaw = normalize(raw).replace(/[^a-z0-9]+/g, " ").trim();
+  const normalizedRaw = normalize(raw)
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
   const label = normalizedRaw.match(/\b(?:sdt|so dien thoai)\b/);
   if (!label || label.index === undefined) return undefined;
-  const spoken = normalizedRaw
-    .slice(label.index + label[0].length)
-    .split(/\bten(?: nguoi nhan)?\b/, 1)[0];
+  const spoken = normalizedRaw.slice(label.index + label[0].length).split(/\bten(?: nguoi nhan)?\b/, 1)[0];
   if (!spoken) return undefined;
   const digitWords: Record<string, string> = {
     khong: "0",
@@ -5892,9 +5847,7 @@ function extractDeliveryNote(raw: string): string | undefined {
 
 function extractBareWard(raw: string): string | undefined {
   const ward = raw
-    .match(
-      /(?:phường|phuong)\s+([\p{L}\s]{2,60}?)(?=\s+(?:nhé|nhe|nha|ạ|a)\b|[,;.?!\n]|$)/iu,
-    )?.[1]
+    .match(/(?:phường|phuong)\s+([\p{L}\s]{2,60}?)(?=\s+(?:nhé|nhe|nha|ạ|a)\b|[,;.?!\n]|$)/iu)?.[1]
     ?.trim();
   return ward?.replace(/\s+(?:nhé|nhe|nha|ạ|a)\s*$/iu, "").trim() || undefined;
 }
@@ -5973,10 +5926,7 @@ function parseAdministrativeAddressFragment(
   };
 }
 
-function extractSingleMissingAdministrativeAddress(
-  raw: string,
-  order: OrderDraft,
-): string | undefined {
+function extractSingleMissingAdministrativeAddress(raw: string, order: OrderDraft): string | undefined {
   if (!order.recipientName || !/^0\d{9}$/u.test(order.phone ?? "") || !order.quantity) {
     return undefined;
   }
@@ -6090,9 +6040,11 @@ function extractRecipientName(raw: string): string | undefined {
   const changedName = raw.match(
     /(?:đổi|doi)\s+(?:tên|ten)(?:\s+(?:người nhận|nguoi nhan))?\s+(?:thành|thanh|là|la)\s+([\p{L}][\p{L}\s]{0,48}?)(?=[,;.?!\n]|\s+(?:nhé|nhe|nha|ạ|a)\b|$)/iu,
   )?.[1];
-  const match = changedName ?? raw.match(
-    /(?:^|[.!?]\s*)(?:(?:mình|minh|tôi|toi|em|anh|chị|chi)\s+)?(?:đổi|doi)?\s*(?:tên|ten)(?:\s+(?:người nhận|nguoi nhan))?\s*(?:(?:là|la|thành|thanh)\s+|[:：-]\s*)?([\p{L}][\p{L}\s]{0,48}?)(?=[,;.?!\n]|\s+(?:nhé|nhe|nha|ạ|a)\b|$)/iu,
-  )?.[1];
+  const match =
+    changedName ??
+    raw.match(
+      /(?:^|[.!?]\s*)(?:(?:mình|minh|tôi|toi|em|anh|chị|chi)\s+)?(?:đổi|doi)?\s*(?:tên|ten)(?:\s+(?:người nhận|nguoi nhan))?\s*(?:(?:là|la|thành|thanh)\s+|[:：-]\s*)?([\p{L}][\p{L}\s]{0,48}?)(?=[,;.?!\n]|\s+(?:nhé|nhe|nha|ạ|a)\b|$)/iu,
+    )?.[1];
   if (!match) return undefined;
   const cleaned = cleanExplicitRecipientName(match);
   return looksLikeOrderRecipientCandidate(cleaned) ? cleaned : undefined;
@@ -6133,8 +6085,8 @@ function splitUnlabelledNameAndAddress(
   const possibleAddressAbbreviation = prefixWords.at(-1);
   const addressHasLeadingAbbreviation = Boolean(
     possibleAddressAbbreviation &&
-      /^[A-ZĐ]{2,6}$/u.test(possibleAddressAbbreviation) &&
-      prefixWords.length >= 3,
+    /^[A-ZĐ]{2,6}$/u.test(possibleAddressAbbreviation) &&
+    prefixWords.length >= 3,
   );
   const recipientWords = addressHasLeadingAbbreviation ? prefixWords.slice(0, -1) : prefixWords;
   const recipientName = recipientWords.join(" ");
@@ -6190,9 +6142,7 @@ function commitLegacyAddress(
   if (cleaned.length > 160 || !looksLikeAddress(cleaned)) return false;
   const canonical = canonicalizeLegacyAddress(cleaned);
   const before = session.order.legacyAddress;
-  commitOrderMutations(session, [
-    { type: "set_address", address: canonical, operation, evidence },
-  ]);
+  commitOrderMutations(session, [{ type: "set_address", address: canonical, operation, evidence }]);
   return session.order.legacyAddress !== before;
 }
 
@@ -6238,13 +6188,7 @@ function canonicalizeLegacyAddress(value: string): string {
     segments.push("Phường Định Công");
   }
   if (
-    (hasHaDong ||
-      hasCauGiay ||
-      hasHoangMai ||
-      hasNamTuLiem ||
-      hasThanhXuan ||
-      hasBaDinh ||
-      hasHaiBaTrung) &&
+    (hasHaDong || hasCauGiay || hasHoangMai || hasNamTuLiem || hasThanhXuan || hasBaDinh || hasHaiBaTrung) &&
     !segments.some((segment) => normalizeForComparison(segment) === "ha noi")
   ) {
     segments.push("Hà Nội");
@@ -6265,21 +6209,21 @@ function canonicalizeLegacyAddress(value: string): string {
             ? "Quận Hà Đông"
             : normalizeForComparison(segment) === "cau giay"
               ? "Quận Cầu Giấy"
-            : normalizeForComparison(segment) === "hoang mai"
-              ? "Quận Hoàng Mai"
-            : normalizeForComparison(segment) === "nam tu liem"
-              ? "Quận Nam Từ Liêm"
-            : normalizeForComparison(segment) === "thanh xuan"
-              ? "Quận Thanh Xuân"
-            : normalizeForComparison(segment) === "ba dinh"
-              ? "Quận Ba Đình"
-            : normalizeForComparison(segment) === "hai ba trung"
-              ? "Quận Hai Bà Trưng"
-            : normalizeForComparison(segment) === "cong vi"
-              ? "Phường Cống Vị"
-            : normalizeForComparison(segment) === "vinh tuy"
-              ? "Phường Vĩnh Tuy"
-            : segment,
+              : normalizeForComparison(segment) === "hoang mai"
+                ? "Quận Hoàng Mai"
+                : normalizeForComparison(segment) === "nam tu liem"
+                  ? "Quận Nam Từ Liêm"
+                  : normalizeForComparison(segment) === "thanh xuan"
+                    ? "Quận Thanh Xuân"
+                    : normalizeForComparison(segment) === "ba dinh"
+                      ? "Quận Ba Đình"
+                      : normalizeForComparison(segment) === "hai ba trung"
+                        ? "Quận Hai Bà Trưng"
+                        : normalizeForComparison(segment) === "cong vi"
+                          ? "Phường Cống Vị"
+                          : normalizeForComparison(segment) === "vinh tuy"
+                            ? "Phường Vĩnh Tuy"
+                            : segment,
     )
     .map((segment, index) => ({ segment, index, rank: addressSegmentRank(segment) }))
     .sort((left, right) => left.rank - right.rank || left.index - right.index)

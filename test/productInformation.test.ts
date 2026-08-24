@@ -215,6 +215,18 @@ test("retrieval ưu tiên đúng knowledge hẹp và không để hướng dẫn
   assert.deepEqual(topIds("cách dùng như nào"), ["usage-general"]);
   assert.equal(topIds("bị ngứa đỏ sau khi dùng")[0], "care-suspected-allergic-reaction");
 
+  const dialectCompound = retrieveKnowledgeMatches({
+    tenantId: currentTenant,
+    query:
+      "shop uii cho dỏi xí, cái lăn ni xài êm khum dạ? nách tui cơ địa mồ hôi vs thâm lém lun chẩy ướt cả áo ớ. xài cái bôi bôi này áo trắng có bị ố dính dính khôm? giá s zậy mua 2 chây có đc fs zìa sg khum sốp",
+    entities,
+    limit: 6,
+  }).map((item) => item.entity.id);
+  assert.ok(dialectCompound.includes("pricing-approved-options-2026-08"));
+  assert.ok(dialectCompound.includes("usage-underarm-darkening-prevention"));
+  assert.ok(dialectCompound.includes("usage-application-feel-clothing"));
+  assert.ok(dialectCompound.includes("effectiveness-usage-journey"));
+
   const pricing = entities.find((item) => item.id === "pricing-approved-options-2026-08");
   assert.ok(pricing?.responseGuidance?.includes("chỉ báo phương án 1–3 lọ"));
   assert.equal(pricing?.content.includes("Khi khách hỏi giá chung"), false);

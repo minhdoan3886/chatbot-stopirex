@@ -240,6 +240,8 @@ export function retrieveKnowledgeMatches(input: {
   const precisionQueryConcepts = new Set(
     [...queryConcepts].filter((concept) => precisionSearchConcepts.has(concept)),
   );
+  const hasNonPrecisionConcept = [...queryConcepts].some((concept) => !precisionSearchConcepts.has(concept));
+  const allowsMixedCommerceRecall = precisionQueryConcepts.has("price") && hasNonPrecisionConcept;
   const queryNgrams = characterNgrams(queryText);
   const ranked = input.entities
     .filter((entity) => entity.tenantId === input.tenantId)
@@ -281,25 +283,26 @@ export function retrieveKnowledgeMatches(input: {
     .filter(
       (item) =>
         (precisionQueryConcepts.size === 0 ||
+          allowsMixedCommerceRecall ||
           item.matchedConcepts.some((concept) => precisionQueryConcepts.has(concept))) &&
         (item.matchedTerms.length > 0 || item.matchedConcepts.length > 0 || item.score >= 1.2),
     )
     .sort((a, b) => b.score - a.score || a.entity.id.localeCompare(b.entity.id));
   const strongestScore = ranked[0]?.score ?? 0;
-  return (
-    ranked
-      // Avoid sending weak, adjacent articles to the LLM when one article is a
-      // substantially clearer match. Multi-topic queries still retain candidates
-      // that reach at least 55% of the best score.
-      .filter((item) => item.score >= strongestScore * 0.55)
-      .slice(0, input.limit ?? 5)
-      .map((item) => ({
-        ...item,
-        entity: { ...item.entity },
-        matchedTerms: [...item.matchedTerms],
-        matchedConcepts: [...item.matchedConcepts],
-      }))
-  );
+  const conceptLeaders = [...queryConcepts]
+    .map((concept) => ranked.find((item) => item.matchedConcepts.includes(concept)))
+    .filter((item): item is KnowledgeMatch => Boolean(item));
+  const selected = [...conceptLeaders, ...ranked.filter((item) => item.score >= strongestScore * 0.55)]
+    .filter(
+      (item, index, all) => all.findIndex((candidate) => candidate.entity.id === item.entity.id) === index,
+    )
+    .slice(0, input.limit ?? 5);
+  return selected.map((item) => ({
+    ...item,
+    entity: { ...item.entity },
+    matchedTerms: [...item.matchedTerms],
+    matchedConcepts: [...item.matchedConcepts],
+  }));
 }
 
 const searchStopWords = new Set([
@@ -333,9 +336,11 @@ const searchStopWords = new Set([
 ]);
 
 const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
-  price: ["price bao nhieu", "bao nhieu tien", "bao price", "combo"],
+  price: ["price", "price bao nhieu", "bao nhieu tien", "bao price", "combo"],
   promotion: ["uu dai", "khuyen mai", "giam price", "bot them", "bot dong", "tang kem", "qua tang", "gift"],
-  shipping: ["phi giao", "phi ship", "freeship", "mien phi giao", "bao ship"],
+  shipping: ["fs", "ship", "phi giao", "phi ship", "freeship", "free ship", "mien phi giao", "bao ship"],
+  darkening: ["tham", "tham nach", "sam nach", "sam mau"],
+  clothing: ["o ao", "ao trang", "dinh ao", "bet dinh"],
   pregnancy: [
     "me bau",
     "ba bau",

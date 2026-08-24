@@ -4,39 +4,35 @@ import { DemoChatService } from "../src/services/demoChat.js";
 
 test("một tin hỏi công dụng rồi chốt hàng được trả lời trước và thu đơn sau", () => {
   const chat = new DemoChatService();
-  const result = chat.chat(
-    "multi-action-effect-and-buy",
-    "Em hỏi thêm là có đỡ mùi không, gửi em 1 lọ nhé",
-    {
-      slots: { primarySymptom: "odor" },
-      intent: "buying",
-      topic: "effectiveness",
-      asksDirectAnswer: true,
-      confidence: 0.98,
-      actions: [
-        {
-          type: "answer_question",
-          topic: "effectiveness",
-          confidence: 0.98,
-          evidence: ["có đỡ mùi không"],
-          source: "llm",
-        },
-        {
-          type: "select_quantity",
-          quantity: 1,
-          confidence: 0.99,
-          evidence: ["gửi em 1 lọ"],
-          source: "llm",
-        },
-        {
-          type: "continue_order_collection",
-          confidence: 0.98,
-          evidence: ["gửi em 1 lọ"],
-          source: "llm",
-        },
-      ],
-    },
-  );
+  const result = chat.chat("multi-action-effect-and-buy", "Em hỏi thêm là có đỡ mùi không, gửi em 1 lọ nhé", {
+    slots: { primarySymptom: "odor" },
+    intent: "buying",
+    topic: "effectiveness",
+    asksDirectAnswer: true,
+    confidence: 0.98,
+    actions: [
+      {
+        type: "answer_question",
+        topic: "effectiveness",
+        confidence: 0.98,
+        evidence: ["có đỡ mùi không"],
+        source: "llm",
+      },
+      {
+        type: "select_quantity",
+        quantity: 1,
+        confidence: 0.99,
+        evidence: ["gửi em 1 lọ"],
+        source: "llm",
+      },
+      {
+        type: "continue_order_collection",
+        confidence: 0.98,
+        evidence: ["gửi em 1 lọ"],
+        source: "llm",
+      },
+    ],
+  });
 
   assert.equal(result.state.selectedQuantity, 1);
   assert.equal(result.state.pipeline, "5.Chờ TT KH");
@@ -49,29 +45,79 @@ test("một tin hỏi công dụng rồi chốt hàng được trả lời trư�
   );
 });
 
-test("LLM hiểu ý mua nhưng thiếu action số lượng chỉ được hỏi số lượng, không quay về hỏi tình trạng", () => {
+test("LLM giữ quyền định tuyến câu địa phương nhiều ý dù rule nhận ra ố áo", () => {
   const chat = new DemoChatService();
-  chat.reset("buying-missing-quantity-action");
-
   const result = chat.chat(
-    "buying-missing-quantity-action",
-    "chốt giùm tui mọt chai nghen",
+    "dialect-multi-topic-routing",
+    "shop uii cho dỏi xí, cái lăn ni xài êm khum dạ? nách tui cơ địa mồ hôi vs thâm lém lun chẩy ướt cả áo ớ. xài cái bôi bôi này áo trắng có bị ố dính dính khôm? giá s zậy mua 2 chây có đc fs zìa sg khum sốp",
     {
-      slots: {},
-      intent: "buying",
-      topic: "order",
-      confidence: 0.98,
-      needsClarification: false,
+      slots: { primarySymptom: "sweat", sweatPresent: true },
+      intent: "price_request",
+      topic: "price",
+      asksDirectAnswer: true,
+      confidence: 0.95,
+      knowledgeIds: ["pricing-approved-options-2026-08"],
+      groundingConfidence: 0.95,
       actions: [
         {
-          type: "continue_order_collection",
-          confidence: 0.96,
-          evidence: ["chốt giùm tui mọt chai nghen"],
+          type: "answer_question",
+          topic: "effectiveness",
+          confidence: 0.98,
+          evidence: ["cái lăn ni xài êm khum dạ", "áo trắng có bị ố dính dính khôm"],
+          source: "llm",
+        },
+        {
+          type: "answer_question",
+          topic: "price",
+          confidence: 0.98,
+          evidence: ["giá s zậy mua 2 chây"],
+          source: "llm",
+        },
+        {
+          type: "answer_question",
+          topic: "shipping",
+          confidence: 0.98,
+          evidence: ["fs zìa sg khum"],
           source: "llm",
         },
       ],
     },
+    { actionExecutionMode: "multi_action" },
   );
+
+  assert.equal(result.state.decisionTrace?.selectedIntent, "price_request");
+  assert.deepEqual(result.state.decisionTrace?.actionPlan?.answerTopics, [
+    "effectiveness",
+    "price",
+    "shipping",
+  ]);
+  assert.equal(
+    result.state.decisionTrace?.ruleMatches.some(
+      (rule) => rule.id === "intent_product_effect_route_override",
+    ),
+    false,
+  );
+});
+
+test("LLM hiểu ý mua nhưng thiếu action số lượng chỉ được hỏi số lượng, không quay về hỏi tình trạng", () => {
+  const chat = new DemoChatService();
+  chat.reset("buying-missing-quantity-action");
+
+  const result = chat.chat("buying-missing-quantity-action", "chốt giùm tui mọt chai nghen", {
+    slots: {},
+    intent: "buying",
+    topic: "order",
+    confidence: 0.98,
+    needsClarification: false,
+    actions: [
+      {
+        type: "continue_order_collection",
+        confidence: 0.96,
+        evidence: ["chốt giùm tui mọt chai nghen"],
+        source: "llm",
+      },
+    ],
+  });
 
   assert.equal(result.state.lastIntent, "buying");
   assert.equal(result.state.pendingAction, "choose_quantity");
@@ -316,11 +362,7 @@ test("batch hai câu so sánh và tần suất vẫn được fallback trả đ�
   assert.ok(result.state.decisionTrace?.actionPlan?.answerTopics.includes("comparison"));
   assert.ok(result.state.decisionTrace?.actionPlan?.answerTopics.includes("usage"));
   assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("usage-general"));
-  assert.ok(
-    result.state.decisionTrace?.knowledgeEntityIds.includes(
-      "product-comparison-traditional-rollon",
-    ),
-  );
+  assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("product-comparison-traditional-rollon"));
 });
 
 test("batch thực tế vẫn trả đủ khi LLM chỉ tạo action so sánh", () => {
@@ -352,10 +394,7 @@ test("batch thực tế vẫn trả đủ khi LLM chỉ tạo action so sánh", 
   assert.match(result.reply, /không cần lăn 1 lần mỗi ngày/iu);
   assert.match(result.reply, /2–3 lần\/tuần/iu);
   assert.doesNotMatch(result.reply, /cách dùng hay giá/iu);
-  assert.deepEqual(result.state.decisionTrace?.actionPlan?.answerTopics, [
-    "comparison",
-    "usage",
-  ]);
+  assert.deepEqual(result.state.decisionTrace?.actionPlan?.answerTopics, ["comparison", "usage"]);
 });
 
 test("câu alo e giá vẫn báo giá rồi hỏi tình trạng dù LLM gợi ý nhầm pricing-objection", () => {
@@ -461,10 +500,7 @@ test("lo mua nhầm hàng giả trước khi mua được trả lời về chín
 test("uh sau đề nghị gửi pháp lý phải gửi đúng hồ sơ, không rơi về chọn gói", () => {
   const chat = new DemoChatService();
   chat.reset("authenticity-legal-summary-followup");
-  chat.chat(
-    "authenticity-legal-summary-followup",
-    "Có gì đảm bảo sản phẩm chính hãng không?",
-  );
+  chat.chat("authenticity-legal-summary-followup", "Có gì đảm bảo sản phẩm chính hãng không?");
 
   const result = chat.chat("authenticity-legal-summary-followup", "uh", {
     slots: {},
@@ -705,9 +741,7 @@ test("LLM ưu tiên trả lời mồ hôi khi đơn đang dở ở bước chọ
   assert.ok(
     result.state.decisionTrace?.actionPlan?.accepted.some((action) => action.type === "answer_question"),
   );
-  assert.ok(
-    result.state.decisionTrace?.actionPlan?.accepted.some((action) => action.type === "pause_order"),
-  );
+  assert.ok(result.state.decisionTrace?.actionPlan?.accepted.some((action) => action.type === "pause_order"));
 });
 
 test("sau báo giá sớm, hỏi cách dùng được trả lời đủ mà chưa ép chọn số lượng", () => {
@@ -932,10 +966,7 @@ test("một action usage vẫn trả đủ thời gian một lọ và mùi trong
       topic: "usage",
       asksDirectAnswer: true,
       confidence: 0.98,
-      knowledgeIds: [
-        "usage-bottle-duration",
-        "business-approved-alcohol-odor-guidance-2026-08",
-      ],
+      knowledgeIds: ["usage-bottle-duration", "business-approved-alcohol-odor-guidance-2026-08"],
       groundingConfidence: 0.98,
       actions: [
         {
@@ -1652,10 +1683,7 @@ test("vận động ra mồ hôi không được trả lời ngược là có b�
 
 test("câu hỏi mới được tạm ngắt phiên CSKH cũ thay vì bị ép trả lời bước kích ứng", () => {
   const chat = new DemoChatService();
-  const care = chat.chat(
-    "care-interruption-washoff",
-    "Mình đã dùng Stopirex rồi và hiện đang bị ngứa rát",
-  );
+  const care = chat.chat("care-interruption-washoff", "Mình đã dùng Stopirex rồi và hiện đang bị ngứa rát");
   assert.equal(care.state.mode, "care");
   assert.equal(care.state.careIssue, "irritation");
 
@@ -1772,10 +1800,7 @@ test("replay: câu chốt 1 lọ ghi đè pending báo giá và tin PII gộp đ
   assert.match(selected.reply, /tên người nhận.*SĐT.*địa chỉ/isu);
   assert.doesNotMatch(selected.reply, /chưa nghe rõ.*giá|mức giá cũ|phí giao 30\.000đ/isu);
 
-  const details = chat.chat(
-    sessionId,
-    "Nguyễn Văn Nam NTT 14 82 Nguyễn Tuân Thanh Xuân Hà Nội 0912345678",
-  );
+  const details = chat.chat(sessionId, "Nguyễn Văn Nam NTT 14 82 Nguyễn Tuân Thanh Xuân Hà Nội 0912345678");
 
   assert.equal(details.state.selectedQuantity, 1);
   assert.equal(details.state.orderDraft?.recipientName, "Nguyễn Văn Nam");
@@ -2142,11 +2167,7 @@ test("hỏi cảm giác khi lăn và ố áo được trả lời ngắn, mạnh
   );
 
   assert.equal(result.state.lastIntent, "product_effect");
-  assert.ok(
-    result.state.decisionTrace?.knowledgeEntityIds.includes(
-      "usage-application-feel-clothing",
-    ),
-  );
+  assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("usage-application-feel-clothing"));
   assert.match(result.reply, /hơi ẩm nhẹ/iu);
   assert.match(result.reply, /khô nhanh và không bết/iu);
   assert.match(result.reply, /dùng đúng hướng dẫn/iu);
@@ -2358,7 +2379,10 @@ test("LLM knowledge_unknown không được ghi đè câu chữa dứt điểm �
   assert.equal(result.state.botPaused, false);
   assert.equal(result.state.decisionTrace?.selectedIntent, "product_effect");
   assert.match(result.reply, /Dạ không ạ.*không phải thuốc chữa dứt điểm/isu);
-  assert.doesNotMatch(result.reply, /chưa có trong thông tin|gửi thêm ảnh|chuyển (?:nhân viên|bộ phận liên quan)/iu);
+  assert.doesNotMatch(
+    result.reply,
+    /chưa có trong thông tin|gửi thêm ảnh|chuyển (?:nhân viên|bộ phận liên quan)/iu,
+  );
 });
 
 test("đã xác nhận giá nhưng hỏi Botox không bị gửi lại bảng giá", () => {
@@ -2430,17 +2454,13 @@ test("trả lời đối tượng sử dụng từ kho kiến thức an toàn", 
   assert.match(pregnant.reply, /tham khảo ý kiến bác sĩ trước khi sử dụng/);
   assert.doesNotMatch(pregnant.reply, /trẻ em|da nhạy cảm|cho con bú/);
 
-  const pregnantColloquial = chat.chat(
-    "pregnancy-colloquial-safety",
-    "phụ nữ đang bầu có dùng dược k",
-    {
-      intent: "safety",
-      topic: "child_age",
-      subject: "customer",
-      asksDirectAnswer: true,
-      slots: {},
-    },
-  );
+  const pregnantColloquial = chat.chat("pregnancy-colloquial-safety", "phụ nữ đang bầu có dùng dược k", {
+    intent: "safety",
+    topic: "child_age",
+    subject: "customer",
+    asksDirectAnswer: true,
+    slots: {},
+  });
   assert.equal(pregnantColloquial.state.lastIntent, "safety");
   assert.match(pregnantColloquial.reply, /mang thai.*tham khảo ý kiến bác sĩ/isu);
   assert.doesNotMatch(pregnantColloquial.reply, /bé|12 tuổi|điều hòa/iu);
@@ -2580,10 +2600,7 @@ test("đơn chỉ thiếu phường nhận đúng một cụm địa danh nối 
 
   chat.chat(sessionId, "Giá bao nhiêu?");
   chat.chat(sessionId, "1 lọ");
-  const partial = chat.chat(
-    sessionId,
-    "Tài Trần\n0900000000\n82 Nguyễn Tuân, Quận Thanh Xuân, Hà Nội",
-  );
+  const partial = chat.chat(sessionId, "Tài Trần\n0900000000\n82 Nguyễn Tuân, Quận Thanh Xuân, Hà Nội");
   assert.deepEqual(partial.state.orderMissing, ["legacyAddress"]);
 
   const unrelated = chat.chat(sessionId, "cảm ơn shop");
@@ -3005,10 +3022,7 @@ test("explicit address change replaces old address while preserving quantity pho
   const chat = new DemoChatService();
   const sessionId = "address-replace-state-update";
 
-  chat.chat(
-    sessionId,
-    "Cho mình 2 lọ về số 10 Thái Hà. SĐT 0988888888. Giao giờ hành chính nhé.",
-  );
+  chat.chat(sessionId, "Cho mình 2 lọ về số 10 Thái Hà. SĐT 0988888888. Giao giờ hành chính nhé.");
   const shippingPolicy = chat.chat(
     sessionId,
     "À khoan, 2 lọ không biết có được freeship không? Nếu mất phí ship thì lấy 1 lọ thôi.",
@@ -3042,33 +3056,29 @@ test("thu đơn tích lũy tên và địa chỉ qua nhiều tin, chỉ hỏi l�
   const sessionId = "production-partial-order-fields";
   chat.chat(sessionId, "Giá bao nhiêu?");
 
-  const selected = chat.chat(
-    sessionId,
-    "ờ thế gửi a 1 lọ về ntt15 82 Nguyễn Tuân Hà Nội nhé\nsố 022299933",
-    {
-      intent: "buying",
-      topic: "order",
-      confidence: 0.98,
-      needsClarification: false,
-      slots: {},
-      actions: [
-        {
-          type: "record_fact",
-          field: "recipientName",
-          value: "NTT15",
-          confidence: 0.93,
-          evidence: ["gửi a 1 lọ về ntt15 82 Nguyễn Tuân Hà Nội"],
-          source: "llm",
-        },
-        {
-          type: "continue_order_collection",
-          confidence: 0.98,
-          evidence: ["gửi a 1 lọ"],
-          source: "llm",
-        },
-      ],
-    },
-  );
+  const selected = chat.chat(sessionId, "ờ thế gửi a 1 lọ về ntt15 82 Nguyễn Tuân Hà Nội nhé\nsố 022299933", {
+    intent: "buying",
+    topic: "order",
+    confidence: 0.98,
+    needsClarification: false,
+    slots: {},
+    actions: [
+      {
+        type: "record_fact",
+        field: "recipientName",
+        value: "NTT15",
+        confidence: 0.93,
+        evidence: ["gửi a 1 lọ về ntt15 82 Nguyễn Tuân Hà Nội"],
+        source: "llm",
+      },
+      {
+        type: "continue_order_collection",
+        confidence: 0.98,
+        evidence: ["gửi a 1 lọ"],
+        source: "llm",
+      },
+    ],
+  });
 
   assert.equal(selected.state.selectedQuantity, 1);
   assert.match(selected.state.orderDraft?.legacyAddress ?? "", /ntt15 82 Nguyễn Tuân.*Hà Nội/iu);
@@ -3076,33 +3086,29 @@ test("thu đơn tích lũy tên và địa chỉ qua nhiều tin, chỉ hỏi l�
   assert.match(selected.reply, /SĐT đủ 10 số.*9 chữ số/isu);
   assert.doesNotMatch(selected.reply, /chưa thấy thông tin|trong một tin nhắn/iu);
 
-  const supplemented = chat.chat(
-    sessionId,
-    "ntt15 82 Nguyễn Tuân Hà Nội 022299933 Luffi",
-    {
-      intent: "order_support",
-      topic: "order",
-      confidence: 0.98,
-      needsClarification: false,
-      slots: {},
-      actions: [
-        {
-          type: "record_fact",
-          field: "recipientName",
-          value: "Luffi",
-          confidence: 0.98,
-          evidence: ["Luffi"],
-          source: "llm",
-        },
-        {
-          type: "continue_order_collection",
-          confidence: 0.98,
-          evidence: ["Luffi"],
-          source: "llm",
-        },
-      ],
-    },
-  );
+  const supplemented = chat.chat(sessionId, "ntt15 82 Nguyễn Tuân Hà Nội 022299933 Luffi", {
+    intent: "order_support",
+    topic: "order",
+    confidence: 0.98,
+    needsClarification: false,
+    slots: {},
+    actions: [
+      {
+        type: "record_fact",
+        field: "recipientName",
+        value: "Luffi",
+        confidence: 0.98,
+        evidence: ["Luffi"],
+        source: "llm",
+      },
+      {
+        type: "continue_order_collection",
+        confidence: 0.98,
+        evidence: ["Luffi"],
+        source: "llm",
+      },
+    ],
+  });
 
   assert.equal(supplemented.state.orderDraft?.recipientName, "Luffi");
   assert.equal(supplemented.state.orderDraft?.phone, undefined);

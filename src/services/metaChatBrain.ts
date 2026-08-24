@@ -1,4 +1,4 @@
-import { retrieveKnowledgeMatches } from "../domain/knowledge.js";
+import { retrieveKnowledgeMatches, type KnowledgeMatch } from "../domain/knowledge.js";
 import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
 import {
   missingRequiredAnswerTopics,
@@ -13,7 +13,7 @@ import {
   type ActionRolloutComparison,
   type MultiActionRolloutMode,
 } from "../domain/actionRollout.js";
-import type { SemanticUnderstanding } from "../domain/consultation.js";
+import type { SemanticTopic, SemanticUnderstanding } from "../domain/consultation.js";
 import type { SupportedOrderQuantity } from "../domain/conversationActions.js";
 import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
@@ -86,23 +86,42 @@ export class MetaChatBrain {
     let interpretationStatus: "not_run" | "interpreted" | "fallback" | "skipped" | "unavailable" = "not_run";
     let interpretationReason: string | undefined;
     if (!fastTransition) {
-      const matches = retrieveKnowledgeMatches({
+      let matches = retrieveKnowledgeMatches({
         tenantId: liveKnowledgeTenant,
         query: contextualKnowledgeQuery(input.text, before),
         entities: liveKnowledge,
-        limit: 3,
+        // Compound customer messages need breadth. The retriever keeps a leader
+        // for every detected concept, while the LLM remains the semantic owner.
+        limit: 6,
       });
-      knowledge = matches.map(({ entity: { id, title, content, responseGuidance } }) => ({
-        id,
-        title,
-        content,
-        ...(responseGuidance ? { responseGuidance } : {}),
-      }));
-      const rawLlmResult = await this.llm.interpret({
+      knowledge = knowledgeContexts(matches);
+      let rawLlmResult = await this.llm.interpret({
         customerMessage: input.text,
         state: before,
         knowledge,
       });
+      let knowledgeRetry = false;
+      if (needsKnowledgeRetry(rawLlmResult)) {
+        const expandedMatches = semanticKnowledgeQueries(rawLlmResult).flatMap((query) =>
+          retrieveKnowledgeMatches({
+            tenantId: liveKnowledgeTenant,
+            query,
+            entities: liveKnowledge,
+            limit: 3,
+          }),
+        );
+        const mergedMatches = mergeKnowledgeMatches(matches, expandedMatches, 8);
+        if (mergedMatches.length > matches.length) {
+          matches = mergedMatches;
+          knowledge = knowledgeContexts(matches);
+          rawLlmResult = await this.llm.interpret({
+            customerMessage: input.text,
+            state: before,
+            knowledge,
+          });
+          knowledgeRetry = true;
+        }
+      }
       const retrievedIds = new Set(knowledge.map((entity) => entity.id));
       const validCitations = (rawLlmResult.knowledgeIds ?? []).filter((id) => retrievedIds.has(id));
       const citationCandidates = rawLlmResult.draftReply
@@ -150,6 +169,7 @@ export class MetaChatBrain {
         citedKnowledgeIds: llmResult.knowledgeIds ?? [],
         unsupportedQuestionCount: llmResult.unsupportedQuestions?.length ?? 0,
         groundingConfidence: llmResult.groundingConfidence,
+        knowledgeRetry,
       });
     }
     const liveVariant = selectActionExecutionMode({
@@ -447,8 +467,8 @@ type QuestionCoverageAssessment = {
   coveredCount: number;
   missingCount: number;
   reason: string;
-  requiredTopics: RequiredAnswerTopic[];
-  missingTopics: RequiredAnswerTopic[];
+  requiredTopics: (RequiredAnswerTopic | SemanticTopic)[];
+  missingTopics: (RequiredAnswerTopic | SemanticTopic)[];
 };
 
 export function extractCustomerQuestionClauses(value: string): string[] {
@@ -476,9 +496,19 @@ function assessQuestionCoverage(input: {
   orderSelectionChanged: boolean;
   candidateReply: string;
 }): QuestionCoverageAssessment {
-  const questionCount = extractCustomerQuestionClauses(input.customerMessage).length;
-  const requiredTopics = requiredAnswerTopics(input.customerMessage);
-  const missingTopics = missingRequiredAnswerTopics(input.customerMessage, input.candidateReply);
+  const explicitQuestionCount = extractCustomerQuestionClauses(input.customerMessage).length;
+  const requiredFactTopics = requiredAnswerTopics(input.customerMessage);
+  const requiredSemanticTopics = semanticAnswerTopics(input.interpreted);
+  const questionCount = Math.max(
+    explicitQuestionCount,
+    requiredSemanticTopics.length,
+    input.interpreted.unsupportedQuestions?.length ?? 0,
+  );
+  const requiredTopics = [...new Set([...requiredFactTopics, ...requiredSemanticTopics])];
+  const missingTopics = [
+    ...missingRequiredAnswerTopics(input.customerMessage, input.candidateReply),
+    ...requiredSemanticTopics.filter((topic) => !replyCoversSemanticTopic(topic, input.candidateReply)),
+  ].filter((topic, index, all) => all.indexOf(topic) === index);
   const enforced = questionCount >= 1;
   if (!enforced) {
     return {
@@ -527,6 +557,9 @@ function assessQuestionCoverage(input: {
     (input.interpreted.knowledgeIds?.length ?? 0) > 0
       ? actionCoveredCount
       : 0;
+  const semanticCoveredCount = requiredSemanticTopics.filter((topic) =>
+    replyCoversSemanticTopic(topic, input.candidateReply),
+  ).length;
   // The LLM is still called first for product questions. If it returns only a
   // semantic classification, a deterministic response grounded in approved KB
   // may pass — but only when the actual reply covers every customer question.
@@ -539,6 +572,7 @@ function assessQuestionCoverage(input: {
     Math.min(actionCoveredCount, responseCoveredCount),
     groundedBaseCoveredCount,
     groundedLlmCoveredCount,
+    semanticCoveredCount,
   );
   const missingCount = Math.max(0, questionCount - coveredCount);
   return {
@@ -555,6 +589,55 @@ function assessQuestionCoverage(input: {
     requiredTopics,
     missingTopics,
   };
+}
+
+function semanticAnswerTopics(semantic: SemanticUnderstanding): SemanticTopic[] {
+  const topics = [
+    ...(semantic.asksDirectAnswer === true && semantic.topic ? [semantic.topic] : []),
+    ...(semantic.actions ?? [])
+      .filter((action) => action.type === "answer_question")
+      .map((action) => action.topic),
+  ];
+  return topics.filter((topic, index, all) => topic !== "other" && all.indexOf(topic) === index);
+}
+
+function replyCoversSemanticTopic(topic: SemanticTopic, reply: string): boolean {
+  const text = reply.toLocaleLowerCase("vi-VN").normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/gu, "d");
+  switch (topic) {
+    case "price":
+      return /\b(?:gia|combo)\b|\b\d{2,3}(?:[. ]\d{3})+(?:d|đ)?\b/u.test(text);
+    case "promotion":
+      return /\b(?:qua tang|tang|uu dai|khuyen mai|giam|tiet kiem)\b/u.test(text);
+    case "shipping":
+    case "delivery":
+      return /\b(?:giao|ship|van chuyen|mien phi giao|sai gon|tp hcm|thanh pho ho chi minh)\b/u.test(text);
+    case "comparison":
+      return /\b(?:khac|giong|so voi|lan thuong|khu mui|ngan tiet)\b/u.test(text);
+    case "effectiveness":
+    case "sweat":
+      return /\b(?:mo hoi|kho thoang|ngan tiet|hieu qua|tham|o ao|bet)\b/u.test(text);
+    case "odor":
+      return /\b(?:mui|hoi nach|khu mui|kiem soat mui)\b/u.test(text);
+    case "usage":
+      return /\b(?:dung|boi|lan|buoi toi|tan suat|lan mong)\b/u.test(text);
+    case "pregnancy":
+      return /\b(?:mang thai|me bau|phu nu dang mang thai|hoi bac si)\b/u.test(text);
+    case "breastfeeding":
+      return /\b(?:cho con bu|nuoi con bang sua me|hoi bac si)\b/u.test(text);
+    case "child_age":
+      return /\b(?:tre|tuoi|duoi 12|tu 12)\b/u.test(text);
+    case "sensitive_skin":
+    case "irritation":
+      return /\b(?:nhay cam|kich ung|ngua|rat|do da|thu tren vung nho)\b/u.test(text);
+    case "damaged_goods":
+      return /\b(?:vo|hong|be|ro ri|mop|doi hang|kiem tra)\b/u.test(text);
+    case "negative_review":
+      return /\b(?:ghi nhan|kiem tra|phan hoi|bo phan)\b/u.test(text);
+    case "order":
+      return /\b(?:don|nguoi nhan|so dien thoai|dia chi|xac nhan)\b/u.test(text);
+    case "other":
+      return true;
+  }
 }
 
 function coverageOverlap(question: string, reply: string): number {
@@ -664,9 +747,7 @@ export function isFastTransition(customerMessage: string, state: DemoChatState):
   }
   if (
     state.pendingAction === "send_authenticity_legal_summary" &&
-    /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:di|minh|em|chi|anh)|vang|uh|u)(?: a| nhe)?$/.test(
-      text,
-    )
+    /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:di|minh|em|chi|anh)|vang|uh|u)(?: a| nhe)?$/.test(text)
   ) {
     return true;
   }
@@ -727,4 +808,67 @@ function contextualKnowledgeQuery(customerMessage: string, state: DemoChatState)
     .slice(-2)
     .map((turn) => turn.text.replace(/(?<!\d)0\d{9}(?!\d)/gu, "[SĐT]"));
   return [...priorCustomerTurns, customerMessage].join("\n");
+}
+
+function knowledgeContexts(matches: readonly KnowledgeMatch[]): ApprovedKnowledgeContext[] {
+  return matches.map(({ entity: { id, title, content, responseGuidance } }) => ({
+    id,
+    title,
+    content,
+    ...(responseGuidance ? { responseGuidance } : {}),
+  }));
+}
+
+function needsKnowledgeRetry(semantic: SemanticUnderstanding): boolean {
+  return Boolean(
+    semantic.unsupportedQuestions?.length ||
+    semantic.actions?.some(
+      (action) =>
+        action.type === "handoff_to_human" &&
+        /knowledge|du lieu|dữ liệu|chua co|chưa có/iu.test(action.reason ?? ""),
+    ),
+  );
+}
+
+function semanticKnowledgeQueries(semantic: SemanticUnderstanding): string[] {
+  const topics = new Set([
+    semantic.topic,
+    ...(semantic.actions ?? [])
+      .filter((action) => action.type === "answer_question")
+      .map((action) => action.topic),
+  ]);
+  const queries = new Set<string>(semantic.unsupportedQuestions ?? []);
+  if (
+    ["price_change", "price_request", "promotion_inquiry", "price_objection", "negotiation"].includes(
+      semantic.intent ?? "",
+    ) ||
+    topics.has("price") ||
+    topics.has("promotion") ||
+    topics.has("shipping")
+  ) {
+    queries.add("giá bao nhiêu combo 2 lọ phí giao miễn phí giao quà tặng");
+  }
+  if (topics.has("effectiveness") || topics.has("sweat") || topics.has("odor")) {
+    queries.add("hiệu quả giảm mồ hôi mùi cơ thể thâm nách bết dính ố áo");
+  }
+  if (topics.has("usage")) queries.add("cách dùng thời điểm tần suất lăn Stopirex");
+  if (topics.has("pregnancy")) queries.add("phụ nữ mang thai mẹ bầu dùng Stopirex");
+  if (topics.has("breastfeeding")) queries.add("phụ nữ cho con bú dùng Stopirex");
+  if (topics.has("child_age")) queries.add("trẻ em độ tuổi dùng Stopirex");
+  if (topics.has("irritation") || topics.has("sensitive_skin")) {
+    queries.add("da nhạy cảm kích ứng ngứa rát dùng Stopirex");
+  }
+  return [...queries].filter(Boolean).slice(0, 6);
+}
+
+function mergeKnowledgeMatches(
+  primary: readonly KnowledgeMatch[],
+  expanded: readonly KnowledgeMatch[],
+  limit: number,
+): KnowledgeMatch[] {
+  return [...primary, ...expanded]
+    .filter(
+      (match, index, all) => all.findIndex((candidate) => candidate.entity.id === match.entity.id) === index,
+    )
+    .slice(0, limit);
 }

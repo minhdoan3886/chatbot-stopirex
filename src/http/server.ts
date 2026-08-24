@@ -6,6 +6,7 @@ import { isBotAuthoredEcho, parseMetaWebhook } from "../adapters/metaEvents.js";
 import { PostgresStore } from "../infrastructure/postgres.js";
 import { RedisRuntime } from "../infrastructure/redis.js";
 import { StructuredLogger } from "../services/logger.js";
+import { reconcileKnowledgeBackedPopulationSafety } from "../services/metaChatBrain.js";
 import {
   DemoChatService,
   isCompoundOrderUpdateQuestion,
@@ -300,7 +301,10 @@ const server = createServer(async (request, response) => {
           state: demoChat.peek(sessionId),
           knowledge: retrievedKnowledge,
         });
-        const interpreted = attachRetrievedGrounding(interpretedRaw, retrievedKnowledge);
+        const interpreted = reconcileKnowledgeBackedPopulationSafety(
+          attachRetrievedGrounding(interpretedRaw, retrievedKnowledge),
+          retrievedKnowledge[0]?.id,
+        );
         const result = demoChat.chat(sessionId, body.text, interpreted, context);
         const composed = codexLlm.adoptInterpretedDraft({
           customerMessage: body.text,

@@ -339,7 +339,7 @@ export class MetaChatBrain {
   }
 }
 
-function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstanding>(
+export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstanding>(
   semantic: T,
   primaryRetrievedKnowledgeId?: string,
 ): T {

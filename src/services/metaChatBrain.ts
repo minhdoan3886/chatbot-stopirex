@@ -338,7 +338,6 @@ export class MetaChatBrain {
 
 function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstanding>(semantic: T): T {
   if (
-    (semantic.groundingConfidence ?? 0) < 0.8 ||
     !semantic.actions?.some((action) => action.type === "answer_question") ||
     semantic.actions.some(
       (action) => action.type !== "answer_question" && action.type !== "handoff_to_human",

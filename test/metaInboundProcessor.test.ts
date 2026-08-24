@@ -312,7 +312,6 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
         uncertainties: ["Chưa có thông tin xác nhận"],
         knowledgeIds: ["audience-pregnancy"],
         unsupportedQuestions: ["mẹ bầu dùng được k e"],
-        groundingConfidence: 0.92,
         draftReply:
           "Dạ mẹ bầu nên tham khảo ý kiến bác sĩ trước khi dùng Stopirex ạ. Em chuyển bộ phận liên quan kiểm tra và hỗ trợ mình tiếp nhé.",
         slots: {},

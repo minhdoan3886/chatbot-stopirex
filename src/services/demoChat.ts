@@ -16,7 +16,11 @@ import {
   type DecisionTrace,
   type PendingAction,
 } from "../domain/conversationDecision.js";
-import { reconcileConversationActions, type SupportedOrderQuantity } from "../domain/conversationActions.js";
+import {
+  reconcileConversationActions,
+  type ConversationAction,
+  type SupportedOrderQuantity,
+} from "../domain/conversationActions.js";
 import {
   reduceOrderTransaction,
   type OrderMutationAction,
@@ -339,6 +343,13 @@ export class DemoChatService {
       optOut: isOptOut(text),
       collectingOrder: session.pipeline !== "6.Đã tạo đơn" && Boolean(session.selectedQuantity),
     });
+    const semanticOrderDataRecorded =
+      session.pipeline !== "6.Đã tạo đơn" &&
+      Boolean(
+        session.selectedQuantity ||
+          (semantic.intent === "buying" && requestedQuantity && requestedQuantity <= 5),
+      ) &&
+      applySemanticOrderUpdates(session, actionPlan.accepted, raw);
     const multiActionEnabled = context.actionExecutionMode !== "legacy";
     const exactRouteIsHardGuard = Boolean(
       exactIntent &&
@@ -398,7 +409,7 @@ export class DemoChatService {
         Boolean(session.selectedQuantity) &&
         !effectiveExactIntent &&
         !effectiveCareIssue &&
-        isLikelyOrderData(raw, session.order),
+        (semanticOrderDataRecorded || isLikelyOrderData(raw, session.order)),
       affirmativeFollowup:
         isAffirmativeFollowup(text) ||
         semantic.affirmation === true ||
@@ -556,7 +567,7 @@ export class DemoChatService {
         [],
         "Yêu cầu nhắc lại đơn được tách khỏi price_request.",
       );
-      return this.respond(session, orderCollectionReply(session));
+      return this.respond(session, orderCollectionReply(session, raw));
     }
 
     if (isRefundPolicyFollowup(session, text)) {
@@ -606,7 +617,10 @@ export class DemoChatService {
       session.selectedQuantity &&
       !isExplicitCustomerQuestion(raw) &&
       !isPriceRequest(text) &&
-      (observedEntities.recipientName || observedEntities.deliveryNote || observedEntities.address);
+      (observedEntities.recipientName ||
+        observedEntities.deliveryNote ||
+        observedEntities.address ||
+        semanticOrderDataRecorded);
     if (pureCommittedOrderEntity) {
       session.pipeline = "5.Chờ TT KH";
       session.consultation = { ...session.consultation, stage: "S8.order" };
@@ -615,7 +629,7 @@ export class DemoChatService {
       session.activeSkill = "order-closing";
       session.skillReason = "Response Planner phản hồi từ entity transaction vừa commit.";
       if (orderHasAllFields(session.order)) session.pendingAction = "confirm_order";
-      return this.respond(session, orderCollectionReply(session));
+      return this.respond(session, orderCollectionReply(session, raw));
     }
 
     if (isResumeExistingRetailOrder(session, text) && orderHasAllFields(session.order)) {
@@ -1248,14 +1262,16 @@ export class DemoChatService {
         "Một tin nhắn có nhiều hành động: trả lời câu hỏi trước, sau đó ghi nhận số lượng và tiếp tục thu đơn.";
       session.signal = undefined;
       recordKnowledge(session, knowledgeForActionTopics(actionPlan.answerTopics, text));
-      const recordedOrderData = mergeOrderData(session, raw);
+      const recordedOrderData = mergeOrderData(session, raw) || semanticOrderDataRecorded;
       if (recordedOrderData && orderHasAllFields(session.order)) {
         session.pendingAction = "confirm_order";
         session.lastDecision.pendingActionAfter = "confirm_order";
       }
       return this.respond(session, [
         answer,
-        recordedOrderData ? orderCollectionReply(session) : multiActionOrderInformationRequestReply(quantity),
+        recordedOrderData
+          ? orderCollectionReply(session, raw)
+          : multiActionOrderInformationRequestReply(quantity),
       ]);
     }
 
@@ -1393,7 +1409,7 @@ export class DemoChatService {
     if (decision.route === "order_collection") {
       session.orderCollectionPaused = false;
       session.lastIntent = "order_support";
-      const recorded = mergeOrderData(session, raw);
+      const recorded = mergeOrderData(session, raw) || semanticOrderDataRecorded;
       session.pipeline = "5.Chờ TT KH";
       session.consultation = {
         ...session.consultation,
@@ -1405,7 +1421,7 @@ export class DemoChatService {
       }
       return this.respond(
         session,
-        recorded ? orderCollectionReply(session) : orderCollectionClarificationReply(session),
+        recorded ? orderCollectionReply(session, raw) : orderCollectionClarificationReply(session),
       );
     }
 
@@ -1439,13 +1455,13 @@ export class DemoChatService {
       session.activeSkill = "order-closing";
       session.skillReason = "Khách đã chọn số lượng rõ ràng sau khi nhận báo giá.";
       session.signal = undefined;
-      const recordedOrderData = mergeOrderData(session, raw);
+      const recordedOrderData = mergeOrderData(session, raw) || semanticOrderDataRecorded;
       if (recordedOrderData) {
         if (orderHasAllFields(session.order)) {
           session.pendingAction = "confirm_order";
           session.lastDecision.pendingActionAfter = "confirm_order";
         }
-        return this.respond(session, orderCollectionReply(session));
+        return this.respond(session, orderCollectionReply(session, raw));
       }
       if (isNegotiation(text)) {
         return this.respond(
@@ -4397,8 +4413,8 @@ function orderInformationRequestReply(quantity: SupportedOrderQuantity): string 
   return [
     `Dạ, em ghi nhận mình chọn ${quantityLabel(quantity)} nhé.`,
     ...(gift ? [`Đơn này được tặng ${gift}.`] : []),
-    "Để em lên đơn chính xác, mình gửi giúp em trong một tin nhắn:",
-    "1. Tên người nhận\n2. SĐT\n3. Địa chỉ trước sáp nhập đầy đủ số nhà/đường/thôn, phường/xã, quận/huyện và tỉnh/thành phố ạ.",
+    "Để em lên đơn chính xác, mình gửi giúp em các thông tin sau (có thể gửi từng tin):",
+    "1. Tên người nhận\n2. SĐT 10 số\n3. Địa chỉ trước sáp nhập đầy đủ số nhà/đường/thôn, phường/xã, quận/huyện và tỉnh/thành phố ạ.",
   ].join("\n\n");
 }
 
@@ -4409,7 +4425,7 @@ function multiActionOrderInformationRequestReply(quantity: SupportedOrderQuantit
     quantity === 1
       ? `${formatVnd(selected.productPrice.amount)} + ${formatVnd(selected.shippingFee.amount)} phí giao`
       : `${formatVnd(selected.total.amount)}, miễn phí giao`;
-  return `Dạ, em ghi nhận mình lấy ${quantityLabel(quantity)} ạ. Đơn hiện là ${price}${gift ? ` và được tặng ${gift}` : ""}. Mình gửi giúp em tên người nhận, SĐT và địa chỉ trước sáp nhập đầy đủ để em lên đơn ạ.`;
+  return `Dạ, em ghi nhận mình lấy ${quantityLabel(quantity)} ạ. Đơn hiện là ${price}${gift ? ` và được tặng ${gift}` : ""}. Mình gửi giúp em tên người nhận, SĐT và địa chỉ trước sáp nhập đầy đủ để em lên đơn; SĐT gồm 10 số và mình có thể gửi từng phần ạ.`;
 }
 
 function multiActionAnswer(
@@ -5102,6 +5118,46 @@ function clearOrderDraft(session: DemoSession): void {
   delete session.trackingNumber;
   delete session.pendingAction;
   session.freeShippingApproved = false;
+}
+
+function applySemanticOrderUpdates(
+  session: DemoSession,
+  actions: readonly ConversationAction[],
+  raw: string,
+): boolean {
+  const mutations: OrderMutationAction[] = [];
+  for (const action of actions) {
+    if (action.type !== "update_order") continue;
+    const { recipientName, phone, legacyAddress, deliveryNote } = action.fields;
+    if (phone && extractPhoneNumber(phone) === phone && raw.includes(phone)) {
+      mutations.push({ type: "set_phone", phone, evidence: raw });
+    }
+    if (recipientName && looksLikeOrderRecipientCandidate(recipientName)) {
+      mutations.push({
+        type: "set_recipient_name",
+        recipientName: formatRecipientName(recipientName),
+        evidence: raw,
+      });
+    }
+    if (legacyAddress && looksLikeAddress(legacyAddress)) {
+      const canonical = canonicalizeLegacyAddress(legacyAddress);
+      const replacesExisting =
+        !session.order.legacyAddress ||
+        /(?:đổi|doi|thay|chuyển|chuyen).{0,24}(?:địa chỉ|dia chi|giao|ship)/iu.test(raw);
+      mutations.push({
+        type: "set_address",
+        address: canonical,
+        operation: replacesExisting ? "replace" : "append",
+        evidence: raw,
+      });
+    }
+    if (deliveryNote) {
+      mutations.push({ type: "set_delivery_note", deliveryNote, evidence: raw });
+    }
+  }
+  if (mutations.length === 0) return false;
+  const transaction = commitOrderMutations(session, mutations);
+  return transaction.changedFields.length > 0;
 }
 
 function mergeOrderData(session: DemoSession, raw: string): boolean {
@@ -5915,7 +5971,7 @@ function orderHasAllFields(order: OrderDraft): boolean {
   return missingOrderFields(order).length === 0;
 }
 
-function orderCollectionReply(session: DemoSession): string {
+function orderCollectionReply(session: DemoSession, raw = ""): string {
   if (orderHasAllFields(session.order)) {
     const selected = quote(session.selectedQuantity ?? 1);
     const shippingFeeVnd =
@@ -5935,9 +5991,14 @@ function orderCollectionReply(session: DemoSession): string {
     paymentMethod: "Thanh toán",
   };
   const missingFields = missingOrderFields(session.order);
+  const invalidPhoneLength = invalidPhoneDigitCount(raw);
   const missing = missingFields
     .filter((field) => field !== "legacyAddress")
-    .map((field) => labels[field] ?? field);
+    .map((field) =>
+      field === "phone" && invalidPhoneLength
+        ? `SĐT đủ 10 số (số vừa gửi có ${invalidPhoneLength} chữ số)`
+        : (labels[field] ?? field),
+    );
   const addressParts: Record<string, string> = {
     detail: "số nhà/đường/thôn",
     ward: "phường/xã/thị trấn",
@@ -5952,6 +6013,7 @@ function orderCollectionReply(session: DemoSession): string {
   }
   const recorded = [
     session.selectedQuantity ? quantityLabel(session.selectedQuantity) : undefined,
+    session.order.recipientName ? `tên người nhận ${session.order.recipientName}` : undefined,
     session.order.phone ? `SĐT ${session.order.phone}` : undefined,
     session.order.legacyAddress ? `địa chỉ ${session.order.legacyAddress}` : undefined,
     session.order.deliveryNote ? `ghi chú “${session.order.deliveryNote}”` : undefined,
@@ -5960,6 +6022,11 @@ function orderCollectionReply(session: DemoSession): string {
     ? `Dạ em đã ghi nhận ${recorded.join("; ")} ạ.`
     : "Dạ em đã ghi nhận thông tin vừa gửi.";
   return `${acknowledgement}\n\nMình bổ sung giúp em:\n• ${missing.join("\n• ")} ạ.`;
+}
+
+function invalidPhoneDigitCount(raw: string): number | undefined {
+  const candidate = raw.match(/(?<!\d)(0\d{7,10})(?!\d)/u)?.[1];
+  return candidate && candidate.length !== 10 ? candidate.length : undefined;
 }
 
 function orderCollectionClarificationReply(session: DemoSession): string {

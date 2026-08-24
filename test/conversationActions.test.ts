@@ -228,3 +228,60 @@ test("phần chưa có nguồn tự tạo handoff nhưng vẫn giữ action tr�
   assert.equal(plan.accepted.some((action) => action.type === "answer_question"), true);
   assert.equal(plan.accepted.some((action) => action.type === "handoff_to_human"), true);
 });
+
+test("update_order chỉ giữ trường LLM trích đúng nguyên văn và loại SĐT thiếu số", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "ntt15 82 Nguyễn Tuân Hà Nội 022299933 Luffi",
+    semantic: semantic({
+      intent: "order_support",
+      actions: [
+        {
+          type: "update_order",
+          fields: {
+            legacyAddress: "ntt15 82 Nguyễn Tuân Hà Nội",
+            phone: "022299933",
+            recipientName: "Luffi",
+          },
+          confidence: 0.98,
+          evidence: ["ntt15 82 Nguyễn Tuân Hà Nội", "022299933", "Luffi"],
+          source: "llm",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: true,
+  });
+
+  const update = plan.accepted.find((action) => action.type === "update_order");
+  assert.deepEqual(update?.fields, {
+    legacyAddress: "ntt15 82 Nguyễn Tuân Hà Nội",
+    recipientName: "Luffi",
+  });
+});
+
+test("update_order không nhận dữ liệu LLM tự suy diễn ngoài tin khách", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "Mình gửi thông tin sau nhé",
+    semantic: semantic({
+      intent: "order_support",
+      actions: [
+        {
+          type: "update_order",
+          fields: {
+            recipientName: "Nguyễn Văn A",
+            phone: "0912345678",
+            legacyAddress: "82 Nguyễn Tuân, Hà Nội",
+          },
+          confidence: 0.99,
+          evidence: ["thông tin sau"],
+          source: "llm",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: true,
+  });
+
+  assert.equal(plan.accepted.some((action) => action.type === "update_order"), false);
+  assert.ok(plan.rejected.some((item) => item.reason === "invalid_order_update"));
+});

@@ -81,9 +81,14 @@ export function reconcileConversationActions(input: {
 }): ConversationActionPlan {
   const raw = input.customerMessage;
   const text = normalize(raw);
-  const candidates: ConversationAction[] = (input.semantic.actions ?? []).map(
-    (action) => ({ ...action, source: action.source ?? "llm" }) as ConversationAction,
-  );
+  const candidates: ConversationAction[] = (input.semantic.actions ?? []).map((action) => {
+    const candidate = { ...action, source: action.source ?? "llm" } as ConversationAction;
+    if (candidate.type !== "update_order" || candidate.source !== "llm") return candidate;
+    return {
+      ...candidate,
+      fields: groundedOrderUpdateFields(candidate.fields, raw),
+    };
+  });
 
   if (
     (input.semantic.unsupportedQuestions?.length ?? 0) > 0 &&
@@ -383,9 +388,6 @@ function validateAction(
   if (action.type === "update_order" && Object.keys(action.fields).length === 0) {
     return "invalid_order_update";
   }
-  if (action.type === "update_order" && action.source === "llm") {
-    return "invalid_order_update";
-  }
   if (
     action.type === "record_fact" &&
     ![
@@ -401,6 +403,38 @@ function validateAction(
     return "invalid_fact";
   }
   return undefined;
+}
+
+function groundedOrderUpdateFields(
+  fields: Record<string, string>,
+  customerMessage: string,
+): Record<string, string> {
+  const allowed = new Set(["recipientName", "phone", "legacyAddress", "deliveryNote"]);
+  const normalizedMessage = normalize(customerMessage);
+  const digitGroups: string[] = [...(customerMessage.match(/\d+/gu) ?? [])];
+  return Object.fromEntries(
+    Object.entries(fields).filter(([field, rawValue]) => {
+      if (!allowed.has(field)) return false;
+      const value = rawValue.trim();
+      if (!value) return false;
+      if (field === "phone") {
+        return /^0\d{9}$/u.test(value) && digitGroups.includes(value);
+      }
+      const normalizedValue = normalize(value);
+      if (!normalizedValue || !normalizedMessage.includes(normalizedValue)) return false;
+      if (field === "recipientName") {
+        return (
+          value.length <= 50 &&
+          /^[\p{L}\s]+$/u.test(value) &&
+          value.trim().split(/\s+/u).length <= 6
+        );
+      }
+      if (field === "legacyAddress") {
+        return value.length <= 160 && /\d|\b(?:duong|pho|ngo|thon|phuong|xa|quan|huyen|tinh|ha noi)\b/u.test(normalizedValue);
+      }
+      return value.length <= 160;
+    }),
+  );
 }
 
 function inferredAnswerTopic(

@@ -2576,6 +2576,94 @@ test("explicit address change replaces old address while preserving quantity pho
   assert.doesNotMatch(eta.reply, /chuyển bộ phận liên quan/u);
 });
 
+test("thu đơn tích lũy tên và địa chỉ qua nhiều tin, chỉ hỏi lại SĐT thiếu số", () => {
+  const chat = new DemoChatService();
+  const sessionId = "production-partial-order-fields";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+
+  const selected = chat.chat(
+    sessionId,
+    "ờ thế gửi a 1 lọ về ntt15 82 Nguyễn Tuân Hà Nội nhé\nsố 022299933",
+    {
+      intent: "buying",
+      topic: "order",
+      confidence: 0.98,
+      needsClarification: false,
+      slots: {},
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 1,
+          confidence: 0.99,
+          evidence: ["gửi a 1 lọ"],
+          source: "llm",
+        },
+        {
+          type: "update_order",
+          fields: {
+            legacyAddress: "ntt15 82 Nguyễn Tuân Hà Nội",
+            phone: "022299933",
+          },
+          confidence: 0.98,
+          evidence: ["ntt15 82 Nguyễn Tuân Hà Nội", "022299933"],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.98,
+          evidence: ["gửi a 1 lọ"],
+          source: "llm",
+        },
+      ],
+    },
+  );
+
+  assert.equal(selected.state.selectedQuantity, 1);
+  assert.match(selected.state.orderDraft?.legacyAddress ?? "", /ntt15 82 Nguyễn Tuân.*Hà Nội/iu);
+  assert.equal(selected.state.orderDraft?.phone, undefined);
+  assert.match(selected.reply, /SĐT đủ 10 số.*9 chữ số/isu);
+  assert.doesNotMatch(selected.reply, /chưa thấy thông tin|trong một tin nhắn/iu);
+
+  const supplemented = chat.chat(
+    sessionId,
+    "ntt15 82 Nguyễn Tuân Hà Nội 022299933 Luffi",
+    {
+      intent: "order_support",
+      topic: "order",
+      confidence: 0.98,
+      needsClarification: false,
+      slots: {},
+      actions: [
+        {
+          type: "update_order",
+          fields: {
+            legacyAddress: "ntt15 82 Nguyễn Tuân Hà Nội",
+            phone: "022299933",
+            recipientName: "Luffi",
+          },
+          confidence: 0.98,
+          evidence: ["ntt15 82 Nguyễn Tuân Hà Nội", "022299933", "Luffi"],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.98,
+          evidence: ["Luffi"],
+          source: "llm",
+        },
+      ],
+    },
+  );
+
+  assert.equal(supplemented.state.orderDraft?.recipientName, "Luffi");
+  assert.equal(supplemented.state.orderDraft?.phone, undefined);
+  assert.equal(supplemented.state.orderMissing.includes("recipientName"), false);
+  assert.deepEqual(supplemented.state.orderMissing, ["phone", "legacyAddress"]);
+  assert.match(supplemented.reply, /đã ghi nhận.*tên người nhận Luffi/isu);
+  assert.match(supplemented.reply, /SĐT đủ 10 số.*9 chữ số/isu);
+  assert.doesNotMatch(supplemented.reply, /chưa thấy thông tin|trong một tin nhắn/iu);
+});
+
 test("quantity mentioned in a price and shipping question does not commit an order", () => {
   const chat = new DemoChatService();
   const result = chat.chat(

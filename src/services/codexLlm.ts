@@ -1240,6 +1240,7 @@ function buildInterpretPrompt(input: {
     "Số lượng 1–5 lọ là mức hệ thống có thể xử lý; nếu khách yêu cầu từ 6 lọ trở lên, tạo handoff_to_human và không tiếp tục thu thông tin đơn.",
     "Ưu tiên ý khách đang muốn nói ở lượt hiện tại và dùng lịch sử để hiểu tiếng địa phương, từ viết tắt, sai chính tả hoặc nói tiếp ý trước. Không đặt needsClarification chỉ vì cách viết không chuẩn nếu toàn câu vẫn chỉ có một cách hiểu hợp lý.",
     "Bất biến số lượng: nếu khách đang chốt/mua và toàn câu thể hiện rõ một số lượng 1–5, kể cả số viết bằng chữ, lỗi gõ gần nghĩa hoặc dùng từ chỉ sản phẩm như chai/lọ, bắt buộc tạo đủ select_quantity với số chuẩn và continue_order_collection. evidence phải chép nguyên văn cả cụm mua + số lượng từ tin khách; không được chỉ tạo continue_order_collection.",
+    "Bất biến mâu thuẫn mua: nếu cùng một MESSAGE vừa có mệnh đề chốt/mua kèm số lượng vừa có mệnh đề từ chối/không lấy, không tự coi vế cuối là quyết định cuối. Bắt buộc xuất cả select_quantity, continue_order_collection và decline_purchase với evidence riêng, đồng thời needsClarification=true để hệ thống chỉ hỏi lại quyết định cuối.",
     "Bước hiện tại chỉ là thông tin tham khảo. Không ép tin nhắn vào bước, form hoặc câu hỏi bot vừa hỏi.",
     "Nếu khách hỏi trực tiếp, phải đặt asksDirectAnswer=true kể cả khi khách chưa trả lời đủ thông tin tư vấn.",
     "Nếu khách đang trả lời câu hỏi gần nhất của bot về bối cảnh, tình trạng, sản phẩm từng dùng hoặc độ tuổi (ví dụ bot hỏi mồ hôi/mùi và khách nói 'mình bị cả mồ hôi ướt áo và mùi'): đây là dữ liệu tư vấn, không phải câu hỏi của khách. Dùng intent consultation, asksDirectAnswer=false, không tạo answer_question; trích đúng slots rồi viết lời ghi nhận và câu tư vấn nối tiếp phù hợp.",
@@ -1364,6 +1365,7 @@ function buildCompactInterpretPrompt(input: {
     "Mỗi ý có nghĩa phải thành một action kèm confidence 0..1 và evidence trích ngắn từ chính tin khách. Không suy đoán slot. Nếu có nhiều cách hiểu hợp lý, needsClarification=true và chỉ hỏi đúng phần chưa rõ.",
     "Ưu tiên action: an toàn/chuyển người → answer_question → record_fact → select_quantity/update_order → continue_order_collection. Không tự tạo đơn, giảm giá, freeship, hoàn tiền hoặc handoff nếu chưa có căn cứ.",
     "Bất biến số lượng: nếu khách đang chốt/mua và toàn câu thể hiện rõ một số lượng 1–5, kể cả số viết bằng chữ, lỗi gõ gần nghĩa hoặc dùng từ chỉ sản phẩm như chai/lọ, bắt buộc tạo đủ select_quantity với số chuẩn và continue_order_collection. evidence phải chép nguyên văn cả cụm mua + số lượng từ MESSAGE; không được chỉ tạo continue_order_collection.",
+    "Bất biến mâu thuẫn mua: nếu cùng một MESSAGE vừa có mệnh đề chốt/mua kèm số lượng vừa có mệnh đề từ chối/không lấy, không tự coi vế cuối là quyết định cuối. Bắt buộc xuất cả select_quantity, continue_order_collection và decline_purchase với evidence riêng, đồng thời needsClarification=true để hệ thống chỉ hỏi lại quyết định cuối.",
     "Đang thu đơn: dùng update_order.fields để lấy từng trường khách thực sự gửi, với khóa recipientName, phone, legacyAddress, deliveryNote. Giá trị phải xuất hiện nguyên văn trong MESSAGE; khách có thể gửi qua nhiều tin và không được hỏi lại trường đã có.",
     "phone chỉ hợp lệ khi đúng 10 chữ số, bắt đầu bằng 0. Số thiếu/thừa thì không ghi phone, đưa vào uncertainties và chỉ xin lại SĐT; vẫn giữ tên/địa chỉ hợp lệ trong cùng tin.",
     "Fact bắt buộc: Stopirex có Alcohol dùng làm dung môi trong ngưỡng an toàn của công thức. Sản phẩm có mùi dược tính đặc trưng nhẹ và bay hơi nhanh, không dùng hương thơm để che mùi. Cấm nói không cồn hoặc hoàn toàn không mùi.",
@@ -1467,6 +1469,7 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
     add(
       "'nếu đúng như lời nói, cho mình 1 lọ' → answer_question + select_quantity(1) + continue_order_collection.",
       "'chốt giùm tui mọt chai nghen' → hiểu 'mọt chai' là cách viết sai của một sản phẩm; buying + select_quantity(1) + continue_order_collection, evidence giữ nguyên cả cụm khách viết.",
+      "'chốt giùm tui mọt chai, mà thui hông lấy nữa' → select_quantity(1) + continue_order_collection + decline_purchase, needsClarification=true; không tự chọn vế cuối.",
       "Đang thu đơn mà khách hỏi việc khác → answer_question trước; giữ state đơn, không xin lại dữ liệu đã có.",
       "Đang thu đơn, khách gửi địa chỉ + tên + SĐT thiếu số → update_order chỉ giữ địa chỉ và tên; uncertainties ghi SĐT chưa đủ, không bỏ toàn bộ tin và không xin lại tên/địa chỉ.",
     );

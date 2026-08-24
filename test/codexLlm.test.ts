@@ -386,6 +386,22 @@ test("prompt compact buộc LLM phát hành action số lượng cho tiếng đ�
   assert.match(prompt, /evidence giữ nguyên cả cụm khách viết/u);
 });
 
+test("prompt compact không cho model tự nuốt một vế mua hoặc từ chối đang mâu thuẫn", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "chốt giùm tui mọt chai, mà thui hông lấy nữa",
+      state,
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /Bất biến mâu thuẫn mua/u);
+  assert.match(prompt, /select_quantity, continue_order_collection và decline_purchase/u);
+  assert.match(prompt, /needsClarification=true/u);
+  assert.match(prompt, /không tự chọn vế cuối/u);
+});
+
 test("ép OpenAI nhưng thiếu key thì bridge không tự báo sẵn sàng", () => {
   const bridge = CodexLlmBridge.fromEnvironment({
     LLM_PROVIDER: "openai",

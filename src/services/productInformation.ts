@@ -157,6 +157,7 @@ export function buildProductInformationSnapshot(tenantId: TenantId) {
       "Chỉ dùng dữ kiện có trong kho tri thức đã duyệt.",
       "Không tự tạo mã giảm giá, ưu đãi, freeship hoặc thời gian giao cố định.",
       "Được miễn phí giao cho 1 lọ khi khách mặc cả hoặc hệ thống bắt đầu follow-up; combo 2–5 lọ luôn miễn phí giao.",
+      "Khi khách hỏi giá chung, chỉ hiển thị phương án 1, 2, 3 lọ và quà tặng; chỉ báo phương án 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó.",
       "Từ 6 lọ trở lên phải chuyển tư vấn viên, không tự chốt đơn.",
       "Câu hỏi chưa có dữ liệu phải nói rõ cần kiểm tra; không tự ước lượng.",
       "Khi khách hỏi nhiều ý, trả lời ý hiện tại trước và không làm mất dữ liệu đơn đã ghi nhận.",

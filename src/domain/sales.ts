@@ -117,7 +117,6 @@ export function formatPriceOffer(
         `• Combo ${offer.quantity} lọ: ${money(offer.total.amount)}${offer.shippingFee.amount === 0 ? ", miễn phí giao" : `, phí giao ${money(offer.shippingFee.amount)}`}.`,
     ),
     "• Quà tặng: đơn từ 2 lọ trở lên được tặng 1 túi đa năng vải dệt Stopirex (1 túi/đơn).",
-    "Từ 6 lọ trở lên, bên em chuyển tư vấn viên hỗ trợ riêng ạ.",
     "Anh/chị muốn chọn phương án mấy lọ ạ?",
   ].join("\n");
 }

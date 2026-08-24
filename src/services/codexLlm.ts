@@ -2094,13 +2094,17 @@ function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string
   ) {
     throw actionGroundingError("Câu trả lời xin dữ liệu đơn trong khi action plan đang tạm dừng đơn");
   }
-  const claimedCombo = normalized.match(
-    /(?:đã |em )?(?:ghi nhận|chọn|chốt|lên đơn).*(?:combo\s*)?([2-5])\s*lọ/iu,
-  )?.[1];
-  const claimsUnnamedCombo = /(?:đã |em )?(?:ghi nhận|chọn|chốt|lên đơn).*combo(?!\s*[2-5])/iu.test(
-    normalized,
-  );
-  const claimsOne = /(?:đã |em )?(?:ghi nhận|chọn|chốt|lên đơn).*1 lọ/iu.test(normalized);
+  // Only guard an asserted state transition. A policy explanation such as
+  // “nếu mình chọn 1 lọ mà chưa hiệu quả” is hypothetical and must not be
+  // mistaken for the assistant claiming that the order state was updated.
+  const committedQuantityClaim =
+    /(?:em\s+)?(?:đã\s+)?(?:ghi nhận|chốt|lên đơn)[^.!?\n]{0,140}|em\s+đã\s+chọn[^.!?\n]{0,140}/giu;
+  const committedClaims = [...normalized.matchAll(committedQuantityClaim)].map((match) => match[0]);
+  const claimedCombo = committedClaims
+    .map((claim) => claim.match(/(?:combo\s*)?([2-5])\s*lọ/iu)?.[1])
+    .find(Boolean);
+  const claimsUnnamedCombo = committedClaims.some((claim) => /combo(?!\s*[2-5])/iu.test(claim));
+  const claimsOne = committedClaims.some((claim) => /(?:^|\s)1\s*lọ/iu.test(claim));
   if (claimedCombo && state.selectedQuantity !== Number(claimedCombo)) {
     throw actionGroundingError(
       `Câu trả lời nói đã chọn ${claimedCombo} lọ nhưng state chưa lưu đúng số lượng`,

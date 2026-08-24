@@ -288,6 +288,34 @@ export class MetaChatBrain {
         });
         return base;
       }
+      const approvedRecovery = this.chat.approvedKnowledgeFallback(input.text, interpreted.slots);
+      if (approvedRecovery) {
+        const recoveryCoverage = assessQuestionCoverage({
+          customerMessage: input.text,
+          interpretationStatus,
+          interpreted,
+          compositionStatus: composed.status,
+          base,
+          orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
+          candidateReply: approvedRecovery.reply,
+        });
+        if (recoveryCoverage.complete) {
+          const replies = [approvedRecovery.reply];
+          const state = this.chat.replaceLatestAssistantTurns(input.sessionId, base.replies, replies);
+          this.logger?.log("warn", "question_coverage_recovered_by_approved_knowledge", {
+            ...(input.traceId ? { traceId: input.traceId } : {}),
+            requiredTopics: coverage.requiredTopics,
+            compositionStatus: composed.status,
+            knowledgeIds: approvedRecovery.knowledgeIds,
+          });
+          return {
+            ...base,
+            reply: approvedRecovery.reply,
+            replies,
+            state,
+          };
+        }
+      }
       const replies = questionCoverageFallbackReplies(base.state.selectedQuantity);
       const state = this.chat.replaceLatestAssistantTurnsAndPauseForCoverage(
         input.sessionId,
@@ -361,7 +389,11 @@ export class MetaChatBrain {
       maxCharacters: 360,
       maxBubbles: 2,
       preserveFullText:
-        base.state.mode === "care" || Boolean(base.state.selectedQuantity) || Boolean(base.state.orderId),
+        base.state.mode === "care" ||
+        Boolean(base.state.selectedQuantity) ||
+        Boolean(base.state.orderId) ||
+        requiredAnswerTopics(input.text).length >= 2 ||
+        semanticAnswerTopics(interpreted, input.text).length >= 3,
     });
     if (governed.replies.length === 0) return base;
     try {
@@ -503,7 +535,7 @@ function assessQuestionCoverage(input: {
 }): QuestionCoverageAssessment {
   const explicitQuestionCount = extractCustomerQuestionClauses(input.customerMessage).length;
   const requiredFactTopics = requiredAnswerTopics(input.customerMessage);
-  const requiredSemanticTopics = semanticAnswerTopics(input.interpreted);
+  const requiredSemanticTopics = semanticAnswerTopics(input.interpreted, input.customerMessage);
   const requiredTopics = [...new Set([...requiredFactTopics, ...requiredSemanticTopics])];
   const questionCount = Math.max(
     explicitQuestionCount,
@@ -601,14 +633,32 @@ function assessQuestionCoverage(input: {
   };
 }
 
-function semanticAnswerTopics(semantic: SemanticUnderstanding): SemanticTopic[] {
+function semanticAnswerTopics(semantic: SemanticUnderstanding, customerMessage: string): SemanticTopic[] {
+  const normalizeTopic = (topic: SemanticTopic, evidence: string): SemanticTopic =>
+    topic === "order" && isShippingDestinationEvidence(evidence) ? "shipping" : topic;
   const topics = [
-    ...(semantic.asksDirectAnswer === true && semantic.topic ? [semantic.topic] : []),
+    ...(semantic.asksDirectAnswer === true && semantic.topic
+      ? [normalizeTopic(semantic.topic, customerMessage)]
+      : []),
     ...(semantic.actions ?? [])
       .filter((action) => action.type === "answer_question")
-      .map((action) => action.topic),
+      .map((action) => normalizeTopic(action.topic, action.evidence.join(" "))),
   ];
   return topics.filter((topic, index, all) => topic !== "other" && all.indexOf(topic) === index);
+}
+
+function isShippingDestinationEvidence(value: string): boolean {
+  const text = value
+    .toLocaleLowerCase("vi-VN")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/gu, "d")
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim();
+  return (
+    /\b(?:ship|giao|van chuyen)\b/.test(text) &&
+    !/\b(?:don|don hang|ma van don|trang thai don|xac nhan don|len don)\b/.test(text)
+  );
 }
 
 function replyCoversSemanticTopic(topic: SemanticTopic, reply: string): boolean {

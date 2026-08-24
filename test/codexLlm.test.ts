@@ -683,6 +683,22 @@ test("single-pass draft không được nói đã chọn combo khi state chưa t
   assert.equal(result.reply.includes("ghi nhận combo"), false);
 });
 
+test("single-pass không coi giả định chọn 1 lọ để hỏi hoàn tiền là đã chốt đơn", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, model: "test-model" });
+  const draftReply =
+    "Dạ nếu mình chọn 1 lọ và dùng đúng hướng dẫn đủ 2 tuần mà chưa hiệu quả, bên em hỗ trợ hoàn tiền ạ.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "nếu mức 1 c mà k đỡ có dc hoàn xèng k",
+    draftReply,
+    baseReply: draftReply,
+    state,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft");
+  assert.equal(result.reply, draftReply);
+});
+
 test("single-pass không được xin dữ liệu đơn khi action plan đang pause_order", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const answerAction = {

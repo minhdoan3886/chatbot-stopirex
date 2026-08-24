@@ -2304,6 +2304,13 @@ export class DemoChatService {
     return stateOf(this.getOrCreate(sessionId));
   }
 
+  approvedKnowledgeFallback(
+    text: string,
+    semanticSlots: ConsultationSlots = {},
+  ): { reply: string; knowledgeIds: string[]; intent: CustomerIntent } | undefined {
+    return llmFailureKnowledgeAnswer(text, semanticSlots);
+  }
+
   exportSession(sessionId: string): unknown {
     const session = this.sessions.get(sessionId);
     return session ? JSON.parse(JSON.stringify(session)) : undefined;
@@ -2532,6 +2539,9 @@ function shouldPreserveFullResponse(session: DemoSession, replies: readonly stri
   if (session.mode === "care") return true;
   if (session.selectedQuantity || session.orderId) return true;
   const text = replies.join("\n");
+  const answerTopicCount = new Set(session.lastDecision?.actionPlan?.answerTopics ?? []).size;
+  if (answerTopicCount >= 3) return true;
+  if (/không bết/iu.test(text) && /hoàn tiền/iu.test(text)) return true;
   return /Dạ giá hiện tại:|Tên người nhận:|Địa chỉ trước sáp nhập:|Mã vận đơn|ĐỒNG Ý|chuyển nhân viên kiểm tra/u.test(
     text,
   );
@@ -3910,12 +3920,24 @@ function returnsPolicyReply(text: string): string {
     return "Dạ em hiểu mình lo vì bạn từng bị xót rát ạ. Stopirex có công thức dịu nhẹ; mình chỉ dùng trên da lành, sạch và khô hoàn toàn. Nếu bôi thấy rát kéo dài, mình ngưng dùng và nhắn bên em kiểm tra. Chính sách hoàn tiền do chưa hiệu quả áp dụng khi đã dùng đúng hướng dẫn đủ 2 tuần; hồ sơ gồm thông tin tài khoản và clip nhúng hủy sản phẩm xuống nước, không cần gửi lại sản phẩm ạ.";
   }
   if (isUsedIneffectiveRefundQuestion(text)) {
+    if (isHypotheticalIneffectiveRefundQuestion(text)) {
+      return "Dạ nếu mình dùng đúng hướng dẫn đủ 2 tuần mà vẫn chưa hiệu quả, bên em hỗ trợ hoàn tiền ạ. Khi đó hồ sơ gồm số tài khoản, tên ngân hàng, tên người thụ hưởng và clip nhúng hủy sản phẩm xuống nước; mình không cần giữ vỏ hộp hay gửi sản phẩm về.";
+    }
     return "Dạ nếu mình đã dùng đúng hướng dẫn đủ 2 tuần mà vẫn chưa hiệu quả, bên em hỗ trợ hoàn tiền ạ. Mình gửi số tài khoản, tên ngân hàng, tên người thụ hưởng và clip nhúng hủy sản phẩm xuống nước. Trường hợp này mình không cần giữ vỏ hộp hay gửi sản phẩm về; đủ hồ sơ em chuyển bộ phận liên quan xử lý tiếp ạ.";
   }
   return [
     "Dạ shop đổi trả nếu hàng còn nguyên seal và lỗi nhà sản xuất trong 7 ngày hoặc giao sai. Hàng bể vỡ do vận chuyển cần báo trong 48 giờ và có video mở hộp.",
     "Không áp dụng với hàng đã mở/dùng, không hợp mùi hoặc do khách làm hỏng. Sau khi nhận hàng trả, shop đổi mới hoặc hoàn tiền trong 3–5 ngày làm việc ạ.",
   ].join("\n\n");
+}
+
+function isHypotheticalIneffectiveRefundQuestion(value: string): boolean {
+  const text = normalize(value);
+  return (
+    /\b(?:neu|nho|lo ma|gia su)\b.{0,100}\b(?:khong|ko|k)\s*(?:do|khoi|het|hieu qua|cai thien)\b/.test(
+      text,
+    ) && /\b(?:hoan tien|hoan xeng|tra tien|doi tra)\b/.test(text)
+  );
 }
 
 function isHypotheticalIrritationRefundQuestion(value: string): boolean {
@@ -4743,13 +4765,22 @@ function llmFailureKnowledgeAnswer(
     };
   }
   if (isReturnsPolicyQuestion(text) && isApplicationFeelOrClothingConcern(text)) {
+    const asksShippingDestination = /\b(?:ship|giao)\s+(?:ve|toi)\b/.test(text);
     return {
       reply: [
         "Dạ mình dùng Stopirex buổi tối trên da sạch, khô hoàn toàn; lăn một lớp mỏng 2–3 lần/tuần ạ.",
         "Lúc mới lăn da có thể hơi ẩm nhẹ nhưng sản phẩm khô nhanh và không bết khi dùng đúng lượng; mình chờ khô rồi mặc áo nhé.",
         "Nếu dùng đúng hướng dẫn đủ 2 tuần mà chưa hiệu quả, bên em hỗ trợ hoàn tiền; hồ sơ gồm thông tin tài khoản và clip nhúng hủy sản phẩm, không cần gửi lại sản phẩm ạ.",
+        ...(asksShippingDestination
+          ? ["Về phí giao, 1 lọ là 30.000đ; combo 2–3 lọ được miễn phí giao ạ."]
+          : []),
       ].join("\n\n"),
-      knowledgeIds: ["usage-general", "usage-application-feel-clothing", "refund-used-ineffective"],
+      knowledgeIds: [
+        "usage-general",
+        "usage-application-feel-clothing",
+        "refund-used-ineffective",
+        ...(asksShippingDestination ? ["pricing-approved-options-2026-08"] : []),
+      ],
       intent: "usage_guidance",
     };
   }

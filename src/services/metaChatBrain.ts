@@ -338,7 +338,6 @@ export class MetaChatBrain {
 
 function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstanding>(semantic: T): T {
   if (
-    semantic.intent !== "safety" ||
     (semantic.groundingConfidence ?? 0) < 0.8 ||
     !semantic.actions?.some((action) => action.type === "answer_question") ||
     semantic.actions.some(
@@ -359,19 +358,22 @@ function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstandin
 
   const topic = supported[0]?.[1];
   if (!topic) return semantic;
-  return {
-    ...semantic,
-    topic,
-    subject: "customer",
-    actions: semantic.actions
-      .filter((action) => action.type !== "handoff_to_human")
-      .map((action) =>
-        action.type === "answer_question"
-          ? { ...action, topic }
-          : action,
-      ),
-    unsupportedQuestions: [],
-  } as T;
+  const reconciled: T = { ...semantic };
+  delete reconciled.draftReply;
+  delete reconciled.replyTo;
+  reconciled.skill = "safety-first";
+  reconciled.intent = "safety";
+  reconciled.topic = topic;
+  reconciled.subject = "customer";
+  reconciled.actions = semantic.actions
+    .filter((action) => action.type !== "handoff_to_human")
+    .map((action) =>
+      action.type === "answer_question"
+        ? { ...action, topic }
+        : action,
+    );
+  reconciled.unsupportedQuestions = [];
+  return reconciled;
 }
 
 type QuestionCoverageAssessment = {

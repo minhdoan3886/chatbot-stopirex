@@ -283,12 +283,13 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
       receivedPregnancyKnowledge = prompt.includes("audience-pregnancy");
       return JSON.stringify({
         summary: "Khách hỏi phụ nữ mang thai có dùng được Stopirex không",
-        skill: "safety-first",
-        intent: "safety",
+        skill: "direct-answer",
+        intent: "consultation",
         // Reproduce the production Mini mistake: the citation and draft are
         // pregnancy-grounded, but the structured topic/action are child_age.
         topic: "child_age",
         subject: "customer",
+        replyTo: "offer_usage_guidance",
         scenario: "actual",
         asksDirectAnswer: true,
         confidence: 0.92,
@@ -326,6 +327,8 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
   assert.equal(response.replies.length, 1, JSON.stringify(response.replies));
   assert.match(response.reply, /mang thai.*tham khảo ý kiến bác sĩ/isu);
   assert.doesNotMatch(response.reply, /chưa có thông tin|chuyển bộ phận liên quan/iu);
+  assert.doesNotMatch(response.reply, /\?/u);
+  assert.equal(response.replies.length, 1);
   assert.equal(response.state.botPaused, false);
   assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
   assert.equal(response.state.decisionTrace?.semantic.topic, "pregnancy");

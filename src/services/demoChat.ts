@@ -410,6 +410,7 @@ export class DemoChatService {
         !effectiveExactIntent &&
         !effectiveCareIssue &&
         (semanticOrderDataRecorded || isLikelyOrderData(raw, session.order)),
+      explicitPurchaseSelection: Boolean(extractExplicitOrderQuantity(text)),
       affirmativeFollowup:
         isAffirmativeFollowup(text) ||
         semantic.affirmation === true ||
@@ -4393,7 +4394,7 @@ function extractCompoundFinalQuantity(text: string): SupportedOrderQuantity | un
 /** A quantity becomes order state only when the customer uses a buying action. */
 function extractExplicitOrderQuantity(text: string): number | undefined {
   const hasPurchaseAction =
-    /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|chi|em))?\b/.test(text);
+    /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\b/.test(text);
   if (!hasPurchaseAction) return undefined;
   return extractRequestedQuantity(text);
 }
@@ -4467,7 +4468,7 @@ function resolveQuantitySelection(
 
 function isExplicitQuantitySelection(text: string): boolean {
   if (isPriceRequest(text) || /[?？]/u.test(text)) return false;
-  return /^(?:(?:minh|anh|chi|em)\s+)?(?:(?:lay|chon|chot|gui)\s+)?(?:(?:[1-5]|mot|hai|ba|bon|nam)\s+lo|combo)(?:\s+(?:nhe|nha|a))?$/.test(
+  return /^(?:the\s+)?(?:(?:minh|anh|a|chi|em)\s+)?(?:(?:cho|lay|chon|chot|gui)\s+(?:(?:minh|anh|a|chi|em)\s+)?)?(?:(?:[1-5]|mot|hai|ba|bon|nam)\s+lo|combo)(?:\s+(?:di|nhe|nha|a))?$/.test(
     text,
   );
 }
@@ -5372,7 +5373,17 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
   if (phone && phoneMatch?.index !== undefined) {
     const beforePhone = cleanLabel(orderRaw.slice(0, phoneMatch.index).replace(/[,;:-]+$/g, ""));
     const afterPhone = cleanLabel(orderRaw.slice(phoneMatch.index + phone.length).replace(/^[,;:\s-]+/g, ""));
-    if (!session.order.recipientName && looksLikeOrderRecipientCandidate(beforePhone)) {
+    const combinedBeforePhone = splitUnlabelledNameAndAddress(beforePhone);
+    if (!session.order.recipientName && combinedBeforePhone) {
+      commitOrderMutations(session, [
+        {
+          type: "set_recipient_name",
+          recipientName: formatRecipientName(combinedBeforePhone.recipientName),
+          evidence: raw,
+        },
+      ]);
+      found = true;
+    } else if (!session.order.recipientName && looksLikeOrderRecipientCandidate(beforePhone)) {
       commitOrderMutations(session, [
         {
           type: "set_recipient_name",
@@ -5382,7 +5393,10 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
       ]);
       found = true;
     }
-    if (!addressHandled && looksLikeAddress(afterPhone)) {
+    if (!addressHandled && combinedBeforePhone) {
+      found = commitLegacyAddress(session, combinedBeforePhone.address, "append", raw) || found;
+      addressHandled = true;
+    } else if (!addressHandled && looksLikeAddress(afterPhone)) {
       found = commitLegacyAddress(session, afterPhone, "append", raw) || found;
     }
   }
@@ -5942,6 +5956,33 @@ function looksLikeStandaloneRecipientName(value: string): boolean {
   return commonSurname || capitalizedWords >= 2;
 }
 
+function splitUnlabelledNameAndAddress(
+  value: string,
+): { recipientName: string; address: string } | undefined {
+  const firstDigit = value.search(/\d/u);
+  if (firstDigit <= 0) return undefined;
+  const prefix = value.slice(0, firstDigit).trim();
+  const numericAddress = value.slice(firstDigit).trim();
+  const prefixWords = prefix.split(/\s+/u).filter(Boolean);
+  if (prefixWords.length < 2) return undefined;
+
+  const possibleAddressAbbreviation = prefixWords.at(-1);
+  const addressHasLeadingAbbreviation = Boolean(
+    possibleAddressAbbreviation &&
+      /^[A-ZĐ]{2,6}$/u.test(possibleAddressAbbreviation) &&
+      prefixWords.length >= 3,
+  );
+  const recipientWords = addressHasLeadingAbbreviation ? prefixWords.slice(0, -1) : prefixWords;
+  const recipientName = recipientWords.join(" ");
+  const address = [addressHasLeadingAbbreviation ? possibleAddressAbbreviation : undefined, numericAddress]
+    .filter(Boolean)
+    .join(" ");
+  if (!looksLikeOrderRecipientCandidate(recipientName) || !looksLikeAddress(address)) {
+    return undefined;
+  }
+  return { recipientName, address };
+}
+
 function looksLikeAddress(value: string): boolean {
   const normalized = value
     .toLocaleLowerCase("vi-VN")
@@ -5997,6 +6038,10 @@ function canonicalizeLegacyAddress(value: string): string {
     .replace(
       /([^,])\s+(Hà Nội|TP\.?\s*HCM|TP\.?\s*Hồ Chí Minh|Hồ Chí Minh|Hải Phòng|Đà Nẵng|Cần Thơ|Huế|Tỉnh\s+[\p{L}\s]+)$/iu,
       "$1, $2",
+    )
+    .replace(
+      /(?<!Quận)\s+(Hà Đông|Cầu Giấy|Hoàng Mai|Nam Từ Liêm|Thanh Xuân|Ba Đình|Hai Bà Trưng)\s*,\s*(Hà Nội)$/iu,
+      ", Quận $1, $2",
     )
     .replace(/^,\s*/, "");
   const segments = expanded

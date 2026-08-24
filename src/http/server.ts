@@ -39,6 +39,7 @@ import { tenantId } from "../domain/types.js";
 import { openingVariants, type ConversationIdentity, type OpeningVariantId } from "../domain/sales.js";
 import { governCustomerResponse } from "../domain/responseGovernor.js";
 import { evaluateConversationQuality } from "../domain/conversationQuality.js";
+import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import { OperationsDashboardService } from "../services/operationsDashboard.js";
 import { OperationsControlBusyError, OperationsControlService } from "../services/operationsControl.js";
 import { buildProductInformationSnapshot } from "../services/productInformation.js";
@@ -999,6 +1000,18 @@ function applyComposedReply(result: DemoChatResponse, composedReply: string): De
       result.state.mode === "care" || Boolean(result.state.selectedQuantity) || Boolean(result.state.orderId),
   });
   const replies = governed.replies.length > 0 ? governed.replies : [result.reply];
+  try {
+    assertReplyMatchesConversationState({
+      reply: replies.join("\n\n"),
+      ...(result.state.decisionTrace ? { trace: result.state.decisionTrace } : {}),
+      ...(result.state.selectedQuantity ? { selectedQuantity: result.state.selectedQuantity } : {}),
+      ...(result.state.orderId ? { orderId: result.state.orderId } : {}),
+      botPaused: result.state.botPaused,
+      freeShippingApproved: result.state.freeShippingApproved,
+    });
+  } catch {
+    return result;
+  }
   return {
     ...result,
     reply: replies.join("\n\n"),

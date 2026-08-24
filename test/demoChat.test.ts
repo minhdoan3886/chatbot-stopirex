@@ -1710,6 +1710,55 @@ test("replay: uh sau câu hỏi phương án giá phải gửi giá, không quay
   assert.doesNotMatch(result.reply, /không cam kết “hết tuyệt đối”/);
 });
 
+test("replay: câu chốt 1 lọ ghi đè pending báo giá và tin PII gộp được lưu đúng", () => {
+  const chat = new DemoChatService();
+  const sessionId = "pending-price-explicit-order-with-pii";
+  chat.chat(sessionId, "Mình làm ngoài trời");
+  const guidance = chat.chat(sessionId, "Mình bị cả mồ hôi và mùi");
+  assert.equal(guidance.state.pendingAction, "send_price");
+
+  const selected = chat.chat(sessionId, "thế cho a 1 lọ đi", {
+    slots: {},
+    intent: "buying",
+    topic: "order",
+    affirmation: true,
+    confidence: 0.99,
+    actions: [
+      {
+        type: "continue_order_collection",
+        confidence: 0.99,
+        evidence: ["thế cho a 1 lọ đi"],
+        source: "llm",
+      },
+    ],
+  });
+
+  assert.equal(selected.state.selectedQuantity, 1);
+  assert.equal(selected.state.pipeline, "5.Chờ TT KH");
+  assert.equal(selected.state.decisionTrace?.selectedRoute, "direct_intent");
+  assert.equal(selected.state.pendingAction, undefined);
+  assert.match(selected.reply, /ghi nhận(?: mình (?:chọn|lấy))? 1 lọ/iu);
+  assert.match(selected.reply, /tên người nhận.*SĐT.*địa chỉ/isu);
+  assert.doesNotMatch(selected.reply, /chưa nghe rõ.*giá|mức giá cũ|phí giao 30\.000đ/isu);
+
+  const details = chat.chat(
+    sessionId,
+    "Nguyễn Văn Nam NTT 14 82 Nguyễn Tuân Thanh Xuân Hà Nội 0912345678",
+  );
+
+  assert.equal(details.state.selectedQuantity, 1);
+  assert.equal(details.state.orderDraft?.recipientName, "Nguyễn Văn Nam");
+  assert.equal(details.state.orderDraft?.phone, "0912345678");
+  assert.match(details.state.orderDraft?.legacyAddress ?? "", /NTT 14 82 Nguyễn Tuân/iu);
+  assert.match(details.state.orderDraft?.legacyAddress ?? "", /Quận Thanh Xuân/iu);
+  assert.match(details.state.orderDraft?.legacyAddress ?? "", /Hà Nội/iu);
+  assert.doesNotMatch(details.state.orderDraft?.legacyAddress ?? "", /Quận\s*,\s*Quận/iu);
+  assert.deepEqual(details.state.orderMissing, ["legacyAddress"]);
+  assert.match(details.reply, /đã ghi nhận|em có/iu);
+  assert.match(details.reply, /phường\/xã/iu);
+  assert.doesNotMatch(details.reply, /chưa nghe rõ.*giá|mức giá cũ|phí giao 30\.000đ/isu);
+});
+
 test("replay: chọn 1 lọ sau câu hỏi xem giá chưa được coi là chốt mua", () => {
   const chat = new DemoChatService();
   chat.chat("pending-price-one", "Mình làm ngoài trời");

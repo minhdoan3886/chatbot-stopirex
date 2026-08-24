@@ -129,6 +129,19 @@ test("an toàn kích ứng chặn chọn số lượng trong cùng tin nhắn", 
   assert.ok(plan.rejected.some((item) => item.reason === "safety_precedence"));
 });
 
+test("Reconciler hiểu chữ a viết tắt trong lệnh cho a 1 lọ", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "thế cho a 1 lọ đi",
+    semantic: semantic({ intent: "buying", topic: "order", confidence: 0.99 }),
+    optOut: false,
+    collectingOrder: false,
+  });
+
+  assert.equal(plan.quantity, 1);
+  assert.ok(plan.accepted.some((action) => action.type === "select_quantity"));
+  assert.ok(plan.accepted.some((action) => action.type === "continue_order_collection"));
+});
+
 test("Reconciler chấp nhận số lượng 3 đến 5 lọ đã duyệt", () => {
   for (const quantity of [3, 4, 5] as const) {
     const plan = reconcileConversationActions({

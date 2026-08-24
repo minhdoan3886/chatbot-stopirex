@@ -24,6 +24,29 @@ test("pending action hiểu câu ok theo đề nghị ngay trước đó", () =>
   assert.match(result.trace.reason, /đề nghị ngay trước/);
 });
 
+test("lệnh mua rõ ràng ghi đè đề nghị gửi giá đang chờ", () => {
+  const result = resolveConversationDecision({
+    semantic: {
+      slots: {},
+      intent: "buying",
+      topic: "order",
+      affirmation: true,
+      confidence: 0.99,
+    },
+    pendingAction: "send_price",
+    exactIntent: "buying",
+    explicitPurchaseSelection: true,
+    optOut: false,
+    activeCare: false,
+    orderConfirmation: false,
+    collectingOrder: false,
+    affirmativeFollowup: true,
+  });
+
+  assert.equal(result.route, "direct_intent");
+  assert.equal(result.intent, "buying");
+});
+
 test("câu hỏi trực tiếp ngắt bước chọn số lượng dù LLM nhận diện đang trả lời bước đó", () => {
   const result = resolveConversationDecision({
     semantic: {

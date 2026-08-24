@@ -571,7 +571,7 @@ function primaryIntent(
 
 function extractExplicitPurchaseQuantity(text: string): SupportedOrderQuantity | undefined {
   const numeric = text.match(
-    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|chi|em))?\s*(?:combo\s*)?([1-5])\s+lo\b/,
+    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:combo\s*)?([1-5])\s+lo\b/,
   )?.[1];
   if (numeric) return Number(numeric) as SupportedOrderQuantity;
   const words: ReadonlyArray<[RegExp, SupportedOrderQuantity]> = [
@@ -583,14 +583,14 @@ function extractExplicitPurchaseQuantity(text: string): SupportedOrderQuantity |
     if (pattern.test(text) && /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)\b/.test(text)) return quantity;
   }
   if (
-    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|chi|em))?\s*(?:2|hai)\s+lo\b|\b(?:lay|chon|chot|mua)\s+combo\b/.test(
+    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:2|hai)\s+lo\b|\b(?:lay|chon|chot|mua)\s+combo\b/.test(
       text,
     )
   ) {
     return 2;
   }
   if (
-    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|chi|em))?\s*(?:1|mot)\s+lo\b/.test(text)
+    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:1|mot)\s+lo\b/.test(text)
   ) {
     return 1;
   }

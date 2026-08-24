@@ -77,6 +77,7 @@ export type ResolveConversationDecisionInput = {
   orderConfirmation: boolean;
   collectingOrder: boolean;
   orderDataCandidate?: boolean;
+  explicitPurchaseSelection?: boolean;
   affirmativeFollowup: boolean;
 };
 
@@ -220,6 +221,7 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
   const pendingMatches =
     pendingAction !== undefined &&
     !directQuestionInterruptsPendingAction &&
+    !input.explicitPurchaseSelection &&
     (input.affirmativeFollowup ||
       (expectedPendingReplyTo !== undefined &&
         input.semantic.replyTo === expectedPendingReplyTo) ||

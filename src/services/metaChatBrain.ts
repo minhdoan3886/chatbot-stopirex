@@ -15,6 +15,7 @@ import {
 } from "../domain/actionRollout.js";
 import type { SemanticUnderstanding } from "../domain/consultation.js";
 import type { SupportedOrderQuantity } from "../domain/conversationActions.js";
+import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
 import {
   CodexLlmBridge,
@@ -335,6 +336,22 @@ export class MetaChatBrain {
         base.state.mode === "care" || Boolean(base.state.selectedQuantity) || Boolean(base.state.orderId),
     });
     if (governed.replies.length === 0) return base;
+    try {
+      assertReplyMatchesConversationState({
+        reply: governed.replies.join("\n\n"),
+        ...(base.state.decisionTrace ? { trace: base.state.decisionTrace } : {}),
+        ...(base.state.selectedQuantity ? { selectedQuantity: base.state.selectedQuantity } : {}),
+        ...(base.state.orderId ? { orderId: base.state.orderId } : {}),
+        botPaused: base.state.botPaused,
+        freeShippingApproved: base.state.freeShippingApproved,
+      });
+    } catch (error) {
+      this.logger?.log("warn", "llm_reply_state_mismatch", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        reason: error instanceof Error ? error.message : "response_state_mismatch",
+      });
+      return base;
+    }
     const state = this.chat.replaceLatestAssistantTurns(input.sessionId, base.replies, governed.replies);
     return {
       ...base,

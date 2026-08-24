@@ -293,6 +293,12 @@ test("citation mang thai của LLM được ưu tiên hơn retrieval cho con bú
           confidence: 0.98,
           evidence: ["phụ nữ đang bầu có dùng dược k"],
         },
+        {
+          type: "continue_order_collection" as const,
+          source: "llm" as const,
+          confidence: 0.9,
+          evidence: ["đơn combo 2 lọ đang chờ thông tin"],
+        },
       ],
       knowledgeIds: ["audience-pregnancy"],
       unsupportedQuestions: [],
@@ -308,6 +314,7 @@ test("citation mang thai của LLM được ưu tiên hơn retrieval cho con bú
   assert.equal(reconciled.draftReply, undefined);
   const answerAction = reconciled.actions?.find((action) => action.type === "answer_question");
   assert.equal(answerAction?.type === "answer_question" ? answerAction.topic : undefined, "pregnancy");
+  assert.deepEqual(reconciled.actions?.map((action) => action.type), ["answer_question"]);
 });
 
 test("câu hỏi đang bầu trong lúc thu đơn vẫn dùng câu Knowledge của LLM và không đổi luồng", async () => {
@@ -349,6 +356,11 @@ test("câu hỏi đang bầu trong lúc thu đơn vẫn dùng câu Knowledge c�
             reason: "Chưa có thông tin xác nhận",
             confidence: 0.8,
             evidence: ["phụ nữ đang bầu có dùng dược k"],
+          },
+          {
+            type: "continue_order_collection",
+            confidence: 0.9,
+            evidence: ["đơn combo 2 lọ đang chờ thông tin"],
           },
         ],
         uncertainties: ["Chưa có thông tin xác nhận"],

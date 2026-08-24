@@ -343,12 +343,7 @@ export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnder
   semantic: T,
   primaryRetrievedKnowledgeId?: string,
 ): T {
-  if (
-    !semantic.actions?.some((action) => action.type === "answer_question") ||
-    semantic.actions.some(
-      (action) => action.type !== "answer_question" && action.type !== "handoff_to_human",
-    )
-  ) {
+  if (!semantic.actions?.some((action) => action.type === "answer_question")) {
     return semantic;
   }
 
@@ -381,8 +376,11 @@ export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnder
   reconciled.topic = topic;
   reconciled.subject = "customer";
   reconciled.affirmation = false;
+  // A grounded special-population safety question must be answered before any
+  // order collection. Drop simultaneous handoff/order proposals; the state
+  // planner will pause the existing order and leave it available to resume.
   reconciled.actions = semantic.actions
-    .filter((action) => action.type !== "handoff_to_human")
+    .filter((action) => action.type === "answer_question")
     .map((action) =>
       action.type === "answer_question"
         ? { ...action, topic }

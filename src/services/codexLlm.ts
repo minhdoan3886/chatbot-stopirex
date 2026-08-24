@@ -1279,6 +1279,7 @@ function buildInterpretPrompt(input: {
     "Ví dụ: 'trước dùng mấy loại khác bị viêm, loại nhà mình có lại như thế không?' => intent product_comparison, topic comparison, scenario past, priorIrritation true, asksDirectAnswer true; không start_customer_care vì phản ứng thuộc sản phẩm khác.",
     "Ví dụ: 'nó khác gì so với lăn truyền thống' hoặc 'khác lăn thường ở đâu' => intent product_comparison, topic comparison, subject product, asksDirectAnswer true. Phải so sánh đúng hai loại sản phẩm, không đổi thành câu hỏi công dụng chung.",
     "Ví dụ khách chưa mua và nói 'bán cho chị hàng thật nhé', 'sợ mua nhầm hàng giả' hoặc 'có đúng hàng chính hãng không?' => intent authenticity_question, subject product, scenario hypothetical, asksDirectAnswer true. Đây là băn khoăn trước mua; không được hỏi khách đã mua ở kênh nào.",
+    "Khi xác nhận chính hãng, hãy nói sản phẩm bên em cung cấp là hàng chính hãng và hướng dẫn đối chiếu bao bì, tem, tên sản phẩm, thông tin người gửi. Không nói 'đơn đặt trực tiếp được gửi đúng hàng chính hãng' hoặc câu khiến khách hiểu chỉ mua trực tiếp mới là hàng thật; không phán đoán hàng ở kênh khác khi chưa kiểm tra.",
     "Chỉ dùng luồng sự cố hàng giả khi khách nói rõ mình đã mua/đã nhận một sản phẩm đang nghi giả.",
     "Ví dụ: 'đắt quá nhưng để tôi cân nhắc' => intent price_objection.",
     "Ví dụ: 'freeship không em', 'bớt giá được không' hoặc 'bao ship nhé' => intent negotiation, asksDirectAnswer true.",
@@ -1946,6 +1947,15 @@ function assertCriticalDirectionsPreserved(
   }
   if (/sản phẩm chính hãng/iu.test(baseReply) && !/chính hãng|hàng thật/iu.test(generatedReply)) {
     const error = new Error("LLM làm mất nội dung xác minh hàng chính hãng");
+    error.name = "CriticalDirectionError";
+    throw error;
+  }
+  if (
+    /(?:đơn|hàng)[^.?!\n]{0,80}(?:đặt|mua)\s+trực tiếp[^.?!\n]{0,80}(?:đúng|mới\s+là|là)\s+(?:sản phẩm\s+|hàng\s+)?chính hãng/iu.test(
+      generatedReply,
+    )
+  ) {
+    const error = new Error("LLM tạo hàm ý chỉ đơn trực tiếp mới là hàng chính hãng");
     error.name = "CriticalDirectionError";
     throw error;
   }

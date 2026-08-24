@@ -869,6 +869,26 @@ test("single-pass draft bị loại nếu làm mất giới hạn hiệu quả t
   assert.equal(result.reply, baseReply);
 });
 
+test("single-pass chặn hàm ý chỉ đơn trực tiếp mới là hàng chính hãng", () => {
+  const bridge = new CodexLlmBridge({
+    enabled: true,
+    runner: async () => "{}",
+  });
+  const baseReply =
+    "Dạ sản phẩm Stopirex bên em cung cấp là hàng chính hãng. Khi nhận, mình có thể đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi ạ.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "Có gì đảm bảo sản phẩm chính hãng không?",
+    draftReply:
+      "Dạ đơn đặt trực tiếp được gửi đúng hàng chính hãng; khi nhận mình kiểm tra bao bì và tem ạ.",
+    baseReply,
+    state,
+  });
+
+  assert.equal(result.status, "fallback");
+  assert.equal(result.reason, "critical_direction_guard");
+  assert.equal(result.reply, baseReply);
+});
+
 test("single-pass không được đổi 2–3 lần/tuần thành đơn vị khác", () => {
   const bridge = new CodexLlmBridge({
     enabled: true,

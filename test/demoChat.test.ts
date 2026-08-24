@@ -292,11 +292,15 @@ test("lo mua nhầm hàng giả trước khi mua được trả lời về chín
   assert.equal(result.state.pipeline, "4.XL băn khoăn");
   assert.equal(result.state.signal, "SC.Hàng giả");
   assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("authenticity-before-purchase"));
+  assert.match(result.reply, /bên em cung cấp là hàng chính hãng/iu);
   assert.match(result.reply, /nhập khẩu chính ngạch/);
   assert.match(result.reply, /hồ sơ công bố sản phẩm và kết quả thử nghiệm/);
   assert.match(result.reply, /quyền từ chối nhận/);
   assert.match(result.reply, /thông tin pháp lý tóm tắt/);
-  assert.doesNotMatch(result.reply, /Facebook|Shopee|TikTok|mã đơn|mua.*kênh/i);
+  assert.doesNotMatch(
+    result.reply,
+    /đơn đặt trực tiếp.*(?:đúng|mới là|là).*chính hãng|Facebook|Shopee|TikTok|mã đơn|mua.*kênh/iu,
+  );
 });
 
 test("chỉ mở flow hàng giả sau mua khi khách nói rõ đã nhận hàng", () => {

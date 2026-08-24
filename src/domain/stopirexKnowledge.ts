@@ -113,7 +113,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Xác nhận sản phẩm chính hãng trước khi mua",
       content:
-        "Đơn đặt trực tiếp với Stopirex được gửi đúng sản phẩm chính hãng. Khi nhận hàng, khách nên kiểm tra bao bì, tem và thông tin người gửi; nếu không đúng thông tin từ Stopirex, khách có quyền từ chối nhận.",
+        "Sản phẩm Stopirex bên em cung cấp là hàng chính hãng. Khi nhận hàng, khách nên đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi; nếu thông tin không khớp, khách có quyền từ chối nhận và liên hệ bên em để kiểm tra. Không dùng cách diễn đạt 'đơn đặt trực tiếp được gửi đúng hàng chính hãng' vì có thể gây hiểu rằng sản phẩm ở kênh khác là hàng giả; không kết luận về hàng từ kênh khác khi chưa kiểm tra.",
       sourceRow: 13,
     },
     {

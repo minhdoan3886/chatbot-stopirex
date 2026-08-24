@@ -1751,7 +1751,7 @@ export class DemoChatService {
       ]);
       return this.respond(
         session,
-        "Dạ Stopirex là hàng nhập khẩu chính ngạch, có hồ sơ công bố sản phẩm và kết quả thử nghiệm ạ.\n\nVới đơn đặt trực tiếp từ Stopirex, khi nhận mình kiểm tra bao bì, tem và thông tin người gửi; nếu không đúng thông tin từ Stopirex, mình có quyền từ chối nhận.\n\nEm gửi mình phần thông tin pháp lý tóm tắt để tham khảo nhé?",
+        "Dạ sản phẩm Stopirex bên em cung cấp là hàng chính hãng, nhập khẩu chính ngạch, có hồ sơ công bố sản phẩm và kết quả thử nghiệm ạ.\n\nKhi nhận hàng, mình có thể đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi; nếu có điểm không khớp, mình có quyền từ chối nhận và liên hệ bên em kiểm tra.\n\nEm gửi mình phần thông tin pháp lý tóm tắt để tham khảo nhé?",
       );
     }
 
@@ -4492,7 +4492,7 @@ function multiActionAnswer(
   if (uniqueTopics.some((topic) => ["order", "delivery"].includes(topic))) {
     answers.push(
       /kiem hang|hang that|chinh hang|hang gia/.test(text)
-        ? "Dạ đơn đặt trực tiếp từ Stopirex được gửi đúng hàng chính hãng; khi nhận mình kiểm tra bao bì, tem và thông tin người gửi trước ạ."
+        ? "Dạ sản phẩm Stopirex bên em cung cấp là hàng chính hãng; khi nhận mình có thể đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi ạ."
         : "Dạ thời gian nhận còn tùy địa chỉ và đơn vị vận chuyển; em sẽ ghi nhận địa chỉ để kiểm tra đúng đơn cho mình ạ.",
     );
   }

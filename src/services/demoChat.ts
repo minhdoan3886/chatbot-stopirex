@@ -1212,7 +1212,14 @@ export class DemoChatService {
     // fallback when it produced an answer action but its draft omitted the
     // approved source IDs, so the legacy discovery flow must not replace the
     // product answer with an unrelated question.
-    if (multiActionEnabled && actionPlan.answerTopics.length > 0 && isApprovedProductAnswerFallback(text)) {
+    const batchedMultiTopicQuestion =
+      raw.split(/\r?\n/u).filter((line) => line.trim()).length > 1 &&
+      actionPlan.answerTopics.length > 1;
+    if (
+      multiActionEnabled &&
+      actionPlan.answerTopics.length > 0 &&
+      (isApprovedProductAnswerFallback(text) || batchedMultiTopicQuestion)
+    ) {
       session.lastIntent =
         effectiveExactIntent ?? actionPlan.primaryIntent ?? semantic.intent ?? "consultation";
       session.activeSkill = ["usage_guidance", "usage_time", "usage_frequency"].includes(session.lastIntent)
@@ -4485,6 +4492,12 @@ function multiActionAnswer(
     return "Dạ hạn 3 năm là hạn của sản phẩm còn nguyên và bảo quản đúng ạ. Sau khi mở, mình xem ký hiệu trên chai; bên em chưa có mốc tháng đã duyệt nên không tự báo 6 hay 12 tháng.";
   }
   if (isMissedEveningApplicationQuestion(text)) return missedEveningApplicationReply();
+  if (uniqueTopics.includes("comparison") && uniqueTopics.includes("usage")) {
+    return [
+      "Dạ đúng ạ. Lăn khử mùi thông thường chủ yếu dùng hằng ngày để khử hoặc che mùi; Stopirex hỗ trợ kiểm soát tiết mồ hôi và không dùng hương thơm để che mùi.",
+      "Stopirex không cần lăn mỗi ngày; lúc mới dùng, mình lăn một lớp mỏng 2–3 lần/tuần vào buổi tối trên da sạch, khô ạ.",
+    ].join("\n\n");
+  }
   if (isMorningFragranceLayeringQuestion(text) && isCurrentCatalogSoapQuestion(text)) {
     return "Dạ Stopirex không dùng hương thơm để che mùi nên sáng mình dùng nước hoa sẽ không bị lẫn hương ạ. Hiện gian hàng chưa bán xà phòng trị thâm nách nên em không tự gợi ý sản phẩm ngoài danh mục.";
   }

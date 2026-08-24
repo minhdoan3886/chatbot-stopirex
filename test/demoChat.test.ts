@@ -254,6 +254,45 @@ test("báo giá sau khi đã tư vấn mới mời khách chọn số lượng",
   assert.doesNotMatch(price.reply, /khó chịu chủ yếu vì mồ hôi/iu);
 });
 
+test("batch hai câu so sánh và tần suất vẫn được fallback trả đủ cả hai ý", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat(
+    "batch-comparison-usage",
+    "Là loại này giống lăn khử mùi nhưng nó giúp giảm ra mồ hôi à bạn\n1 ngày chỉ lăn 1 lần ạ",
+    {
+      slots: {},
+      skill: "direct-answer",
+      intent: "usage_guidance",
+      topic: "usage",
+      subject: "product",
+      asksDirectAnswer: true,
+      confidence: 0.97,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "comparison",
+          confidence: 0.97,
+          evidence: ["giống lăn khử mùi", "giúp giảm ra mồ hôi"],
+          source: "llm",
+        },
+      ],
+    },
+  );
+
+  assert.match(result.reply, /lăn khử mùi thông thường/iu);
+  assert.match(result.reply, /hỗ trợ kiểm soát tiết mồ hôi/iu);
+  assert.match(result.reply, /không cần lăn mỗi ngày/iu);
+  assert.match(result.reply, /2–3 lần\/tuần/iu);
+  assert.ok(result.state.decisionTrace?.actionPlan?.answerTopics.includes("comparison"));
+  assert.ok(result.state.decisionTrace?.actionPlan?.answerTopics.includes("usage"));
+  assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("usage-general"));
+  assert.ok(
+    result.state.decisionTrace?.knowledgeEntityIds.includes(
+      "product-comparison-traditional-rollon",
+    ),
+  );
+});
+
 test("câu alo e giá vẫn báo giá rồi hỏi tình trạng dù LLM gợi ý nhầm pricing-objection", () => {
   const chat = new DemoChatService();
   const result = chat.chat("opening-alo-price", "alo e giá", {

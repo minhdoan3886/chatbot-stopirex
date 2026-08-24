@@ -338,6 +338,7 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
   assert.match(compact, /answer_question \+ pause_order/u);
   assert.match(compact, /cấm xin số lượng\/Tên\/SĐT\/Địa chỉ/u);
   assert.match(compact, /là câu trả lời, không phải câu hỏi/u);
+  assert.match(compact, /MESSAGE nhiều dòng là các tin liên tiếp/u);
 });
 
 test("ép OpenAI nhưng thiếu key thì bridge không tự báo sẵn sàng", () => {

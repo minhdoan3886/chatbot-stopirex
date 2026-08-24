@@ -171,7 +171,12 @@ export function reconcileConversationActions(input: {
       }
     }
   }
-  if (answerTopic && !hasAction(candidates, "answer_question")) {
+  if (
+    answerTopic &&
+    !candidates.some(
+      (action) => action.type === "answer_question" && action.topic === answerTopic,
+    )
+  ) {
     candidates.push({
       ...baseAction("answer_question", input.exactIntent ? "guardrail" : "state", [raw]),
       topic: answerTopic,

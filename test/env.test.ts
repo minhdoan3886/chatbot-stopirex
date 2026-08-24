@@ -14,7 +14,7 @@ test("development cho phép chạy khi chưa có credential bên ngoài", () => 
     metaStaffName: "Mai Lan",
     metaOpeningVariant: "AUTO.dynamic",
     metaWorkerConsumer: "worker-1",
-    metaDebounceMs: 4000,
+    metaDebounceMs: 6000,
     dataRetentionDays: 90,
     outboundWindowHours: 24,
     followupMode: "shadow",

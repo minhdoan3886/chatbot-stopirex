@@ -51,6 +51,32 @@ test("hợp nhất nhiều hành động theo thứ tự trả lời rồi chọ
   assert.equal(plan.hasMultipleActions, true);
 });
 
+test("bổ sung chủ đề chính bị thiếu khi LLM mới tạo answer action cho ý còn lại", () => {
+  const plan = reconcileConversationActions({
+    customerMessage:
+      "Là loại này giống lăn khử mùi nhưng nó giúp giảm ra mồ hôi à bạn\n1 ngày chỉ lăn 1 lần ạ",
+    semantic: semantic({
+      intent: "usage_guidance",
+      topic: "usage",
+      asksDirectAnswer: true,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "comparison",
+          confidence: 0.97,
+          evidence: ["giống lăn khử mùi", "giúp giảm ra mồ hôi"],
+          source: "llm",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: false,
+  });
+
+  assert.deepEqual(plan.answerTopics, ["comparison", "usage"]);
+  assert.equal(plan.hasMultipleActions, true);
+});
+
 test("an toàn kích ứng chặn chọn số lượng trong cùng tin nhắn", () => {
   const plan = reconcileConversationActions({
     customerMessage: "Da đang rát đỏ nhưng cho mình 1 lọ",

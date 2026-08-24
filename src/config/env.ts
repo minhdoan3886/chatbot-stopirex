@@ -73,7 +73,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     metaStaffName: source.META_STAFF_NAME?.trim() || "Mai Lan",
     metaOpeningVariant: source.META_OPENING_VARIANT?.trim() || "AUTO.dynamic",
     metaWorkerConsumer: source.META_WORKER_CONSUMER?.trim() || "worker-1",
-    metaDebounceMs: positiveInteger(source.META_DEBOUNCE_MS ?? "4000", "META_DEBOUNCE_MS"),
+    metaDebounceMs: positiveInteger(source.META_DEBOUNCE_MS ?? "6000", "META_DEBOUNCE_MS"),
     dataRetentionDays,
     outboundWindowHours,
     followupMode: followupMode as AppEnv["followupMode"],

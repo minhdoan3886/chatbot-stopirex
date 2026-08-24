@@ -153,8 +153,8 @@ function renderRows(){
   document.getElementById('orderRows').innerHTML=rows.length?rows.map(r=>{
     const id=esc(r.id);
     const actionCell=r.status==='pending'
-      ?'<button class="btn btn-complete" onclick=\'updateStatus("'+id+'","completed",this)\'>✓ Đã lên Sapo</button>'
-       +'<button class="btn btn-cancel" style="margin-top:4px" onclick=\'updateStatus("'+id+'","cancelled",this)\'>✕ Huỷ</button>'
+      ?'<button class="btn btn-complete" data-order-id="'+id+'" data-order-action="completed">✓ Đã lên Sapo</button>'
+       +'<button class="btn btn-cancel" style="margin-top:4px" data-order-id="'+id+'" data-order-action="cancelled">✕ Huỷ</button>'
       :r.note?'<span class="sub">'+esc(r.note)+'</span>':'';
     return '<tr id="row-'+esc(r.id)+'">'
       +'<td><span class="pill '+esc(r.status)+'">'+esc(statusLabel[r.status]??r.status)+'</span></td>'
@@ -213,6 +213,11 @@ async function load(){
 document.getElementById('refresh').addEventListener('click',load);
 document.getElementById('statusFilter').addEventListener('change',renderRows);
 document.getElementById('search').addEventListener('input',renderRows);
+document.getElementById('orderRows').addEventListener('click',event=>{
+  const btn=event.target.closest('button[data-order-action]');
+  if(!btn)return;
+  updateStatus(btn.dataset.orderId,btn.dataset.orderAction,btn);
+});
 load();
 setInterval(load,30000);
 </script></body></html>`;

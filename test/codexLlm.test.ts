@@ -339,6 +339,23 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
   assert.match(compact, /cấm xin số lượng\/Tên\/SĐT\/Địa chỉ/u);
   assert.match(compact, /là câu trả lời, không phải câu hỏi/u);
   assert.match(compact, /MESSAGE nhiều dòng là các tin liên tiếp/u);
+  assert.match(compact, /Bất biến số lượng/u);
+  assert.match(compact, /chai\/lọ/u);
+});
+
+test("prompt compact buộc LLM phát hành action số lượng cho tiếng địa phương và lỗi gõ", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "chốt giùm tui mọt chai nghen",
+      state,
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /select_quantity với số chuẩn và continue_order_collection/u);
+  assert.match(prompt, /chốt giùm tui mọt chai nghen/u);
+  assert.match(prompt, /evidence giữ nguyên cả cụm khách viết/u);
 });
 
 test("ép OpenAI nhưng thiếu key thì bridge không tự báo sẵn sàng", () => {

@@ -1325,6 +1325,31 @@ export class DemoChatService {
       return this.respond(session, orderCollectionReply(session, recordedOrderData ? raw : undefined));
     }
 
+    if (
+      multiActionEnabled &&
+      decision.intent === "buying" &&
+      !session.selectedQuantity &&
+      !actionPlan.quantity &&
+      actionPlan.answerTopics.length === 0 &&
+      actionPlan.conflicts.length === 0 &&
+      actionPlan.rejected.some(
+        ({ action }) => action.type === "continue_order_collection" && action.source === "llm",
+      ) &&
+      session.pipeline !== "6.Đã tạo đơn"
+    ) {
+      session.lastIntent = "buying";
+      session.activeSkill = "order-closing";
+      session.skillReason =
+        "LLM xác định khách muốn mua nhưng chưa phát hành số lượng có thể commit; chỉ hỏi đúng trường còn thiếu thay vì quay lại khai thác tình trạng.";
+      session.pendingAction = "choose_quantity";
+      session.lastDecision.pendingActionAfter = "choose_quantity";
+      session.orderCollectionPaused = false;
+      return this.respond(
+        session,
+        "Dạ mình muốn lấy mấy lọ Stopirex (1–5 lọ) để em ghi nhận chính xác ạ?",
+      );
+    }
+
     const compoundOrderQuantity = session.selectedQuantity
       ? resolveQuantitySelection(text, semantic, session)
       : undefined;

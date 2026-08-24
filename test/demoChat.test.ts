@@ -49,6 +49,36 @@ test("một tin hỏi công dụng rồi chốt hàng được trả lời trư�
   );
 });
 
+test("LLM hiểu ý mua nhưng thiếu action số lượng chỉ được hỏi số lượng, không quay về hỏi tình trạng", () => {
+  const chat = new DemoChatService();
+  chat.reset("buying-missing-quantity-action");
+
+  const result = chat.chat(
+    "buying-missing-quantity-action",
+    "chốt giùm tui mọt chai nghen",
+    {
+      slots: {},
+      intent: "buying",
+      topic: "order",
+      confidence: 0.98,
+      needsClarification: false,
+      actions: [
+        {
+          type: "continue_order_collection",
+          confidence: 0.96,
+          evidence: ["chốt giùm tui mọt chai nghen"],
+          source: "llm",
+        },
+      ],
+    },
+  );
+
+  assert.equal(result.state.lastIntent, "buying");
+  assert.equal(result.state.pendingAction, "choose_quantity");
+  assert.match(result.reply, /muốn lấy mấy lọ Stopirex/u);
+  assert.doesNotMatch(result.reply, /ngồi điều hòa|tình trạng|mồ hôi|mùi/u);
+});
+
 test("mở hội thoại gộp câu dẫn với lựa chọn và thay đúng biến tên/xưng hô", () => {
   const chat = new DemoChatService();
   const result = chat.reset("personalized-opening", {

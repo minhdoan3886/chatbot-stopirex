@@ -118,6 +118,11 @@ test("tab sản phẩm dùng cùng knowledge và catalog mà chatbot đang sử 
     snapshot.knowledge.some((item) => item.id === "international-shipping-compensation-handoff"),
     true,
   );
+  const onlineOnlyPolicy =
+    snapshot.knowledge.find((item) => item.id === "online-only-standard-carrier-policy")?.content ?? "";
+  assert.match(onlineOnlyPolicy, /không có cửa hàng offline/iu);
+  assert.match(onlineOnlyPolicy, /không có.*ship hỏa tốc/iu);
+  assert.match(onlineOnlyPolicy, /đơn vị vận chuyển/iu);
   assert.equal(
     snapshot.knowledge
       .find((item) => item.id === "effectiveness-usage-journey")
@@ -129,6 +134,10 @@ test("tab sản phẩm dùng cùng knowledge và catalog mà chatbot đang sử 
       .find((item) => item.id === "domestic-delivery-inspection-policy")
       ?.content.includes("không mở seal"),
     true,
+  );
+  assert.match(
+    snapshot.knowledge.find((item) => item.id === "domestic-delivery-inspection-policy")?.content ?? "",
+    /cùng tỉnh\/thành phố.*1–2 ngày.*nội miền.*2–3 ngày.*liên miền.*3–5 ngày/isu,
   );
   assert.equal(
     snapshot.knowledge

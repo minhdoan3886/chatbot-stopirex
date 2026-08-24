@@ -63,7 +63,8 @@ test("câu hỏi ETA và kiểm hàng nội địa dùng route logistics, không
   );
 
   assert.equal(result.state.lastIntent, "order_support");
-  assert.match(result.reply, /Đà Nẵng.*vận đơn.*kiểm tra bao bì.*không mở seal/isu);
+  assert.match(result.reply, /nội thành.*1–2 ngày.*nội miền.*2–3 ngày.*liên miền.*3–5 ngày/isu);
+  assert.match(result.reply, /kiểm tra bao bì.*không mở seal/isu);
   assert.doesNotMatch(result.reply, /285\.000|510\.000/u);
   assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("domestic-delivery-inspection-policy"));
 });

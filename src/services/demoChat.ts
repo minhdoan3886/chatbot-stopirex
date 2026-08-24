@@ -702,6 +702,25 @@ export class DemoChatService {
       return this.respond(session, `${orderCollectionReply(session)}${weather}`);
     }
 
+    if (isExpressDeliveryQuestion(text) || isOfflineStoreQuestion(text)) {
+      session.lastIntent = "order_support";
+      session.activeSkill = "direct-answer";
+      session.skillReason =
+        "Chính sách vận hành cố định: chỉ bán online, không có cửa hàng offline và không giao hỏa tốc.";
+      overrideDecisionClassification(
+        session,
+        "order_support",
+        "delivery",
+        [],
+        "Trả lời chính sách kênh bán và phương thức giao đã được duyệt.",
+      );
+      recordKnowledge(session, [
+        "online-only-standard-carrier-policy",
+        ...(isExpressDeliveryQuestion(text) ? ["domestic-delivery-inspection-policy"] : []),
+      ]);
+      return this.respond(session, onlineOnlyDeliveryPolicyReply(text));
+    }
+
     if (isInternationalShippingQuestion(text)) {
       const quantity = detectQuantity(text);
       if (quantity) {
@@ -853,15 +872,7 @@ export class DemoChatService {
         "Trả lời ETA theo chính sách nội địa và giữ nguyên state đơn hiện tại.",
       );
       recordKnowledge(session, ["domestic-delivery-inspection-policy"]);
-      const isHanoi = /ha noi/.test(normalize(session.locationMemory.legacyAddress ?? text));
-      const etaReply = isHanoi
-        ? "Dạ khu vực Hà Nội thường nhận hàng trong khoảng 1–2 ngày làm việc ạ. Thời tiết hoặc vận hành thực tế có thể làm chậm hơn; mốc chính xác sẽ được theo dõi theo đơn và vận đơn."
-        : session.selectedQuantity
-          ? "Dạ thời gian giao chính xác được kiểm tra theo đơn và vận đơn sau khi lên đơn ạ. Em vẫn giữ nguyên thông tin đơn mình đã cung cấp."
-          : session.locationMemory.legacyAddress
-            ? `Dạ em đã ghi nhận khu vực ${session.locationMemory.legacyAddress}. Thời gian giao chính xác được kiểm tra theo đơn và vận đơn sau khi lên đơn ạ.`
-            : "Dạ thời gian giao chính xác được kiểm tra theo đơn và vận đơn sau khi lên đơn ạ.";
-      return this.respond(session, etaReply);
+      return this.respond(session, domesticDeliveryEtaPolicyReply());
     }
 
     if (isHouseholdSharedUseQuestion(text)) {
@@ -3137,9 +3148,49 @@ export function isDomesticDeliveryEtaQuestion(value: string): boolean {
   return asksEta && !isInternationalShippingQuestion(value);
 }
 
+export function isExpressDeliveryQuestion(value: string): boolean {
+  const text = normalize(value);
+  return /\b(?:ship|giao)\s*(?:hang\s*)?(?:hoa toc|ngay|trong ngay|tuc thoi|2h|4h)\b|\b(?:grab|ahamove)\b.{0,25}\b(?:ship|giao|chay)\b/.test(
+    text,
+  );
+}
+
+export function isOfflineStoreQuestion(value: string): boolean {
+  const text = normalize(value);
+  return /\b(?:co (?:cua hang|shop offline|showroom)(?: khong| ko| k)?|cua hang offline|showroom|dia chi (?:shop|cua hang)|shop o dau|cua hang o dau|mua truc tiep|den (?:shop|cua hang) mua|qua (?:shop|cua hang) (?:mua|lay|xem))\b/.test(
+    text,
+  );
+}
+
 function domesticDeliveryInspectionReply(text: string): string {
-  const destination = /da nang/.test(text) ? "Đà Nẵng" : "khu vực của mình";
-  return `Dạ thời gian giao tới ${destination} cần kiểm tra theo đơn và vận đơn, nên em chưa tự hẹn một số ngày cố định ạ. Khi nhận, mình được kiểm tra bao bì ngoài, tem và đúng lọ Stopirex; mình không mở seal sản phẩm trước khi xác nhận nhận hàng nhé.`;
+  void text;
+  return `${domesticDeliveryEtaPolicyReply()}\n\nKhi nhận, mình được kiểm tra bao bì ngoài, tem và đúng lọ Stopirex; mình không mở seal sản phẩm trước khi xác nhận nhận hàng nhé.`;
+}
+
+function domesticDeliveryEtaPolicyReply(): string {
+  return [
+    "Dạ thời gian giao dự kiến:",
+    "• Nội thành (cùng tỉnh/thành phố): 1–2 ngày.",
+    "• Nội miền (ví dụ TP.HCM đi các tỉnh miền Nam): 2–3 ngày.",
+    "• Liên miền (miền Bắc ⇄ miền Nam): 3–5 ngày ạ.",
+  ].join("\n");
+}
+
+function onlineOnlyDeliveryPolicyReply(text: string): string {
+  const asksExpress = isExpressDeliveryQuestion(text);
+  const asksOffline = isOfflineStoreQuestion(text);
+  const parts = [
+    ...(asksOffline
+      ? ["Dạ bên em không có cửa hàng offline hoặc showroom; mình đặt Stopirex online ạ."]
+      : []),
+    ...(asksExpress
+      ? [
+          "Bên em không có ship hỏa tốc hoặc giao tức thời; đơn chỉ được gửi qua đơn vị vận chuyển ạ.",
+          domesticDeliveryEtaPolicyReply(),
+        ]
+      : ["Đơn online được gửi qua đơn vị vận chuyển ạ."]),
+  ];
+  return parts.join("\n\n");
 }
 
 function isProductNatureAndScentQuestion(value: string): boolean {
@@ -4671,7 +4722,7 @@ function multiActionAnswer(
     answers.push(
       /kiem hang|hang that|chinh hang|hang gia/.test(text)
         ? "Dạ sản phẩm Stopirex bên em cung cấp là hàng chính hãng; khi nhận mình có thể đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi ạ."
-        : "Dạ thời gian nhận còn tùy địa chỉ và đơn vị vận chuyển; em sẽ ghi nhận địa chỉ để kiểm tra đúng đơn cho mình ạ.",
+        : domesticDeliveryEtaPolicyReply(),
     );
   }
   if (uniqueTopics.includes("child_age")) {
@@ -4771,15 +4822,13 @@ function llmFailureKnowledgeAnswer(
         "Dạ mình dùng Stopirex buổi tối trên da sạch, khô hoàn toàn; lăn một lớp mỏng 2–3 lần/tuần ạ.",
         "Lúc mới lăn da có thể hơi ẩm nhẹ nhưng sản phẩm khô nhanh và không bết khi dùng đúng lượng; mình chờ khô rồi mặc áo nhé.",
         "Nếu dùng đúng hướng dẫn đủ 2 tuần mà chưa hiệu quả, bên em hỗ trợ hoàn tiền; hồ sơ gồm thông tin tài khoản và clip nhúng hủy sản phẩm, không cần gửi lại sản phẩm ạ.",
-        ...(asksShippingDestination
-          ? ["Về phí giao, 1 lọ là 30.000đ; combo 2–3 lọ được miễn phí giao ạ."]
-          : []),
+        ...(asksShippingDestination ? [domesticDeliveryEtaPolicyReply()] : []),
       ].join("\n\n"),
       knowledgeIds: [
         "usage-general",
         "usage-application-feel-clothing",
         "refund-used-ineffective",
-        ...(asksShippingDestination ? ["pricing-approved-options-2026-08"] : []),
+        ...(asksShippingDestination ? ["domestic-delivery-inspection-policy"] : []),
       ],
       intent: "usage_guidance",
     };

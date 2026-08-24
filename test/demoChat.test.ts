@@ -3018,6 +3018,30 @@ test("global entity memory resolves Cầu Giấy and male reference before order
   assert.doesNotMatch(result.reply, /còn thiếu[^\n]*(?:quận\/huyện|tỉnh\/thành phố)/u);
 });
 
+test("thời gian giao nội địa dùng đủ ba mốc đã duyệt", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat("domestic-delivery-eta-table", "Shop giao hàng mất bao lâu thì nhận được?");
+
+  assert.match(result.reply, /nội thành.*1–2 ngày/isu);
+  assert.match(result.reply, /nội miền.*2–3 ngày/isu);
+  assert.match(result.reply, /liên miền.*3–5 ngày/isu);
+  assert.doesNotMatch(result.reply, /tùy địa chỉ|tùy.*đơn vị vận chuyển/iu);
+});
+
+test("không hứa ship hỏa tốc và không mời khách tới cửa hàng offline", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat(
+    "online-only-delivery-policy",
+    "Shop có cửa hàng offline để mình qua mua không, hay ship hỏa tốc trong ngày được không?",
+  );
+
+  assert.match(result.reply, /không có cửa hàng offline.*đặt.*online/isu);
+  assert.match(result.reply, /không có ship hỏa tốc.*chỉ.*đơn vị vận chuyển/isu);
+  assert.match(result.reply, /1–2 ngày.*2–3 ngày.*3–5 ngày/isu);
+  assert.doesNotMatch(result.reply, /qua (?:shop|cửa hàng)|giao trong ngày|đặt Grab/iu);
+  assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("online-only-standard-carrier-policy"));
+});
+
 test("explicit address change replaces old address while preserving quantity phone and delivery note", () => {
   const chat = new DemoChatService();
   const sessionId = "address-replace-state-update";
@@ -3047,7 +3071,7 @@ test("explicit address change replaces old address while preserving quantity pho
   assert.match(eta.state.orderDraft?.legacyAddress ?? "", /Duy Tân.*Quận Cầu Giấy.*Hà Nội/u);
   assert.equal(eta.state.orderDraft?.deliveryNote, "Gọi và giao trong giờ hành chính");
   assert.equal(eta.state.pipeline, "5.Chờ TT KH");
-  assert.match(eta.reply, /theo đơn và vận đơn/u);
+  assert.match(eta.reply, /nội thành.*1–2 ngày.*nội miền.*2–3 ngày.*liên miền.*3–5 ngày/isu);
   assert.doesNotMatch(eta.reply, /chuyển bộ phận liên quan/u);
 });
 
@@ -3167,5 +3191,7 @@ test("global NER stores strong order fields and rejects discourse prefix as reci
   assert.equal(eta.state.orderDraft?.phone, "0988777666");
   assert.match(eta.state.orderDraft?.legacyAddress ?? "", /10 Duy Tân.*Dịch Vọng Hậu.*Cầu Giấy/su);
   assert.deepEqual(eta.state.orderMissing, []);
-  assert.match(eta.reply, /thời gian giao|vận chuyển|vận đơn|mốc giao/iu);
+  assert.match(eta.reply, /nội thành.*1–2 ngày/isu);
+  assert.match(eta.reply, /nội miền.*2–3 ngày/isu);
+  assert.match(eta.reply, /liên miền.*3–5 ngày/isu);
 });

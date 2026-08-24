@@ -14,11 +14,13 @@ import {
   DemoChatService,
   isCompoundOrderUpdateQuestion,
   isDomesticDeliveryEtaQuestion,
+  isExpressDeliveryQuestion,
   isInternalSystemProbe,
   isInternationalShippingQuestion,
   isLikelyAdministrativeFragment,
   isOutOfScopeAssistantProbe,
   isOrderCaptureMessage,
+  isOfflineStoreQuestion,
   isPriceAndShippingPolicyQuestion,
   isWholesaleDealerInquiry,
   isPriceConcern,
@@ -1030,6 +1032,8 @@ function isDeterministicFastPath(customerMessage: string, state: DemoChatState):
     isInternationalShippingQuestion(customerMessage) ||
     isOutOfScopeAssistantProbe(customerMessage) ||
     isWholesaleDealerInquiry(customerMessage) ||
+    isExpressDeliveryQuestion(customerMessage) ||
+    isOfflineStoreQuestion(customerMessage) ||
     isDomesticDeliveryEtaQuestion(customerMessage) ||
     isPriceAndShippingPolicyQuestion(customerMessage) ||
     isQuantityShippingPolicyQuestion(customerMessage) ||

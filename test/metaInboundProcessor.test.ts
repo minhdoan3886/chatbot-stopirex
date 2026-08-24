@@ -418,11 +418,12 @@ test("Meta brain không handoff câu địa phương hỏi cách dùng, bết v�
           "usage-application-feel-clothing",
           "refund-used-ineffective",
           "pricing-approved-options-2026-08",
+          "domestic-delivery-inspection-policy",
         ],
         unsupportedQuestions: [],
         groundingConfidence: 0.98,
         draftReply:
-          "Dạ mình dùng Stopirex buổi tối trên da sạch, khô; lăn mỏng 2–3 lần/tuần ạ. Sản phẩm hơi ẩm nhẹ lúc mới lăn nhưng khô nhanh và không bết khi dùng đúng lượng, mình chờ khô rồi mặc áo. Nếu mình chọn 1 lọ và dùng đúng hướng dẫn đủ 2 tuần mà chưa hiệu quả, bên em hỗ trợ hoàn tiền; không cần gửi lại sản phẩm ạ. Về phí giao, 1 lọ là 30.000đ; combo 2–3 lọ được miễn phí giao ạ.",
+          "Dạ mình dùng Stopirex buổi tối trên da sạch, khô; lăn mỏng 2–3 lần/tuần ạ. Sản phẩm hơi ẩm nhẹ lúc mới lăn nhưng khô nhanh và không bết khi dùng đúng lượng, mình chờ khô rồi mặc áo. Nếu mình chọn 1 lọ và dùng đúng hướng dẫn đủ 2 tuần mà chưa hiệu quả, bên em hỗ trợ hoàn tiền; không cần gửi lại sản phẩm ạ. Thời gian giao dự kiến: cùng tỉnh/thành phố 1–2 ngày, nội miền 2–3 ngày, liên miền Bắc–Nam 3–5 ngày ạ.",
         slots: { primarySymptom: "odor", odorPresent: true },
       }),
   });
@@ -435,7 +436,9 @@ test("Meta brain không handoff câu địa phương hỏi cách dùng, bết v�
   assert.match(response.reply, /buổi tối.*2–3 lần\/tuần/isu);
   assert.match(response.reply, /khô nhanh.*không bết/isu);
   assert.match(response.reply, /đúng hướng dẫn đủ 2 tuần.*hoàn tiền/isu);
-  assert.match(response.reply, /phí giao|đơn vị vận chuyển/isu);
+  assert.match(response.reply, /(?:nội thành|cùng tỉnh\/thành phố).*1–2 ngày/isu);
+  assert.match(response.reply, /nội miền.*2–3 ngày/isu);
+  assert.match(response.reply, /liên miền.*3–5 ngày/isu);
   assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận liên quan/iu);
   assert.equal(response.state.selectedQuantity, undefined);
   assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
@@ -458,7 +461,9 @@ test("Meta brain vẫn trả đủ câu địa phương khi cả LLM lỗi", asy
   assert.match(response.reply, /buổi tối.*2–3 lần\/tuần/isu);
   assert.match(response.reply, /khô nhanh.*không bết/isu);
   assert.match(response.reply, /đúng hướng dẫn đủ 2 tuần.*hoàn tiền/isu);
-  assert.match(response.reply, /phí giao.*30\.000đ.*miễn phí giao/isu);
+  assert.match(response.reply, /nội thành.*1–2 ngày/isu);
+  assert.match(response.reply, /nội miền.*2–3 ngày/isu);
+  assert.match(response.reply, /liên miền.*3–5 ngày/isu);
   assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận liên quan/iu);
   assert.equal(response.state.selectedQuantity, undefined);
 });
@@ -1105,6 +1110,14 @@ test("tin đổi combo sang 1 lọ kèm hỏi kiểm hàng và thời gian giao 
     ),
     true,
   );
+});
+
+test("cửa hàng offline và ship hỏa tốc là chính sách vận hành chạy fast path", () => {
+  const chat = new DemoChatService();
+  const state = chat.peek("online-only-fast");
+
+  assert.equal(isFastTransition("Shop có cửa hàng offline không?", state), true);
+  assert.equal(isFastTransition("Có ship hỏa tốc trong ngày không?", state), true);
 });
 
 test("phần bổ sung địa chỉ đang thu đơn dùng rule nội bộ, không gửi PII lên LLM", () => {

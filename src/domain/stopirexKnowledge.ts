@@ -503,10 +503,18 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Giao hàng nội địa, thời gian nhận và kiểm tra hàng",
       content:
-        "Khu vực Hà Nội thường nhận hàng trong khoảng 1–2 ngày làm việc. Đây là mốc vận hành tiêu chuẩn; thời tiết hoặc vận hành thực tế có thể làm chậm hơn và thời gian chính xác được theo dõi theo vận đơn sau khi lên đơn. Các tỉnh/thành khác chưa có bảng thời gian giao cố định. Khi nhận hàng, khách được kiểm tra bao bì ngoài, tem, đúng sản phẩm Stopirex và thông tin người gửi; không mở seal hoặc tem niêm phong của chính sản phẩm trước khi xác nhận nhận hàng.",
-      searchAliases: ["bao lâu nhận hàng", "mấy ngày giao", "kiểm hàng", "bóc hàng", "Hà Nội giao hàng"],
+        "Thời gian giao dự kiến: nội thành hoặc cùng tỉnh/thành phố là 1–2 ngày; nội miền, ví dụ TP.HCM đi các tỉnh miền Nam, là 2–3 ngày; liên miền giữa miền Bắc và miền Nam là 3–5 ngày. Khi nhận hàng, khách được kiểm tra bao bì ngoài, tem, đúng sản phẩm Stopirex và thông tin người gửi; không mở seal hoặc tem niêm phong của chính sản phẩm trước khi xác nhận nhận hàng.",
+      searchAliases: [
+        "bao lâu nhận hàng",
+        "mấy ngày giao",
+        "kiểm hàng",
+        "bóc hàng",
+        "nội thành 1 2 ngày",
+        "nội miền 2 3 ngày",
+        "liên miền 3 5 ngày",
+      ],
       responseGuidance:
-        "Không tự hứa số ngày cho tỉnh/thành khác. Nếu khách hỏi đồng thời thời gian giao và kiểm hàng, trả lời đủ cả hai ý; không chuyển sang báo giá.",
+        "Dùng đúng ba mốc đã duyệt: cùng tỉnh/thành phố 1–2 ngày, nội miền 2–3 ngày, liên miền Bắc–Nam 3–5 ngày. Nếu chưa đủ dữ liệu để chọn một mốc thì báo cả ba mốc; không trả lời chung chung rằng thời gian tùy địa chỉ hoặc đơn vị vận chuyển. Nếu khách hỏi đồng thời thời gian giao và kiểm hàng, trả lời đủ cả hai ý; không chuyển sang báo giá.",
       sourceRow: 47,
     },
     {
@@ -550,6 +558,28 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       content:
         "Người trưởng thành trong gia đình có thể dùng cùng sản phẩm Stopirex, không cần mua một biến thể riêng theo giới tính hoặc theo việc chỉ có mùi nhẹ. Sản phẩm hỗ trợ kiểm soát cả mồ hôi và mùi. Mỗi người dùng lớp mỏng vào buổi tối trên da sạch, khô hoàn toàn; không dùng khi da đang trầy, đỏ hoặc rát.",
       sourceRow: 51,
+    },
+    {
+      id: "online-only-standard-carrier-policy",
+      tenantId,
+      type: "policy",
+      title: "Chỉ bán online và giao qua đơn vị vận chuyển",
+      content:
+        "Stopirex không có cửa hàng offline hoặc showroom để khách đến mua trực tiếp. Đơn được đặt online và chỉ giao qua đơn vị vận chuyển; không có dịch vụ ship hỏa tốc, giao tức thời hoặc tự đặt tài xế giao trong ngày.",
+      searchAliases: [
+        "có cửa hàng không",
+        "địa chỉ shop",
+        "mua trực tiếp",
+        "cửa hàng offline",
+        "có showroom không",
+        "ship hỏa tốc",
+        "giao trong ngày",
+        "giao ngay",
+        "đặt grab giao",
+      ],
+      responseGuidance:
+        "Trả lời trực tiếp rằng không có cửa hàng offline và không có ship hỏa tốc. Không đưa địa chỉ đến mua, không hứa giao trong ngày; hướng dẫn khách đặt online và nhận qua đơn vị vận chuyển.",
+      sourceRow: 52,
     },
   ];
 }

@@ -37,12 +37,22 @@ export function parseMetaWebhook(payload: unknown): MetaInbound[] {
       const message = event.message as {
         mid?: unknown;
         text?: unknown;
-        attachments?: Array<{ payload?: { url?: unknown } }>;
+        attachments?: Array<{ type?: unknown; payload?: { url?: unknown } }>;
         is_echo?: unknown;
         app_id?: unknown;
         metadata?: unknown;
       } | undefined;
       const postback = event.postback as { payload?: unknown; mid?: unknown } | undefined;
+      const systemTemplateOnly =
+        typeof message?.text !== "string" &&
+        !postback &&
+        message?.attachments?.length === 1 &&
+        message.attachments[0]?.type === "template";
+      // Messenger can emit client-side utility cards (for example the
+      // "Bật cập nhật thông tin vận chuyển" prompt) as a message attachment
+      // with type=template. It is not customer-authored content and must not
+      // enter the image handoff flow.
+      if (systemTemplateOnly) continue;
       const eventId =
         typeof message?.mid === "string"
           ? message.mid

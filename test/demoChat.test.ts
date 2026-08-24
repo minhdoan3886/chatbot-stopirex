@@ -421,10 +421,46 @@ test("lo mua nhầm hàng giả trước khi mua được trả lời về chín
   assert.match(result.reply, /hồ sơ công bố sản phẩm và kết quả thử nghiệm/);
   assert.match(result.reply, /quyền từ chối nhận/);
   assert.match(result.reply, /thông tin pháp lý tóm tắt/);
+  assert.equal(result.state.pendingAction, "send_authenticity_legal_summary");
   assert.doesNotMatch(
     result.reply,
     /đơn đặt trực tiếp.*(?:đúng|mới là|là).*chính hãng|Facebook|Shopee|TikTok|mã đơn|mua.*kênh/iu,
   );
+});
+
+test("uh sau đề nghị gửi pháp lý phải gửi đúng hồ sơ, không rơi về chọn gói", () => {
+  const chat = new DemoChatService();
+  chat.reset("authenticity-legal-summary-followup");
+  chat.chat(
+    "authenticity-legal-summary-followup",
+    "Có gì đảm bảo sản phẩm chính hãng không?",
+  );
+
+  const result = chat.chat("authenticity-legal-summary-followup", "uh", {
+    slots: {},
+    intent: "consultation",
+    topic: "other",
+    affirmation: true,
+    confidence: 0.72,
+    needsClarification: true,
+    actions: [
+      {
+        type: "answer_question",
+        topic: "other",
+        confidence: 0.72,
+        evidence: ["uh"],
+        source: "llm",
+      },
+    ],
+  });
+
+  assert.equal(result.state.decisionTrace?.selectedRoute, "pending_action");
+  assert.equal(result.state.lastIntent, "authenticity_question");
+  assert.equal(result.state.pendingAction, undefined);
+  assert.match(result.reply, /181339\/22\/CBMP-QLD/iu);
+  assert.match(result.reply, /PREVOST LABORATORY CONCEPT/iu);
+  assert.match(result.reply, /DV142210268\/01/iu);
+  assert.doesNotMatch(result.reply, /1 lọ|combo|đang cân/iu);
 });
 
 test("chỉ mở flow hàng giả sau mua khi khách nói rõ đã nhận hàng", () => {

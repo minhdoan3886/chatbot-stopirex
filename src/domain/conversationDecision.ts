@@ -4,7 +4,12 @@ import type { IssueType } from "./customerCare.js";
 import type { ConversationActionPlan } from "./conversationActions.js";
 import type { ActionExecutionMode } from "./actionRollout.js";
 
-export type PendingAction = "send_usage_guidance" | "send_price" | "choose_quantity" | "confirm_order";
+export type PendingAction =
+  | "send_usage_guidance"
+  | "send_price"
+  | "send_authenticity_legal_summary"
+  | "choose_quantity"
+  | "confirm_order";
 
 export type DecisionRoute =
   | "opt_out"
@@ -202,6 +207,7 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
   }
 
   const pendingAction = input.pendingAction;
+  const expectedPendingReplyTo = pendingAction ? pendingReplyTo(pendingAction) : undefined;
   const directQuestionInterruptsPendingAction = Boolean(
     input.semantic.asksDirectAnswer === true &&
       input.semantic.intent &&
@@ -215,7 +221,8 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
     pendingAction !== undefined &&
     !directQuestionInterruptsPendingAction &&
     (input.affirmativeFollowup ||
-      input.semantic.replyTo === pendingReplyTo(pendingAction) ||
+      (expectedPendingReplyTo !== undefined &&
+        input.semantic.replyTo === expectedPendingReplyTo) ||
       (pendingAction === "send_usage_guidance" && input.semantic.intent === "usage_guidance"));
   if (pendingMatches && pendingAction) {
     return decision(
@@ -365,14 +372,16 @@ function decision(
 function pendingIntent(action: PendingAction): CustomerIntent {
   if (action === "send_usage_guidance") return "usage_guidance";
   if (action === "send_price") return "price_request";
+  if (action === "send_authenticity_legal_summary") return "authenticity_question";
   return "buying";
 }
 
-function pendingReplyTo(action: PendingAction): SemanticUnderstanding["replyTo"] {
+function pendingReplyTo(action: PendingAction): SemanticUnderstanding["replyTo"] | undefined {
   if (action === "send_usage_guidance") return "offer_usage_guidance";
   if (action === "send_price") return "offer_price";
   if (action === "choose_quantity") return "choose_quantity";
-  return "confirm_order";
+  if (action === "confirm_order") return "confirm_order";
+  return undefined;
 }
 
 function careRuleKind(issue: IssueType): "hard" | "soft" {

@@ -578,6 +578,16 @@ test("câu hỏi mã giảm giá dùng rule nhanh, không chờ LLM", () => {
   assert.equal(isFastTransition("ko có mã giảm giá à", chat.peek("promotion-fast")), true);
 });
 
+test("uh sau đề nghị gửi hồ sơ pháp lý dùng pending action, không gọi lại LLM", () => {
+  const chat = new DemoChatService();
+  chat.chat("legal-summary-fast", "Có gì đảm bảo sản phẩm chính hãng không?");
+  const state = chat.peek("legal-summary-fast");
+
+  assert.equal(state.pendingAction, "send_authenticity_legal_summary");
+  assert.equal(isFastTransition("uh", state), true);
+  assert.equal(isFastTransition("gửi đi", state), true);
+});
+
 test("câu dò AI dùng rule nhanh, không gửi lên LLM", () => {
   const chat = new DemoChatService();
   const state = chat.peek("assistant-probe-fast");

@@ -1333,6 +1333,22 @@ export class DemoChatService {
     }
     if (
       decision.route === "pending_action" &&
+      session.pendingAction === "send_authenticity_legal_summary"
+    ) {
+      delete session.pendingAction;
+      delete session.lastDecision.pendingActionAfter;
+      session.lastIntent = "authenticity_question";
+      session.activeSkill = "direct-answer";
+      session.skillReason =
+        "Khách xác nhận đề nghị ngay trước đó; gửi đúng phần pháp lý đã hứa và không mở luồng chọn số lượng.";
+      recordKnowledge(session, [
+        "authenticity-legal-summary",
+        "regulatory-product-notification-2022",
+      ]);
+      return this.respond(session, authenticityLegalSummaryReply());
+    }
+    if (
+      decision.route === "pending_action" &&
       session.pendingAction === "choose_quantity" &&
       !resolveQuantitySelection(text, semantic, session)
     ) {
@@ -1773,6 +1789,8 @@ export class DemoChatService {
         "authenticity-legal-summary",
         "regulatory-product-notification-2022",
       ]);
+      session.pendingAction = "send_authenticity_legal_summary";
+      session.lastDecision.pendingActionAfter = "send_authenticity_legal_summary";
       return this.respond(
         session,
         "Dạ sản phẩm Stopirex bên em cung cấp là hàng chính hãng, nhập khẩu chính ngạch, có hồ sơ công bố sản phẩm và kết quả thử nghiệm ạ.\n\nKhi nhận hàng, mình có thể đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi; nếu có điểm không khớp, mình có quyền từ chối nhận và liên hệ bên em kiểm tra.\n\nEm gửi mình phần thông tin pháp lý tóm tắt để tham khảo nhé?",
@@ -4128,6 +4146,10 @@ function isAffirmativeFollowup(text: string): boolean {
   return /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:di|minh|em|chi|anh)|huong dan (?:di|minh|em)|vang|uh|u)(?: a| nhe)?$/.test(
     text,
   );
+}
+
+function authenticityLegalSummaryReply(): string {
+  return "Dạ, thông tin pháp lý tóm tắt của Stopirex: Phiếu công bố sản phẩm mỹ phẩm số 181339/22/CBMP-QLD, tiếp nhận ngày 12/09/2022 và có giá trị 5 năm kể từ ngày cấp. Hồ sơ ghi sản phẩm được sản xuất, đóng gói và xuất khẩu từ Pháp bởi PREVOST LABORATORY CONCEPT. Sản phẩm có Phiếu kết quả thử nghiệm VNTEST mã DV142210268/01 ngày 17/09/2025 ạ.";
 }
 
 function formatVnd(amount: number): string {

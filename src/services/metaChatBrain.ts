@@ -643,6 +643,14 @@ export function isFastTransition(customerMessage: string, state: DemoChatState):
     return true;
   }
   if (
+    state.pendingAction === "send_authenticity_legal_summary" &&
+    /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:di|minh|em|chi|anh)|vang|uh|u)(?: a| nhe)?$/.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (
     state.pendingAction === "choose_quantity" &&
     /^(?:1|2|1 lo|2 lo|mot lo|hai lo|combo)(?: a| nhe| nha)?$/.test(text)
   ) {

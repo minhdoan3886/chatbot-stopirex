@@ -45,6 +45,7 @@ const savedRecord: OrderInboxRecord = {
   totalVnd: validDraft.totalVnd,
   paymentMethod: validDraft.paymentMethod,
   status: "pending",
+  trackingSendStatus: "not_sent",
   confirmedAt: "2026-08-18T09:00:00.000Z",
   createdAt: "2026-08-18T09:00:00.000Z",
   updatedAt: "2026-08-18T09:00:00.000Z",
@@ -242,6 +243,73 @@ test("updateStatus() chấp nhận cả 'completed' và 'cancelled'", async () =
 
   const r2 = await service2.updateStatus(savedRecord.id, "cancelled");
   assert.equal(r2?.status, "cancelled");
+});
+
+test("claimTrackingSend() chỉ nhận đơn pending chưa gửi và lưu mã thật", async () => {
+  const queries: Array<{ text: string; params?: unknown[] }> = [];
+  const claimed = {
+    ...savedRecord,
+    trackingCarrier: "spx" as const,
+    trackingNumber: "SPXVN123456",
+    trackingUrl: "https://spx.vn/track?SPXVN123456",
+    trackingSendStatus: "sending" as const,
+  };
+  const pool = {
+    async query(text: string, params?: unknown[]) {
+      queries.push({ text, ...(params ? { params } : {}) });
+      return { rows: [claimed] };
+    },
+  };
+  const service = new OrderInboxService(pool as never);
+  const result = await service.claimTrackingSend({
+    id: savedRecord.id,
+    carrier: "spx",
+    trackingNumber: "SPXVN123456",
+    trackingUrl: "https://spx.vn/track?SPXVN123456",
+  });
+
+  assert.equal(result?.trackingSendStatus, "sending");
+  assert.match(queries[0]!.text, /tracking_sent_at IS NULL/u);
+  assert.match(queries[0]!.text, /status = 'pending'/u);
+  assert.deepEqual(queries[0]!.params, [
+    savedRecord.id,
+    "spx",
+    "SPXVN123456",
+    "https://spx.vn/track?SPXVN123456",
+  ]);
+});
+
+test("markTrackingSent() hoàn tất đơn chỉ sau khi Meta đã trả message id", async () => {
+  const sent = {
+    ...savedRecord,
+    status: "completed" as const,
+    trackingSendStatus: "sent" as const,
+    trackingMessageId: "mid.123",
+    trackingSentAt: "2026-08-24T10:00:00.000Z",
+  };
+  const captured: string[] = [];
+  const pool = {
+    async query(text: string) {
+      captured.push(text);
+      return { rows: [sent] };
+    },
+  };
+  const service = new OrderInboxService(pool as never);
+  const result = await service.markTrackingSent(savedRecord.id, "mid.123");
+
+  assert.equal(result?.status, "completed");
+  assert.equal(result?.trackingSendStatus, "sent");
+  assert.match(captured[0]!, /tracking_message_id = \$2/u);
+  assert.match(captured[0]!, /status = 'completed'/u);
+});
+
+test("markTrackingFailed() giữ đơn pending để nhân viên có thể gửi lại", async () => {
+  const failed = { ...savedRecord, trackingSendStatus: "failed" as const };
+  const pool = makePool([failed]);
+  const service = new OrderInboxService(pool as never);
+  const result = await service.markTrackingFailed(savedRecord.id, "meta_500");
+  assert.equal(result?.status, "pending");
+  assert.equal(result?.trackingSendStatus, "failed");
 });
 
 // ---------------------------------------------------------------------------

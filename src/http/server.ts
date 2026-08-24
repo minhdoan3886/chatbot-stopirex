@@ -47,6 +47,13 @@ import { operationsPage } from "./operationsPage.js";
 import { productPage } from "./productPage.js";
 import { ordersPage } from "./ordersPage.js";
 import { OrderInboxService } from "../services/orderInbox.js";
+import { GraphMetaMessenger } from "../adapters/metaMessenger.js";
+import {
+  buildOrderTrackingNotification,
+  isOrderTrackingCarrier,
+  metaRecipientIdFromOrderSession,
+  normalizeTrackingNumber,
+} from "../services/orderTrackingNotification.js";
 
 const env = loadEnv();
 const logger = new StructuredLogger();
@@ -70,6 +77,13 @@ const operationsControl = new OperationsControlService({
   ...(redis ? { redis } : {}),
 });
 const orderInbox = postgres ? new OrderInboxService(postgres.pool) : undefined;
+const orderTrackingMessenger = env.metaPageAccessToken
+  ? new GraphMetaMessenger({
+      pageAccessToken: env.metaPageAccessToken,
+      graphVersion: env.metaGraphVersion,
+    })
+  : undefined;
+const isProductRuntime = env.metaLiveSendEnabled;
 
 const server = createServer(async (request, response) => {
   const traceId = String(request.headers["x-request-id"] ?? randomUUID());
@@ -77,6 +91,10 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
   if (request.method === "GET" && url.pathname === "/") {
+    if (isProductRuntime) {
+      response.writeHead(302, { location: "/orders" });
+      return response.end();
+    }
     return html(response, 200, demoPage);
   }
 
@@ -110,8 +128,88 @@ const server = createServer(async (request, response) => {
     }
   }
 
-  // POST /api/orders/:id/completed  or  /api/orders/:id/cancelled
-  const orderStatusMatch = url.pathname.match(/^\/api\/orders\/([a-f0-9-]{36})\/(completed|cancelled)$/);
+  const orderTrackingMatch = url.pathname.match(/^\/api\/orders\/([a-f0-9-]{36})\/tracking$/);
+  if (request.method === "POST" && orderTrackingMatch) {
+    if (!isOperationsAuthorized(request)) {
+      return json(response, 401, { error: "unauthorized" });
+    }
+    if (!orderInbox) {
+      return json(response, 503, { error: "database_not_configured" });
+    }
+    if (!orderTrackingMessenger || !env.metaLiveSendEnabled) {
+      return json(response, 503, { error: "meta_live_send_not_configured" });
+    }
+    let body: { carrier?: unknown; trackingNumber?: unknown };
+    try {
+      body = JSON.parse((await readBody(request, 4_000)).toString("utf8")) as typeof body;
+    } catch {
+      return json(response, 400, { error: "invalid_json" });
+    }
+    const carrier = isOrderTrackingCarrier(body.carrier) ? body.carrier : "spx";
+    const trackingNumber = normalizeTrackingNumber(body.trackingNumber);
+    if (!trackingNumber) {
+      return json(response, 400, { error: "invalid_tracking_number" });
+    }
+    const orderId = orderTrackingMatch[1]!;
+    const notification = buildOrderTrackingNotification({ carrier, trackingNumber });
+    try {
+      const claimed = await orderInbox.claimTrackingSend({
+        id: orderId,
+        carrier,
+        trackingNumber,
+        trackingUrl: notification.trackingUrl,
+      });
+      if (!claimed) {
+        const current = await orderInbox.findById(orderId);
+        if (!current) return json(response, 404, { error: "order_not_found" });
+        if (current.trackingSendStatus === "sent") {
+          return json(response, 409, { error: "tracking_already_sent", order: current });
+        }
+        if (current.trackingSendStatus === "sending") {
+          return json(response, 409, { error: "tracking_send_in_progress", order: current });
+        }
+        return json(response, 409, { error: "order_not_pending", order: current });
+      }
+      const recipientId = metaRecipientIdFromOrderSession(claimed.sessionId);
+      if (!recipientId) {
+        await orderInbox.markTrackingFailed(orderId, "invalid_meta_recipient");
+        return json(response, 422, { error: "invalid_meta_recipient" });
+      }
+      const sent = await orderTrackingMessenger.sendText({
+        recipientId,
+        text: notification.text,
+        idempotencyKey: `order-tracking:${orderId}`,
+      });
+      if (!sent.ok) {
+        await orderInbox.markTrackingFailed(orderId, sent.code);
+        logger.log("error", "order_tracking_send_failed", {
+          traceId,
+          orderId,
+          code: sent.code,
+          retryable: sent.retryable,
+        });
+        return json(response, sent.retryable ? 503 : 502, {
+          error: "tracking_send_failed",
+          retryable: sent.retryable,
+          traceId,
+        });
+      }
+      const updated = await orderInbox.markTrackingSent(orderId, sent.value.messageId);
+      if (!updated) throw new Error("tracking_sent_state_not_persisted");
+      logger.log("info", "order_tracking_sent", { traceId, orderId, carrier });
+      return json(response, 200, updated);
+    } catch (error) {
+      logger.log("error", "order_tracking_workflow_failed", {
+        traceId,
+        orderId,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+      return json(response, 503, { error: "tracking_workflow_unavailable", traceId });
+    }
+  }
+
+  // Hoàn tất đơn chỉ xảy ra sau khi gửi mã vận đơn thành công; API này chỉ dùng để huỷ.
+  const orderStatusMatch = url.pathname.match(/^\/api\/orders\/([a-f0-9-]{36})\/(cancelled)$/);
   if (request.method === "POST" && orderStatusMatch) {
     if (!isOperationsAuthorized(request)) {
       return json(response, 401, { error: "unauthorized" });
@@ -119,7 +217,7 @@ const server = createServer(async (request, response) => {
     if (!orderInbox) {
       return json(response, 503, { error: "database_not_configured" });
     }
-    const [, orderId, newStatus] = orderStatusMatch as [string, string, "completed" | "cancelled"];
+    const [, orderId, newStatus] = orderStatusMatch as [string, string, "cancelled"];
     let note: string | undefined;
     try {
       const body = JSON.parse((await readBody(request, 4_000)).toString("utf8")) as { note?: unknown };
@@ -207,6 +305,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && url.pathname === "/demo/chat") {
+    if (isProductRuntime) return json(response, 404, { error: "not_found" });
     let body: {
       sessionId?: unknown;
       text?: unknown;
@@ -452,6 +551,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && url.pathname === "/demo/reset") {
+    if (isProductRuntime) return json(response, 404, { error: "not_found" });
     try {
       const body = JSON.parse((await readBody(request, 20_000)).toString("utf8")) as {
         sessionId?: unknown;
@@ -503,6 +603,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && url.pathname === "/demo/free-shipping") {
+    if (isProductRuntime) return json(response, 404, { error: "not_found" });
     try {
       const body = JSON.parse((await readBody(request, 20_000)).toString("utf8")) as {
         sessionId?: unknown;
@@ -519,6 +620,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && url.pathname === "/demo/care/resume") {
+    if (isProductRuntime) return json(response, 404, { error: "not_found" });
     try {
       const body = JSON.parse((await readBody(request, 20_000)).toString("utf8")) as {
         sessionId?: unknown;
@@ -748,22 +850,15 @@ const openApiContract = {
         },
       },
     },
-    "/demo/chat": {
+    "/api/orders/{id}/tracking": {
       post: {
-        summary: "Stateful local sandbox conversation",
-        responses: { "200": { description: "Reply and current conversation state" } },
-      },
-    },
-    "/demo/reset": {
-      post: {
-        summary: "Reset a local sandbox conversation",
-        responses: { "200": { description: "New initial state" } },
-      },
-    },
-    "/demo/free-shipping": {
-      post: {
-        summary: "Approve a one-bottle free-shipping override in the local sandbox",
-        responses: { "200": { description: "Updated conversation and order total" } },
+        summary: "Send a staff-entered shipment tracking number to the customer",
+        responses: {
+          "200": { description: "Tracking message sent and order completed" },
+          "400": { description: "Invalid tracking number" },
+          "409": { description: "Already sent or another send is in progress" },
+          "503": { description: "Meta or database unavailable" },
+        },
       },
     },
     "/webhooks/meta": {
@@ -921,9 +1016,7 @@ function isDeterministicFastPath(customerMessage: string, state: DemoChatState):
   }
   if (
     state.pendingAction === "send_authenticity_legal_summary" &&
-    /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:di|minh|em|chi|anh)|vang|uh|u)(?: a| nhe)?$/.test(
-      text,
-    )
+    /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:di|minh|em|chi|anh)|vang|uh|u)(?: a| nhe)?$/.test(text)
   ) {
     return true;
   }

@@ -26,7 +26,7 @@ main{max-width:1320px;margin:0 auto;padding:24px}
 .filters{display:flex;gap:8px;flex-wrap:wrap}
 .filters input,.filters select{border:1px solid #cad3e0;background:#fff;border-radius:9px;padding:9px 11px;font:inherit;font-size:13px}
 .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px}
-table{width:100%;border-collapse:collapse;min-width:900px}
+table{width:100%;border-collapse:collapse;min-width:1120px}
 th,td{text-align:left;padding:11px 12px;border-bottom:1px solid #e8ecf2;font-size:12px;vertical-align:middle}
 th{position:sticky;top:0;background:#f7f9fc;color:#5b6980;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
 tbody tr:hover{background:#f8faff}
@@ -41,6 +41,12 @@ tbody tr:hover{background:#f8faff}
 .btn{border:none;border-radius:8px;padding:6px 11px;font:inherit;font-size:11px;font-weight:700;cursor:pointer;line-height:1.3}
 .btn-complete{background:#e9f7f1;color:var(--green)}.btn-complete:hover{background:#d0f0e4}
 .btn-cancel{background:#fff0f0;color:var(--red)}.btn-cancel:hover{background:#fde0e0}
+.tracking-controls{display:grid;grid-template-columns:92px minmax(150px,1fr);gap:6px;min-width:330px}
+.tracking-controls select,.tracking-controls input{min-width:0;border:1px solid #cad3e0;border-radius:8px;padding:7px 8px;font:inherit;font-size:11px;background:#fff}
+.tracking-controls .btn-send{grid-column:1/3;background:#e9f0ff;color:var(--blue);padding:8px}
+.tracking-controls .btn-send:hover{background:#dce7ff}
+.tracking-result{max-width:270px;word-break:break-word}.tracking-result a{color:var(--blue)}
+.tracking-error{display:block;color:var(--red);margin-bottom:5px}
 .btn:disabled{opacity:.5;cursor:wait}
 .error-banner{display:none;margin:0 0 14px;padding:12px 14px;border-radius:11px;background:#ffeded;color:var(--red)}
 .loading{opacity:.55;pointer-events:none}
@@ -50,14 +56,13 @@ tbody tr:hover{background:#f8faff}
 </style></head><body><main>
 <section class="hero"><div class="hero-row"><div>
 <h1>Hứng Đơn — Chốt Đơn</h1>
-<p>Danh sách đơn khách đã xác nhận qua chatbot. Sale xem và tự lên Sapo.</p>
+<p>Đơn khách đã xác nhận. Nhập mã vận đơn thật để gửi thông báo cho khách.</p>
 </div><div>
 <div class="hero-actions"><button id="refresh" class="refresh">Làm mới</button></div>
 <div id="freshness" class="freshness">Đang tải…</div>
 </div></div></section>
 
 <nav class="tabs">
-  <a class="tab" href="/">Chat thử</a>
   <a class="tab" href="/operations">Tổng quan kết nối</a>
   <a class="tab active" href="/orders">Đơn hàng</a>
   <a class="tab" href="/product">Thông tin sản phẩm</a>
@@ -67,9 +72,9 @@ tbody tr:hover{background:#f8faff}
 
 <div id="dashboard">
 <div class="grid kpis">
-  <div class="card"><label>ĐƠN CHỜ LÊN SAPO</label><strong id="kpiPending">—</strong><small>Cần xử lý ngay</small></div>
+  <div class="card"><label>CHỜ NHẬP VẬN ĐƠN</label><strong id="kpiPending">—</strong><small>Cần xử lý ngay</small></div>
   <div class="card"><label>TỔNG ĐƠN HÔM NAY</label><strong id="kpiToday">—</strong><small id="kpiTodayDetail">—</small></div>
-  <div class="card"><label>ĐÃ LÊN SAPO</label><strong id="kpiCompleted">—</strong><small>Tổng cộng</small></div>
+  <div class="card"><label>ĐÃ GỬI VẬN ĐƠN</label><strong id="kpiCompleted">—</strong><small>Tổng cộng</small></div>
   <div class="card"><label>ĐÃ HUỶ</label><strong id="kpiCancelled">—</strong><small>Tổng cộng</small></div>
 </div>
 
@@ -85,8 +90,8 @@ tbody tr:hover{background:#f8faff}
     <div class="filters">
       <select id="statusFilter">
         <option value="all">Tất cả trạng thái</option>
-        <option value="pending" selected>Chờ lên Sapo</option>
-        <option value="completed">Đã lên Sapo</option>
+        <option value="pending" selected>Chờ nhập vận đơn</option>
+        <option value="completed">Đã gửi vận đơn</option>
         <option value="cancelled">Đã huỷ</option>
       </select>
       <input id="search" placeholder="Tìm tên, SĐT, địa chỉ…">
@@ -102,7 +107,7 @@ tbody tr:hover{background:#f8faff}
         <th>Tổng tiền</th>
         <th>Thanh toán</th>
         <th>Thời gian xác nhận</th>
-        <th>Hành động</th>
+        <th>Vận đơn / Gửi khách</th>
       </tr></thead>
       <tbody id="orderRows"></tbody>
     </table>
@@ -115,7 +120,7 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const fullTime=v=>v?new Intl.DateTimeFormat('vi-VN',{dateStyle:'short',timeStyle:'medium'}).format(new Date(v)):'—';
 const relTime=v=>{if(!v)return'—';const ms=Date.now()-new Date(v).getTime();if(ms<60000)return Math.max(1,Math.round(ms/1000))+' giây trước';if(ms<3600000)return Math.round(ms/60000)+' phút trước';if(ms<86400000)return Math.round(ms/3600000)+' giờ trước';return Math.round(ms/86400000)+' ngày trước'};
 const vnd=v=>v?new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(Number(v)):'—';
-const statusLabel={pending:'Chờ lên Sapo',completed:'Đã lên Sapo',cancelled:'Đã huỷ'};
+const statusLabel={pending:'Chờ nhập vận đơn',completed:'Đã gửi vận đơn',cancelled:'Đã huỷ'};
 const payLabel={cod:'COD',bank_transfer:'Chuyển khoản'};
 
 let allRecords=[];
@@ -152,10 +157,21 @@ function renderRows(){
   document.getElementById('orderCount').textContent='Hiển thị '+rows.length+'/'+allRecords.length+' đơn';
   document.getElementById('orderRows').innerHTML=rows.length?rows.map(r=>{
     const id=esc(r.id);
+    const trackingState=r.trackingSendStatus??'not_sent';
+    const carrierOption=value=>'<option value="'+value+'"'+(r.trackingCarrier===value?' selected':'')+'>'+value.toUpperCase()+'</option>';
     const actionCell=r.status==='pending'
-      ?'<button class="btn btn-complete" data-order-id="'+id+'" data-order-action="completed">✓ Đã lên Sapo</button>'
-       +'<button class="btn btn-cancel" style="margin-top:4px" data-order-id="'+id+'" data-order-action="cancelled">✕ Huỷ</button>'
-      :r.note?'<span class="sub">'+esc(r.note)+'</span>':'';
+      ?'<div class="tracking-controls" data-tracking-order-id="'+id+'">'
+       +'<select aria-label="Đơn vị vận chuyển">'+carrierOption('spx')+carrierOption('ghn')+carrierOption('ghtk')+'</select>'
+       +'<input aria-label="Mã vận đơn" maxlength="80" autocomplete="off" placeholder="Nhập mã vận đơn thật" value="'+esc(r.trackingNumber??'')+'">'
+       +(trackingState==='failed'?'<span class="tracking-error" style="grid-column:1/3">Lần gửi trước chưa thành công. Kiểm tra và gửi lại.</span>':'')
+       +'<button class="btn btn-send" data-order-action="send-tracking">Gửi mã vận đơn cho khách</button>'
+       +'<button class="btn btn-cancel" style="grid-column:1/3" data-order-id="'+id+'" data-order-action="cancelled">✕ Huỷ đơn</button>'
+       +'</div>'
+      :r.trackingSentAt
+        ?'<div class="tracking-result"><b>'+esc(r.trackingNumber??'—')+'</b>'
+         +(r.trackingUrl?'<span class="sub"><a href="'+esc(r.trackingUrl)+'" target="_blank" rel="noopener">Mở trang tra cứu</a></span>':'')
+         +'<span class="sub">Đã gửi '+esc(fullTime(r.trackingSentAt))+'</span></div>'
+        :r.note?'<span class="sub">'+esc(r.note)+'</span>':'';
     return '<tr id="row-'+esc(r.id)+'">'
       +'<td><span class="pill '+esc(r.status)+'">'+esc(statusLabel[r.status]??r.status)+'</span></td>'
       +'<td><b>'+esc(r.recipientName??'—')+'</b><span class="sub">'+esc(r.phone??'—')+'</span></td>'
@@ -171,7 +187,7 @@ function renderRows(){
 
 
 async function updateStatus(id,status,btn){
-  const note=status==='completed'?undefined:prompt('Lý do huỷ (có thể bỏ trống):')??undefined;
+  const note=prompt('Lý do huỷ (có thể bỏ trống):')??undefined;
   btn.disabled=true;
   try{
     const res=await fetch('/api/orders/'+id+'/'+status,{
@@ -187,6 +203,38 @@ async function updateStatus(id,status,btn){
   }catch(e){
     alert('Lỗi cập nhật: '+e.message);
     btn.disabled=false;
+  }
+}
+
+async function sendTracking(btn){
+  const controls=btn.closest('[data-tracking-order-id]');
+  if(!controls)return;
+  const id=controls.dataset.trackingOrderId;
+  const carrier=controls.querySelector('select').value;
+  const trackingNumber=controls.querySelector('input').value.trim();
+  if(!trackingNumber){alert('Vui lòng nhập mã vận đơn thật.');return;}
+  if(!confirm('Gửi mã vận đơn '+trackingNumber+' cho khách ngay bây giờ?'))return;
+  btn.disabled=true;
+  btn.textContent='Đang gửi…';
+  try{
+    const res=await fetch('/api/orders/'+id+'/tracking',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({carrier,trackingNumber})
+    });
+    const payload=await res.json().catch(()=>({}));
+    if(!res.ok){
+      const messages={invalid_tracking_number:'Mã vận đơn không hợp lệ.',tracking_already_sent:'Mã vận đơn đã được gửi trước đó.',tracking_send_in_progress:'Một lượt gửi đang được xử lý.',tracking_send_failed:'Meta chưa gửi được tin nhắn. Bạn có thể thử lại.',invalid_meta_recipient:'Đơn này không có người nhận Meta hợp lệ.'};
+      throw new Error(messages[payload.error]??('HTTP '+res.status));
+    }
+    const idx=allRecords.findIndex(r=>r.id===id);
+    if(idx>=0)allRecords[idx]=payload;
+    render({records:allRecords});
+    alert('Đã gửi mã vận đơn cho khách thành công.');
+  }catch(e){
+    alert('Không gửi được mã vận đơn: '+e.message);
+    btn.disabled=false;
+    btn.textContent='Gửi mã vận đơn cho khách';
   }
 }
 
@@ -216,6 +264,7 @@ document.getElementById('search').addEventListener('input',renderRows);
 document.getElementById('orderRows').addEventListener('click',event=>{
   const btn=event.target.closest('button[data-order-action]');
   if(!btn)return;
+  if(btn.dataset.orderAction==='send-tracking'){sendTracking(btn);return;}
   updateStatus(btn.dataset.orderId,btn.dataset.orderAction,btn);
 });
 load();

@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import type { OrderDraft } from "../domain/orders.js";
 
 export type OrderInboxStatus = "pending" | "completed" | "cancelled";
+export type TrackingSendStatus = "not_sent" | "sending" | "sent" | "failed";
 
 export type OrderInboxRecord = {
   id: string;
@@ -18,6 +19,13 @@ export type OrderInboxRecord = {
   paymentMethod?: "cod" | "bank_transfer";
   status: OrderInboxStatus;
   note?: string;
+  trackingCarrier?: "spx" | "ghn" | "ghtk";
+  trackingNumber?: string;
+  trackingUrl?: string;
+  trackingSendStatus: TrackingSendStatus;
+  trackingMessageId?: string;
+  trackingSentAt?: string;
+  trackingLastError?: string;
   confirmedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -74,6 +82,13 @@ export class OrderInboxService {
          payment_method   AS "paymentMethod",
          status,
          note,
+         tracking_carrier AS "trackingCarrier",
+         tracking_number AS "trackingNumber",
+         tracking_url AS "trackingUrl",
+         tracking_send_status AS "trackingSendStatus",
+         tracking_message_id AS "trackingMessageId",
+         tracking_sent_at AS "trackingSentAt",
+         tracking_last_error AS "trackingLastError",
          confirmed_at     AS "confirmedAt",
          created_at       AS "createdAt",
          updated_at       AS "updatedAt"`,
@@ -128,6 +143,13 @@ export class OrderInboxService {
            payment_method AS "paymentMethod",
            status,
            note,
+           tracking_carrier AS "trackingCarrier",
+           tracking_number AS "trackingNumber",
+           tracking_url AS "trackingUrl",
+           tracking_send_status AS "trackingSendStatus",
+           tracking_message_id AS "trackingMessageId",
+           tracking_sent_at AS "trackingSentAt",
+           tracking_last_error AS "trackingLastError",
            confirmed_at   AS "confirmedAt",
            created_at     AS "createdAt",
            updated_at     AS "updatedAt"
@@ -179,6 +201,13 @@ export class OrderInboxService {
          payment_method AS "paymentMethod",
          status,
          note,
+         tracking_carrier AS "trackingCarrier",
+         tracking_number AS "trackingNumber",
+         tracking_url AS "trackingUrl",
+         tracking_send_status AS "trackingSendStatus",
+         tracking_message_id AS "trackingMessageId",
+         tracking_sent_at AS "trackingSentAt",
+         tracking_last_error AS "trackingLastError",
          confirmed_at   AS "confirmedAt",
          created_at     AS "createdAt",
          updated_at     AS "updatedAt"`,
@@ -186,4 +215,92 @@ export class OrderInboxService {
     );
     return result.rows[0];
   }
+
+  /** Giữ quyền gửi để hai thao tác đồng thời không gửi trùng cho khách. */
+  async claimTrackingSend(input: {
+    id: string;
+    carrier: "spx" | "ghn" | "ghtk";
+    trackingNumber: string;
+    trackingUrl: string;
+  }): Promise<OrderInboxRecord | undefined> {
+    const result = await this.pool.query<OrderInboxRecord>(
+      `UPDATE order_inbox
+       SET tracking_carrier = $2,
+           tracking_number = $3,
+           tracking_url = $4,
+           tracking_send_status = 'sending',
+           tracking_last_error = NULL,
+           updated_at = NOW()
+       WHERE id = $1
+         AND status = 'pending'
+         AND tracking_sent_at IS NULL
+         AND tracking_send_status IN ('not_sent', 'failed')
+       RETURNING ${orderInboxReturningColumns}`,
+      [input.id, input.carrier, input.trackingNumber, input.trackingUrl],
+    );
+    return result.rows[0];
+  }
+
+  async findById(id: string): Promise<OrderInboxRecord | undefined> {
+    const result = await this.pool.query<OrderInboxRecord>(
+      `SELECT ${orderInboxReturningColumns} FROM order_inbox WHERE id = $1`,
+      [id],
+    );
+    return result.rows[0];
+  }
+
+  async markTrackingSent(id: string, messageId: string): Promise<OrderInboxRecord | undefined> {
+    const result = await this.pool.query<OrderInboxRecord>(
+      `UPDATE order_inbox
+       SET tracking_send_status = 'sent',
+           tracking_message_id = $2,
+           tracking_sent_at = NOW(),
+           tracking_last_error = NULL,
+           status = 'completed',
+           updated_at = NOW()
+       WHERE id = $1 AND tracking_send_status = 'sending'
+       RETURNING ${orderInboxReturningColumns}`,
+      [id, messageId],
+    );
+    return result.rows[0];
+  }
+
+  async markTrackingFailed(id: string, reason: string): Promise<OrderInboxRecord | undefined> {
+    const result = await this.pool.query<OrderInboxRecord>(
+      `UPDATE order_inbox
+       SET tracking_send_status = 'failed',
+           tracking_last_error = $2,
+           updated_at = NOW()
+       WHERE id = $1 AND tracking_send_status = 'sending'
+       RETURNING ${orderInboxReturningColumns}`,
+      [id, reason.slice(0, 500)],
+    );
+    return result.rows[0];
+  }
 }
+
+const orderInboxReturningColumns = `
+  id,
+  session_id AS "sessionId",
+  idempotency_key AS "idempotencyKey",
+  channel,
+  recipient_name AS "recipientName",
+  phone,
+  legacy_address AS "legacyAddress",
+  delivery_note AS "deliveryNote",
+  sku,
+  quantity,
+  total_vnd AS "totalVnd",
+  payment_method AS "paymentMethod",
+  status,
+  note,
+  tracking_carrier AS "trackingCarrier",
+  tracking_number AS "trackingNumber",
+  tracking_url AS "trackingUrl",
+  tracking_send_status AS "trackingSendStatus",
+  tracking_message_id AS "trackingMessageId",
+  tracking_sent_at AS "trackingSentAt",
+  tracking_last_error AS "trackingLastError",
+  confirmed_at AS "confirmedAt",
+  created_at AS "createdAt",
+  updated_at AS "updatedAt"`;

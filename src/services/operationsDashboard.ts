@@ -342,7 +342,7 @@ export class OperationsDashboardService {
                 ? pageSubscriptionRuntime.detail ?? "Không đọc lại được trạng thái subscribed_apps"
                 : `HTTPS công khai → gateway → API hoạt động · ${publicWebhook.latencyMs} ms${pageSubscriptionRuntime?.status === "healthy" ? " · Page đã subscribe app" : ""}`
             : "URL công khai không gọi được gateway/API"
-          : "Chưa cấu hình URL HTTPS công khai; Meta không thể gọi vào localhost",
+          : "Chưa cấu hình URL HTTPS công khai; Meta chưa thể kết nối webhook",
         ...(databaseSnapshot.lastWebhookAt ? { lastSeenAt: databaseSnapshot.lastWebhookAt } : {}),
       },
       {

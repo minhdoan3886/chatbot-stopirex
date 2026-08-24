@@ -1926,6 +1926,29 @@ test("sự cố shipper được ghi nhận ngắn rồi chuyển sale online ng
   assert.doesNotMatch(result.reply, /mã đơn|chưa nhận.*giao chậm.*nhận sai/isu);
 });
 
+test("khiếu nại kiểm tra đơn thắng tín hiệu 1 lọ và khóa bán hàng tự động", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat(
+    "urgent-order-complaint",
+    "Ê shop, hqua t mới chốt 1 lọ trên tóp tóp nhà m, mà h hành trình đơn báo huỷ là sao? M check cho t mã đơn 123XYZ, k giao lẹ t bóc phốt m làm ăn lôm côm đấy. sđt t đuôi 098xxx nha",
+  );
+
+  assert.equal(result.state.careIssue, "complaint");
+  assert.equal(result.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(result.state.signal, "SC.Khiếu nại");
+  assert.equal(result.state.carePriority, "urgent");
+  assert.equal(result.state.botPaused, true);
+  assert.equal(result.state.orderFlowStatus, "paused");
+  assert.equal(result.state.selectedQuantity, undefined);
+  assert.equal(result.replies.length, 1);
+  assert.match(result.reply, /Stopirex rất xin lỗi.*chuyển CSKH kiểm tra gấp/isu);
+  assert.match(result.reply, /tin nhắn tự động.*tạm dừng/isu);
+  assert.doesNotMatch(result.reply, /285\.000|30\.000|tên người nhận|địa chỉ|chốt đơn|lấy 1 lọ/iu);
+  assert.ok(
+    result.state.decisionTrace?.conflicts.some((conflict) => conflict.includes("Sự cố CSKH được ưu tiên")),
+  );
+});
+
 test("đánh giá tiêu cực xử lý nguyên nhân trước, không xin sửa đánh giá ngay", () => {
   const chat = new DemoChatService();
   const start = chat.chat("review", "Tôi đã đánh giá 1 sao vì trải nghiệm quá tệ");

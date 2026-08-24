@@ -284,8 +284,8 @@ export function reconcileConversationActions(input: {
     (action): action is Extract<ConversationAction, { type: "start_customer_care" }> =>
       action.type === "start_customer_care",
   );
-  const safetyCare = care?.issue === "irritation";
-  if (safetyCare) {
+  const interruptingCare = Boolean(care && care.issue !== "ineffective");
+  if (interruptingCare) {
     const hadPurchaseAction = accepted.some(
       (action) => action.type === "select_quantity" || action.type === "continue_order_collection",
     );
@@ -298,10 +298,17 @@ export function reconcileConversationActions(input: {
     if ((hadPurchaseAction || input.collectingOrder) && !hasAction(accepted, "pause_order")) {
       accepted.push({
         ...baseAction("pause_order", "guardrail", [raw]),
-        reason: "active_irritation_requires_safety_first",
+        reason:
+          care?.issue === "irritation"
+            ? "active_irritation_requires_safety_first"
+            : "customer_care_incident_requires_human_first",
       });
     }
-    conflicts.push("An toàn/kích ứng được ưu tiên; hành động mua bị tạm dừng.");
+    conflicts.push(
+      care?.issue === "irritation"
+        ? "An toàn/kích ứng được ưu tiên; hành động mua bị tạm dừng."
+        : "Sự cố CSKH được ưu tiên; hành động mua bị tạm dừng.",
+    );
   }
 
   const unsupportedAudience =
@@ -661,7 +668,10 @@ function primaryIntent(
     (action): action is Extract<ConversationAction, { type: "start_customer_care" }> =>
       action.type === "start_customer_care",
   );
-  if (care) return care.issue === "ineffective" ? "ineffective" : "safety";
+  if (care) {
+    if (care.issue === "ineffective") return "ineffective";
+    return care.issue === "irritation" ? "safety" : "order_support";
+  }
   if (hasAction(actions, "decline_purchase")) return "decline_purchase";
   if (hasAction(actions, "select_quantity")) return "buying";
   // LLM là bộ định tuyến hội thoại chính. `exactIntent` đến từ rule từ khóa

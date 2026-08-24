@@ -1257,6 +1257,7 @@ function buildInterpretPrompt(input: {
     "Phải phân biệt trạng thái sự việc: actual = đang xảy ra thật; past = đã từng xảy ra; hypothetical = khách hỏi giả sử/nếu/lỡ/trường hợp; unknown = chưa rõ.",
     "Không được coi câu 'nếu dùng mà bị rát thì sao?' là khách đang bị kích ứng. Đây là scenario hypothetical và intent safety.",
     "Nếu khách nói đã biết mình dị ứng muối nhôm: intent safety, topic irritation; không khuyên tự thử, không chốt đơn và đề xuất handoff_to_human. Nếu phản ứng đang xảy ra sau khi dùng: start_customer_care(irritation). Dấu hiệu khó thở, khò khè, choáng, khó nuốt hoặc sưng môi/mặt/lưỡi phải ưu tiên hướng dẫn đi cấp cứu.",
+    "Nếu khách đang khiếu nại hoặc bức xúc về đơn/sản phẩm, yêu cầu kiểm tra đơn có sự cố, dọa phản ánh/bóc phốt: intent order_support, scenario actual, tạo start_customer_care(issue complaint) và handoff_to_human. Không tạo select_quantity/continue_order_collection dù khách nhắc số lọ của đơn cũ; draftReply chỉ xin lỗi, ghi nhận và nói chuyển bộ phận xử lý gấp, tuyệt đối không chào bán.",
     "Nếu tin nhắn ngắn như 'ok', 'được', 'có', hãy xác định nó đang trả lời đề nghị nào trong lượt bot gần nhất và điền replyTo.",
     "confidence từ 0 đến 1 phản ánh độ chắc chắn của ý định hiện tại. Nếu có từ hai cách hiểu hợp lý trở lên và không đủ bằng chứng, đặt needsClarification=true.",
     "evidence chỉ chứa tối đa 3 cụm từ ngắn chép nguyên văn từ tin khách làm căn cứ, giữ cả cách viết địa phương hoặc sai chính tả; không tự sửa chữ và không suy diễn.",
@@ -1384,6 +1385,7 @@ function buildCompactInterpretPrompt(input: {
     "Quên dùng tối hỏi bôi bù sáng: usage_time; không bôi bù, giải thích dùng tối khi tuyến mồ hôi ít hoạt động, bôi sáng kém hiệu quả hơn, dùng source usage-timing-missed-evening-application.",
     "Bất biến đa hành động: câu điều kiện hiệu quả + yêu cầu số lượng phải có đủ answer_question, select_quantity và continue_order_collection; không được gộp ba việc thành một action.",
     "Bất biến an toàn: khách đang đỏ/rát/ngứa thật + nói sẽ mua khi ổn phải có đủ start_customer_care, answer_question và pause_order; cấm select_quantity và cấm nói đã ghi nhận/chốt hàng.",
+    "Bất biến khiếu nại: khách bức xúc/khiếu nại, yêu cầu kiểm tra đơn có sự cố hoặc dọa phản ánh/bóc phốt phải có start_customer_care(issue complaint) + handoff_to_human; cấm mọi action mua/thu đơn và cấm chào bán dù MESSAGE nhắc số lượng của đơn cũ.",
     "Khách trả lời câu hỏi gần nhất của bot về bối cảnh/tình trạng/sản phẩm từng dùng/độ tuổi là dữ liệu tư vấn: dùng consultation, asksDirectAnswer=false, không answer_question; trích slots và tiếp tục tư vấn. Ví dụ bot hỏi mồ hôi hay mùi, khách nói 'mình bị cả mồ hôi ướt áo và mùi' là câu trả lời, không phải câu hỏi.",
     "Phân biệt actual/past/hypothetical và đúng sản phẩm gây sự cố. Phản ứng với sản phẩm khác là băn khoăn trước mua, không phải khiếu nại Stopirex. Tin ngắn phải hiểu theo lượt gần nhất. Nếu đơn đang dở mà khách hỏi trực tiếp việc khác: tạo answer_question + pause_order, giữ state đơn, draftReply chỉ trả lời câu hiện tại và cấm xin số lượng/Tên/SĐT/Địa chỉ trong cùng lượt.",
     "Chỉ phản ánh triệu chứng khách đã nêu; cấm tự thêm viêm, không hiệu quả, bệnh hoặc trải nghiệm chưa được nói. Knowledge đã đủ thì cấm handoff bừa.",
@@ -1699,6 +1701,7 @@ function parseConversationActions(value: unknown): ConversationAction[] {
         "delivery",
         "counterfeit",
         "negative_review",
+        "complaint",
       ];
       if (issues.includes(input.issue as IssueType)) {
         actions.push({ ...base, type, issue: input.issue as IssueType });

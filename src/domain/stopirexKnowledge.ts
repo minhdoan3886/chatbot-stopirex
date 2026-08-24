@@ -177,9 +177,9 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       id: "care-delivery-handoff",
       tenantId,
       type: "policy",
-      title: "Sự cố shipper hoặc đơn vị vận chuyển",
+      title: "Sự cố vận chuyển và khiếu nại đơn hàng",
       content:
-        "Khi shipper không giao, đơn bị hoàn về hoặc đơn vị vận chuyển gặp sự cố, bot chỉ ghi nhận ngắn gọn rồi chuyển bộ phận liên quan kiểm tra và xử lý tiếp.",
+        "Khi shipper không giao, đơn bị hủy/hoàn, thất lạc, giao sai hoặc giao chậm, bot chỉ ghi nhận ngắn gọn rồi chuyển bộ phận liên quan kiểm tra. Nếu khách bức xúc, khiếu nại hoặc dọa phản ánh/bóc phốt: xin lỗi ngắn gọn, tuyệt đối không chào bán; gắn tag Khiếu nại, đặt mức khẩn, chuyển CSKH tiếp quản và tạm dừng mọi tin nhắn tự động cho đến khi nhân viên xử lý xong.",
       sourceRow: 19,
     },
     {

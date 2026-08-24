@@ -166,6 +166,7 @@ export type DemoChatState = {
   careOwner?: string;
   careDueAt?: string;
   careStatus?: CareFlowState["case"]["status"];
+  carePriority?: CareFlowState["case"]["priority"];
   previousSalesPipeline?: PipelineTag;
   botPaused: boolean;
   recentTurns: Array<{ role: "user" | "assistant"; text: string }>;
@@ -1140,6 +1141,10 @@ export class DemoChatService {
       session.mode = "care";
       session.customerType = "returning";
       session.signal = signalForIssue(careIssue);
+      if (careIssue === "complaint") {
+        session.orderCollectionPaused = true;
+        delete session.pendingAction;
+      }
       if (safety.redFlag) {
         session.consultation = mergeConfirmedSlots(session.consultation, safety.slots);
       }
@@ -2439,7 +2444,9 @@ export class DemoChatService {
     if (nextBestAction.prompt && nextBestActionFits) rawReplies.push(nextBestAction.prompt);
     let logicalReplies = rawReplies.map((message) => personalizeCustomerAddress(message, session.identity));
     if (!session.greeted && session.messages > 0) {
-      logicalReplies.unshift(greetingMessage(session.identity));
+      if (!(session.mode === "care" && session.care?.case.issue === "complaint")) {
+        logicalReplies.unshift(greetingMessage(session.identity));
+      }
       session.greeted = true;
     }
     const governed = governCustomerResponse({
@@ -2502,6 +2509,7 @@ function stateOf(session: DemoSession): DemoChatState {
           careOwner: session.care.case.owner,
           careDueAt: session.care.case.dueAt.toISOString(),
           careStatus: session.care.case.status,
+          carePriority: session.care.case.priority,
         }
       : {}),
     ...(session.previousSalesPipeline ? { previousSalesPipeline: session.previousSalesPipeline } : {}),
@@ -2679,6 +2687,13 @@ function selectDynamicOpeningStrategy(input: {
   careIssue?: IssueType;
 }): { variantId: Exclude<OpeningVariantId, "AUTO.dynamic">; reason: string } {
   const { text, semantic, exactIntent, careIssue } = input;
+
+  if (careIssue === "complaint") {
+    return {
+      variantId: "A.choice",
+      reason: "Khách đang khiếu nại; ưu tiên tiếp nhận khẩn và chuyển CSKH, không chạy chiến lược bán hàng.",
+    };
+  }
 
   if (isPriorOtherProductAdverseExperience(text)) {
     return {
@@ -2957,6 +2972,7 @@ function detectCareIssue(text: string): IssueType | undefined {
   const packagingOnly = /vo hop(?: giay)?|boc rach|rach vo|vut (?:vo|hop)|mat vo hop|khong con vo hop/.test(
     text,
   );
+  if (isUrgentComplaint(text)) return "complaint";
   if (/danh gia.*(?:xau|1 sao|tieu cuc)|review.*(?:xau|1 sao)|cho 1 sao/.test(text)) return "negative_review";
   if (
     /hang gia|nghi gia|khong chinh hang|tem gia|fake/.test(text) &&
@@ -2996,10 +3012,42 @@ function detectCareIssue(text: string): IssueType | undefined {
   return undefined;
 }
 
+/**
+ * Khiếu nại phải thắng mọi tín hiệu thương mại trong cùng câu (ví dụ “đã mua
+ * 1 lọ” chỉ là dữ kiện của đơn cũ, không phải yêu cầu tạo một đơn mới).
+ * Bộ nhận diện này chỉ làm cổng ưu tiên an toàn; LLM vẫn chịu trách nhiệm hiểu
+ * ngữ cảnh và soạn nội dung ở các hội thoại thông thường.
+ */
+function isUrgentComplaint(text: string): boolean {
+  const complaintLanguage =
+    /khieu nai|phan anh|boc phot|lam an (?:lom com|kieu gi|an gian)|lua dao|qua te|that vong|buc xuc|khong chap nhan|bao (?:cong an|quan ly thi truong)|kien (?:shop|cao)/.test(
+      text,
+    );
+  const asksOrderInvestigation =
+    /(?:kiem tra|check|tra|xu ly|giai quyet).{0,35}(?:ma )?(?:don|van don)|(?:ma )?(?:don|van don).{0,35}(?:kiem tra|check|tra|xu ly|giai quyet)/.test(
+      text,
+    );
+  const orderFailure =
+    /(?:don|hanh trinh|trang thai|van don).{0,45}(?:bao )?(?:huy|hoan|that lac|khong giao|chua giao|giao cham|giao sai)|(?:bao )?(?:huy|hoan|that lac|khong giao|chua giao|giao cham|giao sai).{0,45}(?:don|hang|van don)/.test(
+      text,
+    );
+  const urgentDeliveryDemand =
+    /(?:giao|ship).{0,20}(?:le|gap|ngay|nhanh).{0,60}(?:boc phot|khieu nai|phan anh|lam an|khong chap nhan)/.test(
+      text,
+    );
+
+  return (
+    (complaintLanguage && (asksOrderInvestigation || orderFailure || /don|hang|san pham|shop/.test(text))) ||
+    (asksOrderInvestigation && orderFailure) ||
+    urgentDeliveryDemand
+  );
+}
+
 function detectDirectIntent(text: string): CustomerIntent | undefined {
   if (isInternalSystemProbe(text) || isOutOfScopeAssistantProbe(text)) {
     return "bot_identity";
   }
+  if (isUrgentComplaint(text)) return "order_support";
   if (isOrderRecapRequest(text)) return "order_support";
   if (isOrderCaptureMessage(text)) return "buying";
   if (isHypotheticalIrritationRefundQuestion(text)) return "order_support";
@@ -4293,6 +4341,7 @@ function signalForIssue(issue: IssueType): SignalTag {
   if (issue === "missing_or_damaged") return "SC.Hàng hỏng";
   if (issue === "delivery") return "SC.Giao hàng";
   if (issue === "counterfeit") return "SC.Hàng giả";
+  if (issue === "complaint") return "SC.Khiếu nại";
   return "SC.Đánh giá";
 }
 
@@ -6539,11 +6588,12 @@ function orderResumeReply(session: DemoSession): string {
 
 function resolveOrderFlowStatus(session: DemoSession): NonNullable<DemoChatState["orderFlowStatus"]> {
   if (session.orderId || session.pipeline === "6.Đã tạo đơn") return "created";
+  if (session.care?.case.botPaused || session.orderCollectionPaused) return "paused";
   if (!session.selectedQuantity) return "idle";
   if (session.pendingAction === "confirm_order" || orderHasAllFields(session.order)) {
     return "awaiting_confirmation";
   }
-  return session.orderCollectionPaused ? "paused" : "collecting";
+  return "collecting";
 }
 
 function orderCreatedReply(session: DemoSession): string {

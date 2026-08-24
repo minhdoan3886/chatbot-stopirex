@@ -280,6 +280,17 @@ export class MetaInboundProcessor {
       committed.outbound,
       committed.stateVersion,
     );
+    if (result.state.botPaused) {
+      this.options.logger.log("warn", "customer_automation_suppressed_for_human_review", {
+        traceId: first.traceId,
+        tenantId: first.tenantId,
+        pageId: first.pageId,
+        conversationId: conversation.conversationId,
+        pipeline: result.state.pipeline,
+        signal: result.state.signal,
+        humanStatus: "paused",
+      });
+    }
     if (
       dispatched.lastMessageId &&
       isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)
@@ -293,7 +304,7 @@ export class MetaInboundProcessor {
       });
     }
     return {
-      status: dispatched.suppressed ? "paused" : "replied",
+      status: result.state.botPaused || dispatched.suppressed ? "paused" : "replied",
       replyCount: dispatched.count,
     };
   }

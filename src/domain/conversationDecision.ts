@@ -192,7 +192,8 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
     input.careIssue === "missing_or_damaged" ||
     input.careIssue === "delivery" ||
     input.careIssue === "counterfeit" ||
-    input.careIssue === "negative_review";
+    input.careIssue === "negative_review" ||
+    input.careIssue === "complaint";
   if (criticalCare && careScenario !== "hypothetical") {
     return decision(
       "start_care",

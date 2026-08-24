@@ -2592,20 +2592,11 @@ test("thu đơn tích lũy tên và địa chỉ qua nhiều tin, chỉ hỏi l�
       slots: {},
       actions: [
         {
-          type: "select_quantity",
-          quantity: 1,
-          confidence: 0.99,
-          evidence: ["gửi a 1 lọ"],
-          source: "llm",
-        },
-        {
-          type: "update_order",
-          fields: {
-            legacyAddress: "ntt15 82 Nguyễn Tuân Hà Nội",
-            phone: "022299933",
-          },
-          confidence: 0.98,
-          evidence: ["ntt15 82 Nguyễn Tuân Hà Nội", "022299933"],
+          type: "record_fact",
+          field: "recipientName",
+          value: "NTT15",
+          confidence: 0.93,
+          evidence: ["gửi a 1 lọ về ntt15 82 Nguyễn Tuân Hà Nội"],
           source: "llm",
         },
         {
@@ -2635,14 +2626,11 @@ test("thu đơn tích lũy tên và địa chỉ qua nhiều tin, chỉ hỏi l�
       slots: {},
       actions: [
         {
-          type: "update_order",
-          fields: {
-            legacyAddress: "ntt15 82 Nguyễn Tuân Hà Nội",
-            phone: "022299933",
-            recipientName: "Luffi",
-          },
+          type: "record_fact",
+          field: "recipientName",
+          value: "Luffi",
           confidence: 0.98,
-          evidence: ["ntt15 82 Nguyễn Tuân Hà Nội", "022299933", "Luffi"],
+          evidence: ["Luffi"],
           source: "llm",
         },
         {

@@ -83,6 +83,18 @@ export function reconcileConversationActions(input: {
   const text = normalize(raw);
   const candidates: ConversationAction[] = (input.semantic.actions ?? []).map((action) => {
     const candidate = { ...action, source: action.source ?? "llm" } as ConversationAction;
+    if (candidate.type === "record_fact" && typeof candidate.value === "string") {
+      const orderField = canonicalOrderUpdateField(candidate.field);
+      if (orderField) {
+        return {
+          type: "update_order",
+          fields: groundedOrderUpdateFields({ [orderField]: candidate.value }, raw),
+          confidence: candidate.confidence,
+          evidence: candidate.evidence,
+          source: candidate.source,
+        };
+      }
+    }
     if (candidate.type !== "update_order" || candidate.source !== "llm") return candidate;
     return {
       ...candidate,
@@ -403,6 +415,14 @@ function validateAction(
     return "invalid_fact";
   }
   return undefined;
+}
+
+function canonicalOrderUpdateField(
+  field: string,
+): "recipientName" | "phone" | "legacyAddress" | "deliveryNote" | undefined {
+  return ["recipientName", "phone", "legacyAddress", "deliveryNote"].includes(field)
+    ? (field as "recipientName" | "phone" | "legacyAddress" | "deliveryNote")
+    : undefined;
 }
 
 function groundedOrderUpdateFields(

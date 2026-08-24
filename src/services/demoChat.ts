@@ -5181,10 +5181,37 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
     }
   }
   const phoneMatch = orderRaw.match(/(?<!\d)(0\d{9})(?!\d)/);
+  const invalidPhoneMatch = phoneMatch
+    ? undefined
+    : orderRaw.match(/(?<!\d)(0\d{7,10})(?!\d)/u);
   const phone = phoneMatch?.[1] ?? extractPhoneNumber(raw);
   if (phone) {
     commitOrderMutations(session, [{ type: "set_phone", phone, evidence: raw }]);
     found = true;
+  }
+  if (invalidPhoneMatch?.[1] && invalidPhoneMatch.index !== undefined) {
+    const beforeCandidate = cleanLabel(
+      orderRaw.slice(0, invalidPhoneMatch.index).replace(/[,;:\s-]+$/gu, ""),
+    );
+    const afterCandidate = cleanLabel(
+      orderRaw
+        .slice(invalidPhoneMatch.index + invalidPhoneMatch[1].length)
+        .replace(/^[,;:\s-]+/gu, ""),
+    );
+    if (!addressHandled && looksLikeAddress(beforeCandidate)) {
+      found = commitLegacyAddress(session, beforeCandidate, "append", raw) || found;
+      addressHandled = true;
+    }
+    if (!session.order.recipientName && looksLikeOrderRecipientCandidate(afterCandidate)) {
+      commitOrderMutations(session, [
+        {
+          type: "set_recipient_name",
+          recipientName: formatRecipientName(afterCandidate),
+          evidence: raw,
+        },
+      ]);
+      found = true;
+    }
   }
   const deliveryNote = extractDeliveryNote(raw);
   if (deliveryNote) {
@@ -5591,7 +5618,7 @@ export function extractDeliveryDestination(raw: string): string | undefined {
   if (isPriorAddressReference(raw)) return undefined;
   const match = raw
     .match(
-      /(?:^|[\s,.])(?:(?:gửi|gui|giao|ship|lấy|lay|chốt|chot|đặt|dat)(?=\s)|cho\s+(?:mình|minh|tôi|toi|anh|chị|chi|em)\b)[^.!?\n]{0,80}?(?:về|ve|tới|toi|đến|den)\s+([^.!?\n]+?)(?=\s+(?:SĐT|SDT|số điện thoại|so dien thoai|Tên|Ten)\b|\s+(?:nhé|nhe|ạ|a)\b|[.!?]|$)/iu,
+      /(?:^|[\s,.])(?:(?:gửi|gui|giao|ship|lấy|lay|chốt|chot|đặt|dat)(?=\s)|cho\s+(?:mình|minh|tôi|toi|anh|chị|chi|em)\b)[^.!?\n]{0,80}?(?:về|ve|tới|toi|đến|den)\s+([^.!?\n]+?)(?=\s+(?:SĐT|SDT|số điện thoại|so dien thoai|Tên|Ten)\b|\s+(?:nhé|nhe|ạ|a)\b|[.!?\n]|$)/iu,
     )?.[1]
     ?.trim();
   if (!match) return undefined;

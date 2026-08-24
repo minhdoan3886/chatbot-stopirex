@@ -409,7 +409,13 @@ export class DemoChatService {
         Boolean(session.selectedQuantity) &&
         !effectiveExactIntent &&
         !effectiveCareIssue &&
-        (semanticOrderDataRecorded || isLikelyOrderData(raw, session.order)),
+        (semanticOrderDataRecorded ||
+          Boolean(
+            observedEntities.recipientName ||
+              observedEntities.deliveryNote ||
+              observedEntities.address,
+          ) ||
+          isLikelyOrderData(raw, session.order)),
       explicitPurchaseSelection: Boolean(extractExplicitOrderQuantity(text) || actionPlan.quantity),
       affirmativeFollowup:
         isAffirmativeFollowup(text) ||
@@ -5569,6 +5575,9 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
     const changedDestination = extractChangedAddress(raw);
     const destination = changedDestination ?? extractDeliveryDestination(raw);
     const administrativeAddress = extractExplicitAdministrativeAddress(raw);
+    const singleMissingAdministrativeAddress = collectingOrderBeforeTurn
+      ? extractSingleMissingAdministrativeAddress(raw, session.order)
+      : undefined;
     if (collectingOrderBeforeTurn && destination) {
       if (session.order.legacyAddress) {
         rememberLocation(session, session.order.legacyAddress, session.order.legacyAddress);
@@ -5592,6 +5601,19 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
         evidence: raw,
       });
     }
+    if (
+      collectingOrderBeforeTurn &&
+      singleMissingAdministrativeAddress &&
+      !administrativeAddress &&
+      !destination
+    ) {
+      actions.push({
+        type: "set_address",
+        address: singleMissingAdministrativeAddress,
+        operation: "append",
+        evidence: raw,
+      });
+    }
 
     if (actions.length > 0) {
       commitOrderMutations(session, actions);
@@ -5602,8 +5624,15 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
       if (observedDeliveryNote && session.order.deliveryNote) {
         changes.deliveryNote = session.order.deliveryNote;
       }
-      if ((destination || administrativeAddress) && session.order.legacyAddress) {
-        rememberLocation(session, session.order.legacyAddress, destination ?? session.order.legacyAddress);
+      if (
+        (destination || administrativeAddress || singleMissingAdministrativeAddress) &&
+        session.order.legacyAddress
+      ) {
+        rememberLocation(
+          session,
+          session.order.legacyAddress,
+          destination ?? administrativeAddress ?? singleMissingAdministrativeAddress ?? session.order.legacyAddress,
+        );
         changes.address = session.order.legacyAddress;
       }
     }
@@ -5900,6 +5929,45 @@ function parseAdministrativeAddressFragment(
     ward: formatAdministrativeName(ward),
     district: formatAdministrativeName(district),
   };
+}
+
+function extractSingleMissingAdministrativeAddress(
+  raw: string,
+  order: OrderDraft,
+): string | undefined {
+  if (!order.recipientName || !/^0\d{9}$/u.test(order.phone ?? "") || !order.quantity) {
+    return undefined;
+  }
+  const missing = missingLegacyAddressComponents(order.legacyAddress);
+  if (missing.length !== 1 || looksLikeCustomerQuestion(raw)) return undefined;
+  const [component] = missing;
+  if (component !== "ward" && component !== "district" && component !== "province") {
+    return undefined;
+  }
+  const compact = raw.replace(/\s+/gu, " ").trim();
+  if (
+    !/^[\p{L}\s.-]{2,60}$/u.test(compact) ||
+    /^(?:phường|phuong|xã|xa|thị trấn|thi tran|quận|quan|huyện|huyen|thị xã|thi xa|tỉnh|tinh|thành phố|thanh pho)\b/iu.test(
+      compact,
+    )
+  ) {
+    return undefined;
+  }
+  const normalized = normalize(compact);
+  const words = normalized.split(/\s+/u).filter(Boolean);
+  if (
+    words.length < 2 ||
+    words.length > 6 ||
+    /\b(?:cam on|ok|uh|u|vang|da|dung|sai|khong|chua|thoi|minh|toi|em|anh|chi|shop|nhe|nha|gia|ship|combo|san pham|mo hoi|mui)\b/u.test(
+      normalized,
+    )
+  ) {
+    return undefined;
+  }
+  const value = formatAdministrativeName(compact);
+  if (component === "ward") return `Phường/xã ${value}`;
+  if (component === "district") return `Quận/huyện ${value}`;
+  return `Tỉnh/thành phố ${value}`;
 }
 
 function formatAdministrativeName(value: string): string {

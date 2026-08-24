@@ -2574,6 +2574,30 @@ test("hai phần phường quận ngăn bằng dấu phẩy được nhận theo
   assert.match(result.reply, /ĐỒNG Ý/u);
 });
 
+test("đơn chỉ thiếu phường nhận đúng một cụm địa danh nối tiếp và không rơi về tư vấn", () => {
+  const chat = new DemoChatService();
+  const sessionId = "single-missing-ward-fragment";
+
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "1 lọ");
+  const partial = chat.chat(
+    sessionId,
+    "Tài Trần\n0900000000\n82 Nguyễn Tuân, Quận Thanh Xuân, Hà Nội",
+  );
+  assert.deepEqual(partial.state.orderMissing, ["legacyAddress"]);
+
+  const unrelated = chat.chat(sessionId, "cảm ơn shop");
+  assert.deepEqual(unrelated.state.orderMissing, ["legacyAddress"]);
+  assert.doesNotMatch(unrelated.state.orderDraft?.legacyAddress ?? "", /Phường\/xã Cảm Ơn/iu);
+
+  const completed = chat.chat(sessionId, "thanh xuân trung");
+  assert.deepEqual(completed.state.orderMissing, []);
+  assert.equal(completed.state.decisionTrace?.selectedRoute, "order_collection");
+  assert.match(completed.state.orderDraft?.legacyAddress ?? "", /Phường\/xã Thanh Xuân Trung/iu);
+  assert.match(completed.reply, /ĐỒNG Ý/u);
+  assert.doesNotMatch(completed.reply, /mồ hôi|mùi cơ thể|phương án 1 lọ/iu);
+});
+
 test("câu dò AI khi đang thu đơn được trả lời đúng phạm vi và vẫn giữ đơn", () => {
   const chat = new DemoChatService();
   const sessionId = "unrelated-question-during-order";

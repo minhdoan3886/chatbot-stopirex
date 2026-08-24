@@ -5472,8 +5472,9 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
   if (!addressHandled && !phone && parts.length === 1) {
     if (
       !session.order.recipientName &&
-      /^[a-zA-ZÀ-ỹ\s]{4,50}$/u.test(orderRaw) &&
-      !/dia chi|địa chỉ/i.test(orderRaw)
+      looksLikeOrderRecipientCandidate(orderRaw) &&
+      looksLikeStandaloneRecipientName(orderRaw) &&
+      !looksLikeCustomerQuestion(orderRaw)
     ) {
       commitOrderMutations(session, [
         {

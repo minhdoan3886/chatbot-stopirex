@@ -1764,6 +1764,7 @@ test("replay: câu chốt 1 lọ ghi đè pending báo giá và tin PII gộp đ
   });
 
   assert.equal(selected.state.selectedQuantity, 1);
+  assert.equal(selected.state.orderDraft?.recipientName, undefined);
   assert.equal(selected.state.pipeline, "5.Chờ TT KH");
   assert.equal(selected.state.decisionTrace?.selectedRoute, "direct_intent");
   assert.equal(selected.state.pendingAction, undefined);

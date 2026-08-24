@@ -291,6 +291,7 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
         subject: "customer",
         replyTo: "offer_usage_guidance",
         scenario: "actual",
+        affirmation: true,
         asksDirectAnswer: true,
         confidence: 0.92,
         needsClarification: false,

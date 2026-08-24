@@ -112,7 +112,10 @@ export class MetaChatBrain {
         validCitations.length > 0
           ? { ...rawLlmResult, knowledgeIds: validCitations }
           : repairMissingKnowledgeCitations(withoutRawCitations, citationCandidates);
-      const llmResult = reconcileKnowledgeBackedPopulationSafety(groundedLlmResult);
+      const llmResult = reconcileKnowledgeBackedPopulationSafety(
+        groundedLlmResult,
+        matches[0]?.entity.id,
+      );
       interpreted = llmResult;
       interpretationStatus = llmResult.status;
       interpretationReason = llmResult.reason;
@@ -336,7 +339,10 @@ export class MetaChatBrain {
   }
 }
 
-function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstanding>(semantic: T): T {
+function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstanding>(
+  semantic: T,
+  primaryRetrievedKnowledgeId?: string,
+): T {
   if (
     !semantic.actions?.some((action) => action.type === "answer_question") ||
     semantic.actions.some(
@@ -351,7 +357,7 @@ function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstandin
     ["audience-breastfeeding", "breastfeeding"],
   ] as const;
   const supported = citedPopulationTopics.filter(([knowledgeId]) =>
-    semantic.knowledgeIds?.includes(knowledgeId),
+    semantic.knowledgeIds?.includes(knowledgeId) || primaryRetrievedKnowledgeId === knowledgeId,
   );
   if (supported.length !== 1) return semantic;
 
@@ -364,6 +370,7 @@ function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstandin
   reconciled.intent = "safety";
   reconciled.topic = topic;
   reconciled.subject = "customer";
+  reconciled.affirmation = false;
   reconciled.actions = semantic.actions
     .filter((action) => action.type !== "handoff_to_human")
     .map((action) =>

@@ -583,7 +583,14 @@ function inferredAnswerTopic(
   text: string,
 ): SemanticTopic | undefined {
   if (exactIntent === "product_effect") return "effectiveness";
-  if (semantic.asksDirectAnswer === true && semantic.topic) return semantic.topic;
+  if (
+    semantic.asksDirectAnswer === true &&
+    semantic.topic &&
+    semantic.intent !== "buying" &&
+    semantic.intent !== "decline_purchase"
+  ) {
+    return semantic.topic;
+  }
   if (/neu.*(?:dung nhu|hieu qua|co tac dung|giam|do|het)/.test(text)) {
     return "effectiveness";
   }

@@ -1393,7 +1393,7 @@ function buildCompactInterpretPrompt(input: {
 }
 
 const compactSemanticSchema =
-  '{"summary":"string","skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"stop_bot|start_customer_care|handoff_to_human|answer_question|record_fact|select_quantity|update_order|continue_order_collection|pause_order|decline_purchase","topic":"string?","field":"string?","value":"unknown?","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"quantity":"1|2|3|4|5?","issue":"string?","reason":"string?","confidence":0.95,"evidence":["string"]}],"uncertainties":["string"],"knowledgeIds":["knowledge-id"],"unsupportedQuestions":["phần chưa có dữ liệu"],"groundingConfidence":0.95,"draftReply":"string","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":"boolean?","confidence":0.95,"needsClarification":false,"age":"number?","evidence":["string"],"asksDirectAnswer":true,"priceFromVnd":"number?","priceToVnd":"number?","discountAmountVnd":"number?","workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}';
+  '{"summary":"string","skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"stop_bot|start_customer_care|handoff_to_human|answer_question|record_fact|select_quantity|update_order|continue_order_collection|pause_order|decline_purchase","topic":"string?","field":"string?","value":"unknown?","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"quantity":1,"issue":"string?","reason":"string?","confidence":0.95,"evidence":["string"]}],"uncertainties":["string"],"knowledgeIds":["knowledge-id"],"unsupportedQuestions":["phần chưa có dữ liệu"],"groundingConfidence":0.95,"draftReply":"string","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":"boolean?","confidence":0.95,"needsClarification":false,"age":"number?","evidence":["string"],"asksDirectAnswer":true,"priceFromVnd":"number?","priceToVnd":"number?","discountAmountVnd":"number?","workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}';
 
 function promptConversationMemory(state: DemoChatState): DemoChatState["recentTurns"] {
   return state.recentTurns.slice(-10).map((turn) => ({
@@ -1666,11 +1666,13 @@ function parseConversationActions(value: unknown): ConversationAction[] {
     const base = { type, confidence, evidence, source: "llm" as const };
 
     if (type === "select_quantity") {
-      if ([1, 2, 3, 4, 5].includes(input.quantity as number)) {
+      const quantity =
+        typeof input.quantity === "string" ? Number(input.quantity) : input.quantity;
+      if ([1, 2, 3, 4, 5].includes(quantity as number)) {
         actions.push({
           ...base,
           type,
-          quantity: input.quantity as 1 | 2 | 3 | 4 | 5,
+          quantity: quantity as 1 | 2 | 3 | 4 | 5,
         });
       }
       continue;

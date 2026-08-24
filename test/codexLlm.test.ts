@@ -168,6 +168,34 @@ test("parser giữ toàn bộ actions của một tin nhắn thay vì ép còn m
   );
 });
 
+test("parser không làm mất số lượng khi model trả quantity dưới dạng chuỗi", () => {
+  const parsed = parseSemanticUnderstanding(
+    JSON.stringify({
+      intent: "buying",
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: "1",
+          confidence: 0.99,
+          evidence: ["chốt giùm tui mọt chai nghen"],
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.98,
+          evidence: ["chốt giùm tui mọt chai nghen"],
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(
+    parsed.actions?.map((action) =>
+      action.type === "select_quantity" ? `${action.type}:${action.quantity}` : action.type,
+    ),
+    ["select_quantity:1", "continue_order_collection"],
+  );
+});
+
 test("parser giữ nguồn knowledge, phần chưa hỗ trợ và độ tin cậy grounding", () => {
   const parsed = parseSemanticUnderstanding(
     JSON.stringify({

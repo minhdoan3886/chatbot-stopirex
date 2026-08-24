@@ -4494,8 +4494,8 @@ function multiActionAnswer(
   if (isMissedEveningApplicationQuestion(text)) return missedEveningApplicationReply();
   if (uniqueTopics.includes("comparison") && uniqueTopics.includes("usage")) {
     return [
-      "Dạ đúng ạ. Lăn khử mùi thông thường chủ yếu dùng hằng ngày để khử hoặc che mùi; Stopirex hỗ trợ kiểm soát tiết mồ hôi và không dùng hương thơm để che mùi.",
-      "Stopirex không cần lăn mỗi ngày; lúc mới dùng, mình lăn một lớp mỏng 2–3 lần/tuần vào buổi tối trên da sạch, khô ạ.",
+      "Dạ, Stopirex khác lăn khử mùi thông thường ở chỗ sản phẩm hỗ trợ kiểm soát tiết mồ hôi, thay vì chủ yếu khử hoặc che mùi bằng hương thơm ạ.",
+      "Mình không cần lăn 1 lần mỗi ngày; lúc mới dùng, mình lăn một lớp mỏng 2–3 lần/tuần vào buổi tối trên da sạch, khô ạ.",
     ].join("\n\n");
   }
   if (isMorningFragranceLayeringQuestion(text) && isCurrentCatalogSoapQuestion(text)) {

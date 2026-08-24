@@ -159,6 +159,20 @@ export function reconcileConversationActions(input: {
   }
 
   const answerTopic = inferredAnswerTopic(input.semantic, input.exactIntent, text);
+  for (const line of batchedMessageLines(raw)) {
+    const topic = inferredBatchedLineAnswerTopic(line.normalized);
+    if (
+      topic &&
+      !candidates.some(
+        (action) => action.type === "answer_question" && action.topic === topic,
+      )
+    ) {
+      candidates.push({
+        ...baseAction("answer_question", "state", [line.raw]),
+        topic,
+      });
+    }
+  }
   const mandatoryConditionalEffectAnswer =
     Boolean(explicitQuantity) &&
     /(?:^|\b)neu\b/.test(text) &&
@@ -501,6 +515,39 @@ function inferredAnswerTopic(
   if (intent === "product_comparison") return "comparison";
   if (intent === "knowledge_unknown") return "other";
   if (intent === "authenticity_question") return "order";
+  return undefined;
+}
+
+function batchedMessageLines(raw: string): Array<{ raw: string; normalized: string }> {
+  const lines = raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+  return lines.map((line) => ({ raw: line, normalized: normalize(line) }));
+}
+
+/**
+ * Backup only for an explicit topic that the LLM omitted from a multi-message
+ * batch. The model remains the primary router; these deliberately narrow
+ * patterns prevent one short conversational question from disappearing.
+ */
+function inferredBatchedLineAnswerTopic(text: string): SemanticTopic | undefined {
+  const asksOncePerDay =
+    /\b(?:1|mot)\s+ngay\b.*\b(?:chi\s+)?(?:lan|boi|dung|su dung)\b.*\b(?:1|mot)\s+lan\b/.test(
+      text,
+    ) ||
+    /\b(?:lan|boi|dung|su dung)\b.*\b(?:1|mot)\s+lan\b.*\b(?:1|mot)\s+ngay\b/.test(
+      text,
+    );
+  if (asksOncePerDay) return "usage";
+
+  const comparesDailyRollOn =
+    /\bgiong\b.*\blan khu mui\b|\blan khu mui\b.*\bgiong\b/.test(text) &&
+    /\b(?:giam|kiem soat|ngan)\b.*\bmo hoi\b|\bmo hoi\b.*\b(?:giam|kiem soat|ngan)\b/.test(
+      text,
+    );
+  if (comparesDailyRollOn) return "comparison";
   return undefined;
 }
 

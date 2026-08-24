@@ -281,7 +281,7 @@ test("batch hai câu so sánh và tần suất vẫn được fallback trả đ�
 
   assert.match(result.reply, /lăn khử mùi thông thường/iu);
   assert.match(result.reply, /hỗ trợ kiểm soát tiết mồ hôi/iu);
-  assert.match(result.reply, /không cần lăn mỗi ngày/iu);
+  assert.match(result.reply, /không cần lăn 1 lần mỗi ngày/iu);
   assert.match(result.reply, /2–3 lần\/tuần/iu);
   assert.ok(result.state.decisionTrace?.actionPlan?.answerTopics.includes("comparison"));
   assert.ok(result.state.decisionTrace?.actionPlan?.answerTopics.includes("usage"));
@@ -291,6 +291,41 @@ test("batch hai câu so sánh và tần suất vẫn được fallback trả đ�
       "product-comparison-traditional-rollon",
     ),
   );
+});
+
+test("batch thực tế vẫn trả đủ khi LLM chỉ tạo action so sánh", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat(
+    "batch-comparison-only-action",
+    "Là loại này giống lăn khử mùi nhưng nó giúp giảm ra mồ hôi à bạn\n1 ngày chỉ lăn 1 lần ạ",
+    {
+      slots: {},
+      skill: "direct-answer",
+      intent: "product_comparison",
+      topic: "comparison",
+      subject: "product",
+      asksDirectAnswer: true,
+      confidence: 0.97,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "comparison",
+          confidence: 0.97,
+          evidence: ["giống lăn khử mùi", "giúp giảm ra mồ hôi"],
+          source: "llm",
+        },
+      ],
+    },
+  );
+
+  assert.match(result.reply, /khác lăn khử mùi thông thường/iu);
+  assert.match(result.reply, /không cần lăn 1 lần mỗi ngày/iu);
+  assert.match(result.reply, /2–3 lần\/tuần/iu);
+  assert.doesNotMatch(result.reply, /cách dùng hay giá/iu);
+  assert.deepEqual(result.state.decisionTrace?.actionPlan?.answerTopics, [
+    "comparison",
+    "usage",
+  ]);
 });
 
 test("câu alo e giá vẫn báo giá rồi hỏi tình trạng dù LLM gợi ý nhầm pricing-objection", () => {

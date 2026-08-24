@@ -720,6 +720,32 @@ test("single-pass chỉ nhận câu trả lời có knowledge id thật đã đ�
   assert.equal(fabricated.reason, "knowledge_grounding_guard:unknown_knowledge_id");
 });
 
+test("single-pass có Knowledge vẫn không được bỏ câu hỏi nối tiếp của workflow", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const baseReply =
+    "Dạ 1 lọ 285.000đ + 30.000đ phí giao ạ. Để em tư vấn sát hơn, mình khó chịu vì mồ hôi, mùi hay cả hai tình trạng ạ?";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "alo e giá",
+    draftReply: "Dạ 1 lọ 285.000đ + 30.000đ phí giao ạ.",
+    baseReply,
+    state,
+    knowledge: [
+      {
+        id: "pricing-approved-options-2026-08",
+        title: "Bảng giá",
+        content: "1 lọ giá 285.000đ và phí giao 30.000đ.",
+      },
+    ],
+    knowledgeIds: ["pricing-approved-options-2026-08"],
+    groundingConfidence: 0.99,
+    knowledgeGroundingRequired: true,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft");
+  assert.match(result.reply, /mình khó chịu vì mồ hôi, mùi hay cả hai/iu);
+});
+
 test("LLM-first giữ câu grounded đúng dù base regex đang trả sai chủ đề", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const result = bridge.adoptInterpretedDraft({

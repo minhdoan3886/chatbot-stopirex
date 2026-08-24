@@ -1072,10 +1072,11 @@ export class DemoChatService {
 
     if (dynamicOpeningChoice === "3") {
       session.lastIntent = "price_request";
-      session.activeSkill = "pricing-objection";
-      session.skillReason = "Khách chọn bảng giá từ menu mở đầu đã hiển thị.";
-      showPrice(session);
-      return this.respond(session, priceReply());
+      session.activeSkill = "direct-answer";
+      session.skillReason =
+        "Khách chọn bảng giá ở đầu hành trình; báo giá trước rồi hỏi tình trạng để tư vấn tiếp.";
+      const continuation = showPrice(session);
+      return this.respond(session, priceReply(continuationQuestion(continuation)));
     }
 
     if (decision.route === "active_care" && session.care) {
@@ -1319,9 +1320,9 @@ export class DemoChatService {
     if (decision.route === "pending_action" && session.pendingAction === "send_price") {
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
-      showPrice(session);
+      const continuation = showPrice(session);
       session.lastIntent = "price_request";
-      return this.respond(session, priceReply());
+      return this.respond(session, priceReply(continuationQuestion(continuation)));
     }
     if (
       decision.route === "pending_action" &&
@@ -1351,8 +1352,8 @@ export class DemoChatService {
 
     if (session.openingVariantId === "A.choice" && session.consultation.stage === "S0.new" && text === "2") {
       session.lastIntent = "price_request";
-      showPrice(session);
-      return this.respond(session, priceReply());
+      const continuation = showPrice(session);
+      return this.respond(session, priceReply(continuationQuestion(continuation)));
     }
 
     if (session.openingVariantId === "A.choice" && session.consultation.stage === "S0.new" && text === "1") {
@@ -1615,8 +1616,8 @@ export class DemoChatService {
       );
     }
     if (directIntent === "price_request") {
-      showPrice(session);
-      return this.respond(session, priceReplyForRequest(text));
+      const continuation = showPrice(session);
+      return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
     }
 
     if (directIntent === "order_support" && isReturnsPolicyQuestion(text)) {
@@ -1954,8 +1955,8 @@ export class DemoChatService {
       isGuidancePriceChoice(text) &&
       !isBuyingIntent(text)
     ) {
-      showPrice(session);
-      return this.respond(session, priceReply());
+      const continuation = showPrice(session);
+      return this.respond(session, priceReply(continuationQuestion(continuation)));
     }
 
     const quantity = detectQuantity(text);
@@ -1985,8 +1986,8 @@ export class DemoChatService {
     }
 
     if (isPriceRequest(text)) {
-      showPrice(session);
-      return this.respond(session, priceReplyForRequest(text));
+      const continuation = showPrice(session);
+      return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
     }
 
     if (session.messages === 1 && !session.openingSent && isGenericOpening(text)) {
@@ -5041,7 +5042,12 @@ function assertCustomerFacingCopy(reply: string): void {
   }
 }
 
-function showPrice(session: DemoSession): void {
+type PriceContinuation = "discover_symptom" | "choose_quantity";
+
+function showPrice(
+  session: DemoSession,
+  forcedContinuation?: PriceContinuation,
+): PriceContinuation {
   if (session.pipeline !== "3.Đã báo giá") {
     if (session.pipeline === "0.Chưa tư vấn") session.pipeline = "1.Phân loại";
     try {
@@ -5050,21 +5056,52 @@ function showPrice(session: DemoSession): void {
       session.pipeline = "3.Đã báo giá";
     }
   }
+  const continuation = forcedContinuation ?? priceContinuationFor(session);
+  if (continuation === "discover_symptom") {
+    session.consultation = { ...session.consultation, stage: "S2.symptom" };
+    delete session.pendingAction;
+    if (session.lastDecision) delete session.lastDecision.pendingActionAfter;
+    return continuation;
+  }
   session.consultation = { ...session.consultation, stage: "S7.waiting" };
   session.pendingAction = "choose_quantity";
   if (session.lastDecision) session.lastDecision.pendingActionAfter = "choose_quantity";
+  return continuation;
 }
 
-function priceReply(): string {
+function priceContinuationFor(session: DemoSession): PriceContinuation {
+  if (session.selectedQuantity) return "choose_quantity";
+  const slots = session.consultation.slots;
+  const symptomKnown =
+    Boolean(slots.primarySymptom) ||
+    slots.sweatPresent !== undefined ||
+    slots.odorPresent !== undefined ||
+    session.answeredTopics.includes("symptom");
+  const consultationDelivered = session.consultation.stage === "S5.guidance";
+  return symptomKnown && consultationDelivered ? "choose_quantity" : "discover_symptom";
+}
+
+function continuationQuestion(continuation: PriceContinuation): string {
+  return continuation === "discover_symptom"
+    ? "Để em tư vấn sát hơn, hiện mình khó chịu chủ yếu vì mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai tình trạng ạ?"
+    : "Anh/chị muốn chọn phương án mấy lọ ạ?";
+}
+
+function priceReply(nextQuestion = continuationQuestion("choose_quantity")): string {
   const single = quote(1);
   const combo = quote(2);
   const visibleAdditionalOffers = [quote(3)];
-  return formatPriceOffer(single, combo, visibleAdditionalOffers);
+  return formatPriceOffer(single, combo, visibleAdditionalOffers, nextQuestion);
 }
 
-function priceReplyForRequest(text: string): string {
+function priceReplyForRequest(
+  text: string,
+  nextQuestion = continuationQuestion("choose_quantity"),
+): string {
   const requestedQuantity = detectQuantity(text);
-  return requestedQuantity ? selectedOrderPriceReply(requestedQuantity) : priceReply();
+  return requestedQuantity
+    ? `${selectedOrderPriceReply(requestedQuantity)}\n\n${nextQuestion}`
+    : priceReply(nextQuestion);
 }
 
 function quote(quantity: SupportedOrderQuantity) {

@@ -321,7 +321,7 @@ test("câu hỏi đang bầu trong lúc thu đơn vẫn dùng câu Knowledge c�
   const chat = new DemoChatService();
   const sessionId = "pregnancy-after-price";
   chat.chat(sessionId, "Giá");
-  chat.chat(sessionId, "2");
+  chat.chat(sessionId, "Mình lấy 2 lọ");
   chat.chat(sessionId, "mà lăn có hết mùi ko em");
 
   let receivedPregnancyKnowledge = false;

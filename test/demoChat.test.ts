@@ -226,11 +226,61 @@ test("AUTO trả lời thẳng ý định rõ và giữ chiến lược ổn đ�
   assert.equal(price.state.lastIntent, "price_request");
   assert.match(price.reply, /Dạ giá hiện tại:/);
   assert.doesNotMatch(price.reply, /chọn giúp em phương án 1 hoặc 2/);
+  assert.match(price.reply, /mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai/iu);
+  assert.equal(price.state.pendingAction, undefined);
+  assert.equal(price.state.pendingQuestionTopic, "symptom");
+  assert.equal(price.state.activeSkill, "direct-answer");
 
   const selectedStrategy = price.state.openingVariantId;
   const followup = chat.chat("auto-price", "freeship không em");
   assert.equal(followup.state.openingVariantId, selectedStrategy);
   assert.equal(followup.state.lastIntent, "negotiation");
+});
+
+test("báo giá sau khi đã tư vấn mới mời khách chọn số lượng", () => {
+  const chat = new DemoChatService();
+  const sessionId = "price-after-consultation";
+
+  chat.chat(sessionId, "Tư vấn giúp mình");
+  chat.chat(sessionId, "Mình làm ngoài trời");
+  chat.chat(sessionId, "Mình bị cả mồ hôi và mùi");
+  const guidance = chat.chat(sessionId, "Trước giờ mình dùng lăn hằng ngày");
+  assert.equal(guidance.state.consultationStage, "S5.guidance");
+
+  const price = chat.chat(sessionId, "Cho mình xem giá");
+  assert.equal(price.state.pendingAction, "choose_quantity");
+  assert.equal(price.state.pendingQuestionTopic, "quantity");
+  assert.match(price.reply, /muốn chọn phương án mấy lọ/iu);
+  assert.doesNotMatch(price.reply, /khó chịu chủ yếu vì mồ hôi/iu);
+});
+
+test("câu alo e giá vẫn báo giá rồi hỏi tình trạng dù LLM gợi ý nhầm pricing-objection", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat("opening-alo-price", "alo e giá", {
+    slots: {},
+    intent: "price_request",
+    topic: "price",
+    skill: "pricing-objection",
+    confidence: 0.99,
+    asksDirectAnswer: true,
+    actions: [
+      {
+        type: "answer_question",
+        topic: "price",
+        confidence: 0.99,
+        evidence: ["giá"],
+        source: "llm",
+      },
+    ],
+  });
+
+  assert.equal(result.state.lastIntent, "price_request");
+  assert.equal(result.state.activeSkill, "direct-answer");
+  assert.equal(result.state.pendingAction, undefined);
+  assert.equal(result.state.pendingQuestionTopic, "symptom");
+  assert.match(result.reply, /1 lọ: 285\.000đ/iu);
+  assert.match(result.reply, /mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai/iu);
+  assert.doesNotMatch(result.reply, /muốn chọn phương án mấy lọ/iu);
 });
 
 test("tên Stopirex và cụm trước giờ không bị hiểu nhầm thành yêu cầu dừng tin", () => {
@@ -520,7 +570,7 @@ test("LLM ưu tiên trả lời mồ hôi khi đơn đang dở ở bước chọ
   );
 });
 
-test("hỏi bao lâu thấy khô và có dùng hằng ngày phải trả lời đủ hai ý", () => {
+test("sau báo giá sớm, hỏi cách dùng được trả lời đủ mà chưa ép chọn số lượng", () => {
   const chat = new DemoChatService();
   const sessionId = "usage-duration-frequency-after-price";
   chat.chat(sessionId, "Giá bao nhiêu?");
@@ -534,7 +584,7 @@ test("hỏi bao lâu thấy khô và có dùng hằng ngày phải trả lời �
   assert.equal(result.state.activeSkill, "solution-guidance");
   assert.equal(result.state.decisionTrace?.selectedRoute, "direct_intent");
   assert.equal(result.state.pipeline, "3.Đã báo giá");
-  assert.equal(result.state.pendingAction, "choose_quantity");
+  assert.equal(result.state.pendingAction, undefined);
   assert.match(result.reply, /không cần bôi hằng ngày/iu);
   assert.match(result.reply, /buổi tối.*da sạch, khô/isu);
   assert.match(result.reply, /2–3 lần\/tuần/iu);
@@ -545,7 +595,7 @@ test("hỏi bao lâu thấy khô và có dùng hằng ngày phải trả lời �
   assert.doesNotMatch(result.reply, /chưa hiểu|diễn đạt rõ thêm/iu);
 });
 
-test("sau báo giá, hỏi dùng thêm nước hoa buổi sáng được trả lời thẳng và giữ phiên thu đơn", () => {
+test("sau báo giá sớm, hỏi dùng thêm nước hoa được trả lời thẳng mà chưa ép chốt", () => {
   const chat = new DemoChatService();
   const sessionId = "morning-fragrance-after-price";
   chat.chat(sessionId, "Giá bao nhiêu?");
@@ -565,7 +615,7 @@ test("sau báo giá, hỏi dùng thêm nước hoa buổi sáng được trả l
   assert.equal(result.state.activeSkill, "solution-guidance");
   assert.equal(result.state.decisionTrace?.selectedRoute, "direct_intent");
   assert.equal(result.state.pipeline, "3.Đã báo giá");
-  assert.equal(result.state.pendingAction, "choose_quantity");
+  assert.equal(result.state.pendingAction, undefined);
   assert.deepEqual(result.state.decisionTrace?.knowledgeEntityIds, ["usage-morning-fragrance-layering"]);
   assert.match(result.reply, /có cồn.*dung môi.*mùi đặc trưng nhẹ.*bay nhanh/isu);
   assert.match(result.reply, /không bị lẫn mùi/iu);
@@ -775,7 +825,7 @@ test("tin đa ý đổi combo sang 1 lọ ghi nhận Cầu Giấy và không xin
   const chat = new DemoChatService();
   const sessionId = "compound-order-update-cau-giay";
   chat.chat(sessionId, "Giá bao nhiêu?");
-  const combo = chat.chat(sessionId, "2");
+  const combo = chat.chat(sessionId, "Mình lấy 2 lọ");
   assert.equal(combo.state.selectedQuantity, 2);
 
   const result = chat.chat(
@@ -2498,18 +2548,16 @@ test("khách đã biết dị ứng muối nhôm được dừng chốt và chuy
   assert.match(result.reply, /bác sĩ da liễu/iu);
 });
 
-test("sau báo giá, số 2 trần được hiểu theo câu hỏi gần nhất và lưu combo thật", () => {
+test("sau báo giá sớm, số 2 trần trả lời câu hỏi tình trạng chứ không chốt combo", () => {
   const chat = new DemoChatService();
   chat.chat("bare-two-after-price", "Giá bao nhiêu?");
 
   const selected = chat.chat("bare-two-after-price", "2");
 
-  assert.equal(selected.state.selectedQuantity, 2);
-  assert.equal(selected.state.pipeline, "5.Chờ TT KH");
-  assert.equal(selected.state.consultationStage, "S8.order");
-  assert.match(selected.reply, /combo 2 lọ/);
-  assert.match(selected.reply, /Tên người nhận/);
-  assert.doesNotMatch(selected.reply, /ngồi điều hòa/);
+  assert.equal(selected.state.selectedQuantity, undefined);
+  assert.equal(selected.state.slots.primarySymptom, "odor");
+  assert.notEqual(selected.state.pipeline, "5.Chờ TT KH");
+  assert.doesNotMatch(selected.reply, /Tên người nhận/);
 });
 
 test("một tin có số lượng, freeship và dữ liệu nhận hàng được áp dụng cùng lượt", () => {
@@ -2566,7 +2614,7 @@ test("recap chấp nhận cả Đúng và không chỉ riêng Đồng ý", () =>
 test("tạo đơn xong phải xóa hành động xác nhận đang chờ", () => {
   const service = new DemoChatService();
   service.chat("confirmed-order-clears-pending", "giá bao nhiêu");
-  service.chat("confirmed-order-clears-pending", "2");
+  service.chat("confirmed-order-clears-pending", "Mình lấy 2 lọ");
   service.chat(
     "confirmed-order-clears-pending",
     "Hoàng, 0824938877, số 82 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội",

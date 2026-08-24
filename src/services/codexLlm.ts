@@ -485,12 +485,16 @@ export class CodexLlmBridge {
     if (!rawReply) {
       return this.result(input.baseReply, "fallback", startedAt, "draft_missing");
     }
-    const reply = mergeDraftWithExecutedState({
+    const shapedReply = mergeDraftWithExecutedState({
       draftReply: rawReply,
       baseReplies: input.baseReplies ?? [input.baseReply],
       actions: input.actions ?? [],
       hasUnsupportedQuestions: Boolean(input.unsupportedQuestions?.length),
     });
+    const reply = appendMissingConversationQuestion(
+      shapedReply,
+      input.baseReplies ?? [input.baseReply],
+    );
     try {
       this.claims.assertSafe(reply);
       const groundedKnowledgeFirst =
@@ -510,8 +514,8 @@ export class CodexLlmBridge {
       });
       if (!groundedKnowledgeFirst) {
         assertRequiredFactsPreserved(input.baseReply, reply);
-        assertConversationDirectionPreserved(input.baseReply, reply);
       }
+      assertConversationDirectionPreserved(input.baseReply, reply);
       const citedKnowledge = (input.knowledge ?? [])
         .filter((entity) => input.knowledgeIds?.includes(entity.id))
         .map((entity) => entity.content)
@@ -521,7 +525,7 @@ export class CodexLlmBridge {
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       assertActionClaimsGrounded(input.state, reply);
       if (input.skillId && !groundedKnowledgeFirst) {
-        assertSkillResponseShape(input.skillId, reply);
+        assertSkillResponseShape(input.skillId, shapedReply);
       }
       return this.result(reply, "enhanced", startedAt, "single_pass_draft");
     } catch (error) {
@@ -1829,6 +1833,28 @@ export function mergeDraftWithExecutedState(input: {
     rawContinuation && orderStart >= 0 ? rawContinuation.slice(orderStart).trim() : rawContinuation;
   if (!continuation) return input.draftReply.trim();
   return `${input.draftReply.trim()}\n\n${continuation}`;
+}
+
+function appendMissingConversationQuestion(
+  draftReply: string,
+  baseReplies: readonly string[],
+): string {
+  if (/[?？]/u.test(draftReply)) return draftReply;
+  for (const reply of [...baseReplies].reverse()) {
+    for (const line of reply.split("\n").reverse()) {
+      const questionEnd = Math.max(line.lastIndexOf("?"), line.lastIndexOf("？"));
+      if (questionEnd < 0) continue;
+      const beforeQuestion = line.slice(0, questionEnd + 1);
+      const sentenceBoundary = Math.max(
+        beforeQuestion.lastIndexOf(". "),
+        beforeQuestion.lastIndexOf("! "),
+        beforeQuestion.lastIndexOf("。 "),
+      );
+      const question = beforeQuestion.slice(sentenceBoundary >= 0 ? sentenceBoundary + 2 : 0).trim();
+      if (question) return `${draftReply.trim()}\n\n${question}`;
+    }
+  }
+  return draftReply;
 }
 
 function assertRequiredFactsPreserved(baseReply: string, generatedReply: string): void {

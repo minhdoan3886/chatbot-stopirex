@@ -1795,10 +1795,12 @@ export class DemoChatService {
         ...session.consultation,
         stage: "S5.guidance",
       };
-      const nextQuestion = nextProductEffectQuestion(
-        session.consultation.asked,
-        hasRecentlySentPrice(session),
-      );
+      const nextQuestion = session.orderCollectionPaused
+        ? undefined
+        : nextProductEffectQuestion(
+            session.consultation.asked,
+            hasRecentlySentPrice(session),
+          );
       if (nextQuestion) {
         session.consultation = {
           ...session.consultation,
@@ -1822,7 +1824,10 @@ export class DemoChatService {
           ? ["usage-morning-fragrance-layering", "usage-application-feel-clothing"]
           : []),
       ]);
-      return this.respond(session, productEffectReply(topic, nextQuestion, text));
+      return this.respond(
+        session,
+        productEffectReply(topic, nextQuestion, text, semanticSlots.workContext),
+      );
     }
 
     if (directIntent === "usage_time") {
@@ -2776,9 +2781,10 @@ function groundSemanticSlots(session: DemoSession, proposed: ConsultationSlots):
     /ngoai troi|van dong|lao dong nang|cong trinh|di nang|the thao|pickle|padel|gym|chay bo/.test(
       customerText,
     );
-  const restingEvidence = /phong lanh|dieu hoa|van phong|ngoi yen|ngoi mat|it van dong|cang thang/.test(
-    customerText,
-  );
+  const restingEvidence =
+    /phong lanh|dieu hoa|van phong|ngoi yen|ngoi mat|ngoi (?:khong|ko|k)(?: cung)?|it van dong|cang thang/.test(
+      customerText,
+    );
   if (
     (grounded.workContext === "outdoor_heavy" && !outdoorEvidence) ||
     (grounded.workContext === "rest_or_stress" && !restingEvidence) ||
@@ -3565,7 +3571,12 @@ function isDetailedMechanismComparisonQuestion(value: string): boolean {
   return isProductComparison(text) && /co che|hoat dong|tu goc|tai sao.*dat|ma dat|dat the/.test(text);
 }
 
-function productEffectReply(topic: PrimarySymptom, nextQuestion?: string, customerText = ""): string {
+function productEffectReply(
+  topic: PrimarySymptom,
+  nextQuestion?: string,
+  customerText = "",
+  workContext?: ConsultationSlots["workContext"],
+): string {
   if (isFragranceAndWetnessPreference(customerText)) {
     return "Dạ có ạ. Stopirex không dùng hương thơm để che mùi; khi mình lăn một lớp mỏng trên da khô, sản phẩm khô nhanh và không bết. Mình chờ khô rồi mặc áo, sáng dùng nước hoa sẽ không bị lẫn hương ạ.";
   }
@@ -3590,6 +3601,11 @@ function productEffectReply(topic: PrimarySymptom, nextQuestion?: string, custom
   if (severeSweat) {
     const answer =
       "Dạ Stopirex hỗ trợ kiểm soát tiết mồ hôi, giúp giảm nách ẩm và áo bị ướt ạ. Với mức mồ hôi nặng đến ướt sũng, mình dùng buổi tối khi da sạch, khô, lăn mỏng và theo dõi 2 tuần; nếu chưa cải thiện, nhắn bên em kiểm tra cách dùng nhé.";
+    return nextQuestion ? `${answer}\n\n${nextQuestion}` : answer;
+  }
+  if ((topic === "sweat" || topic === "both") && workContext === "rest_or_stress") {
+    const answer =
+      "Dạ có ạ. Việc mình ngồi yên mà vùng nách vẫn ướt cho thấy lượng mồ hôi đang khá nhiều. Stopirex hỗ trợ kiểm soát tiết mồ hôi, giúp giảm tình trạng ẩm và ướt áo. Mình dùng buổi tối khi da sạch, khô, lăn mỏng và theo dõi trong 2 tuần đầu; nếu chưa cải thiện, nhắn bên em kiểm tra cách dùng ạ.";
     return nextQuestion ? `${answer}\n\n${nextQuestion}` : answer;
   }
   const benefit =
@@ -4478,7 +4494,7 @@ function multiActionAnswer(
   }
   if (uniqueTopics.some((topic) => ["effectiveness", "sweat", "odor"].includes(topic))) {
     const effectTopic = productEffectTopic(text, semanticSlots) ?? semanticSlots.primarySymptom ?? "both";
-    answers.push(productEffectReply(effectTopic, undefined, text));
+    answers.push(productEffectReply(effectTopic, undefined, text, semanticSlots.workContext));
   }
   if (uniqueTopics.includes("usage")) {
     answers.push(
@@ -4858,7 +4874,10 @@ function extractConsultationSlots(
       text,
     ) ||
     (state.stage === "S1.context" && /\bchoi\b|\btap\b/.test(text));
-  const resting = /phong lanh|dieu hoa|van phong|ngoi yen|ngoi mat|cang thang|it van dong/.test(text);
+  const resting =
+    /phong lanh|dieu hoa|van phong|ngoi yen|ngoi mat|ngoi (?:khong|ko|k)(?: cung)?|cang thang|it van dong/.test(
+      text,
+    );
   if (state.stage === "S1.context" && (text === "1" || isYesAnswer(text))) {
     slots.workContext = "rest_or_stress";
   } else if (state.stage === "S1.context" && (text === "2" || isNoAnswer(text))) {

@@ -202,8 +202,18 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
   }
 
   const pendingAction = input.pendingAction;
+  const directQuestionInterruptsPendingAction = Boolean(
+    input.semantic.asksDirectAnswer === true &&
+      input.semantic.intent &&
+      input.semantic.intent !== "other" &&
+      input.semantic.intent !== "buying" &&
+      input.semantic.intent !== "order_support" &&
+      semanticConfidence >= 0.65 &&
+      input.semantic.needsClarification !== true,
+  );
   const pendingMatches =
     pendingAction !== undefined &&
+    !directQuestionInterruptsPendingAction &&
     (input.affirmativeFollowup ||
       input.semantic.replyTo === pendingReplyTo(pendingAction) ||
       (pendingAction === "send_usage_guidance" && input.semantic.intent === "usage_guidance"));

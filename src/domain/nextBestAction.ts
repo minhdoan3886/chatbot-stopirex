@@ -198,7 +198,7 @@ function hasSymptomEvidence(value: string): boolean {
 }
 
 function hasWorkContextEvidence(value: string): boolean {
-  return /van dong|the thao|gym|ngoai troi|cong trinh|van phong|dieu hoa|cang thang|ngu|ngoi yen/.test(
+  return /van dong|the thao|gym|ngoai troi|cong trinh|van phong|dieu hoa|cang thang|ngu|ngoi yen|ngoi (?:khong|ko|k)(?: cung)?/.test(
     normalize(value),
   );
 }

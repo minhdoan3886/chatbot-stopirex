@@ -24,6 +24,35 @@ test("pending action hiểu câu ok theo đề nghị ngay trước đó", () =>
   assert.match(result.trace.reason, /đề nghị ngay trước/);
 });
 
+test("câu hỏi trực tiếp ngắt bước chọn số lượng dù LLM nhận diện đang trả lời bước đó", () => {
+  const result = resolveConversationDecision({
+    semantic: {
+      slots: {
+        primarySymptom: "sweat",
+        workContext: "rest_or_stress",
+      },
+      intent: "product_effect",
+      topic: "sweat",
+      replyTo: "choose_quantity",
+      asksDirectAnswer: true,
+      confidence: 0.97,
+      needsClarification: false,
+      evidence: ["lăn cái này có tốt k", "a ra nhiều mồ hôi", "ngồi ko cũng ướt"],
+    },
+    pendingAction: "choose_quantity",
+    optOut: false,
+    activeCare: false,
+    orderConfirmation: false,
+    collectingOrder: true,
+    orderDataCandidate: false,
+    affirmativeFollowup: false,
+  });
+
+  assert.equal(result.route, "direct_intent");
+  assert.equal(result.intent, "product_effect");
+  assert.match(result.trace.reason, /ưu tiên trả lời câu hiện tại/);
+});
+
 test("guardrail thương mại chặn LLM bỏ qua yêu cầu freeship", () => {
   const result = resolveConversationDecision({
     semantic: {

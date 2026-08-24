@@ -458,6 +458,69 @@ test("đã nhận giá nhưng hỏi hiệu quả sau từ nhưng phải trả l�
   assert.doesNotMatch(result.reply, /GIÁ SANDBOX|285\.000đ|510\.000đ/iu);
 });
 
+test("LLM ưu tiên trả lời mồ hôi khi đơn đang dở ở bước chọn số lượng", () => {
+  const chat = new DemoChatService();
+  const sessionId = "pending-quantity-interrupted-by-effect-question";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "Mình lấy 1 lọ");
+  const priceAgain = chat.chat(sessionId, "Cho anh xem lại giá");
+
+  assert.equal(priceAgain.state.selectedQuantity, 1);
+  assert.equal(priceAgain.state.pendingAction, "choose_quantity");
+
+  const result = chat.chat(
+    sessionId,
+    "lăn cái này có tốt k\na ra nhiều mồ hôi\nngồi ko cũng ướt",
+    {
+      skill: "direct-answer",
+      intent: "product_effect",
+      topic: "sweat",
+      replyTo: "choose_quantity",
+      scenario: "actual",
+      asksDirectAnswer: true,
+      confidence: 0.97,
+      needsClarification: false,
+      evidence: ["lăn cái này có tốt k", "a ra nhiều mồ hôi", "ngồi ko cũng ướt"],
+      slots: {
+        primarySymptom: "sweat",
+        workContext: "rest_or_stress",
+      },
+      actions: [
+        {
+          type: "answer_question",
+          topic: "effectiveness",
+          confidence: 0.97,
+          evidence: ["lăn cái này có tốt k", "a ra nhiều mồ hôi", "ngồi ko cũng ướt"],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.9,
+          evidence: ["choose_quantity"],
+          source: "llm",
+        },
+      ],
+    },
+    { actionExecutionMode: "multi_action" },
+  );
+
+  assert.equal(result.state.decisionTrace?.selectedRoute, "direct_intent");
+  assert.equal(result.state.decisionTrace?.selectedIntent, "product_effect");
+  assert.equal(result.state.selectedQuantity, 1);
+  assert.equal(result.state.pendingAction, "choose_quantity");
+  assert.equal(result.state.orderFlowStatus, "paused");
+  assert.match(result.reply, /hỗ trợ kiểm soát tiết mồ hôi/iu);
+  assert.match(result.reply, /ngồi yên.*vẫn ướt/isu);
+  assert.match(result.reply, /mồ hôi đang khá nhiều/iu);
+  assert.doesNotMatch(result.reply, /chọn giúp em số lượng|1 đến 5 lọ|từ 6 lọ/iu);
+  assert.ok(
+    result.state.decisionTrace?.actionPlan?.accepted.some((action) => action.type === "answer_question"),
+  );
+  assert.ok(
+    result.state.decisionTrace?.actionPlan?.accepted.some((action) => action.type === "pause_order"),
+  );
+});
+
 test("hỏi bao lâu thấy khô và có dùng hằng ngày phải trả lời đủ hai ý", () => {
   const chat = new DemoChatService();
   const sessionId = "usage-duration-frequency-after-price";

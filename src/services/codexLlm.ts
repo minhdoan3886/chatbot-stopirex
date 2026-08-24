@@ -325,10 +325,7 @@ export class CodexLlmBridge {
               ? positiveInteger(source.LLM_HYBRID_PROVIDER_TIMEOUT_MS, "LLM_HYBRID_PROVIDER_TIMEOUT_MS")
               : 30_000,
             fallbackTimeoutMs: source.LLM_HYBRID_FALLBACK_TIMEOUT_MS
-              ? positiveInteger(
-                  source.LLM_HYBRID_FALLBACK_TIMEOUT_MS,
-                  "LLM_HYBRID_FALLBACK_TIMEOUT_MS",
-                )
+              ? positiveInteger(source.LLM_HYBRID_FALLBACK_TIMEOUT_MS, "LLM_HYBRID_FALLBACK_TIMEOUT_MS")
               : source.CODEX_LLM_TIMEOUT_MS
                 ? positiveInteger(source.CODEX_LLM_TIMEOUT_MS, "CODEX_LLM_TIMEOUT_MS")
                 : 30_000,
@@ -491,10 +488,7 @@ export class CodexLlmBridge {
       actions: input.actions ?? [],
       hasUnsupportedQuestions: Boolean(input.unsupportedQuestions?.length),
     });
-    const reply = appendMissingConversationQuestion(
-      shapedReply,
-      input.baseReplies ?? [input.baseReply],
-    );
+    const reply = appendMissingConversationQuestion(shapedReply, input.baseReplies ?? [input.baseReply]);
     try {
       this.claims.assertSafe(reply);
       const groundedKnowledgeFirst =
@@ -1246,6 +1240,7 @@ function buildInterpretPrompt(input: {
     "Ưu tiên ý khách đang muốn nói ở lượt hiện tại và dùng lịch sử để hiểu câu viết tắt, sai chính tả hoặc nói tiếp ý trước.",
     "Bước hiện tại chỉ là thông tin tham khảo. Không ép tin nhắn vào bước, form hoặc câu hỏi bot vừa hỏi.",
     "Nếu khách hỏi trực tiếp, phải đặt asksDirectAnswer=true kể cả khi khách chưa trả lời đủ thông tin tư vấn.",
+    "Nếu khách đang trả lời câu hỏi gần nhất của bot về bối cảnh, tình trạng, sản phẩm từng dùng hoặc độ tuổi (ví dụ bot hỏi mồ hôi/mùi và khách nói 'mình bị cả mồ hôi ướt áo và mùi'): đây là dữ liệu tư vấn, không phải câu hỏi của khách. Dùng intent consultation, asksDirectAnswer=false, không tạo answer_question; trích đúng slots rồi viết lời ghi nhận và câu tư vấn nối tiếp phù hợp.",
     "Với câu hỏi Có/Không, draftReply phải trả lời đúng cực tính ngay câu đầu. Không được mở đầu 'Dạ có' nếu khách hỏi một hậu quả xấu như 'có bị trôi/mất tác dụng không'.",
     "Cấu trúc trả lời băn khoăn sản phẩm: trả lời trực tiếp → giải thích đúng cơ chế liên quan → hướng dẫn cách dùng/giải pháp. Không tự thêm phần giới hạn, câu phòng thủ hoặc lời thoái thác nếu khách không hỏi.",
     "Không tự dùng 'tùy cơ địa', 'hiệu quả tùy từng người', 'không cam kết', 'không bảo đảm' hoặc cách nói làm yếu sản phẩm. Chỉ khi khách hỏi rõ 'cam kết 100%/đảm bảo tuyệt đối không?', mới trả lời trung thực theo hướng tích cực: nêu điều kiện dùng đúng và cách bên em hỗ trợ tiếp.",
@@ -1377,6 +1372,7 @@ function buildCompactInterpretPrompt(input: {
     "Quên dùng tối hỏi bôi bù sáng: usage_time; không bôi bù, giải thích dùng tối khi tuyến mồ hôi ít hoạt động, bôi sáng kém hiệu quả hơn, dùng source usage-timing-missed-evening-application.",
     "Bất biến đa hành động: câu điều kiện hiệu quả + yêu cầu số lượng phải có đủ answer_question, select_quantity và continue_order_collection; không được gộp ba việc thành một action.",
     "Bất biến an toàn: khách đang đỏ/rát/ngứa thật + nói sẽ mua khi ổn phải có đủ start_customer_care, answer_question và pause_order; cấm select_quantity và cấm nói đã ghi nhận/chốt hàng.",
+    "Khách trả lời câu hỏi gần nhất của bot về bối cảnh/tình trạng/sản phẩm từng dùng/độ tuổi là dữ liệu tư vấn: dùng consultation, asksDirectAnswer=false, không answer_question; trích slots và tiếp tục tư vấn. Ví dụ bot hỏi mồ hôi hay mùi, khách nói 'mình bị cả mồ hôi ướt áo và mùi' là câu trả lời, không phải câu hỏi.",
     "Phân biệt actual/past/hypothetical và đúng sản phẩm gây sự cố. Phản ứng với sản phẩm khác là băn khoăn trước mua, không phải khiếu nại Stopirex. Tin ngắn phải hiểu theo lượt gần nhất. Nếu đơn đang dở mà khách hỏi trực tiếp việc khác: tạo answer_question + pause_order, giữ state đơn, draftReply chỉ trả lời câu hiện tại và cấm xin số lượng/Tên/SĐT/Địa chỉ trong cùng lượt.",
     "Chỉ phản ánh triệu chứng khách đã nêu; cấm tự thêm viêm, không hiệu quả, bệnh hoặc trải nghiệm chưa được nói. Knowledge đã đủ thì cấm handoff bừa.",
     "Với câu hỏi Có/Không, trả lời đúng cực tính ngay đầu; không dùng 'Dạ có' cho hậu quả xấu hoặc câu hỏi hai lựa chọn. Không tự thêm 'tùy cơ địa/không cam kết/không đảm bảo' nếu khách không hỏi cam kết tuyệt đối.",
@@ -1473,6 +1469,7 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
   if (examples.size === 0) {
     add(
       "Câu hỏi trực tiếp → answer_question và asksDirectAnswer=true; không ép vào bước hiện tại.",
+      "Khách trả lời câu hỏi gần nhất của bot về bối cảnh/tình trạng/sản phẩm từng dùng/độ tuổi → consultation, asksDirectAnswer=false, không answer_question; trích slots và tiếp tục tư vấn. Ví dụ bot hỏi mồ hôi hay mùi, khách nói 'mình bị cả mồ hôi ướt áo và mùi' là câu trả lời, không phải câu hỏi.",
       "Một tin nhiều ý → tạo đủ actions theo thứ tự ưu tiên; không làm mất mệnh đề.",
     );
   }
@@ -1835,10 +1832,7 @@ export function mergeDraftWithExecutedState(input: {
   return `${input.draftReply.trim()}\n\n${continuation}`;
 }
 
-function appendMissingConversationQuestion(
-  draftReply: string,
-  baseReplies: readonly string[],
-): string {
+function appendMissingConversationQuestion(draftReply: string, baseReplies: readonly string[]): string {
   if (/[?？]/u.test(draftReply)) return draftReply;
   for (const reply of [...baseReplies].reverse()) {
     for (const line of reply.split("\n").reverse()) {
@@ -2080,9 +2074,7 @@ function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string
   );
   if (
     orderPaused &&
-    /(?:gửi|cho|xin|cung cấp)[^.!?\n]{0,100}(?:tên người nhận|sđt|số điện thoại|địa chỉ)/iu.test(
-      normalized,
-    )
+    /(?:gửi|cho|xin|cung cấp)[^.!?\n]{0,100}(?:tên người nhận|sđt|số điện thoại|địa chỉ)/iu.test(normalized)
   ) {
     throw actionGroundingError("Câu trả lời xin dữ liệu đơn trong khi action plan đang tạm dừng đơn");
   }
@@ -2108,9 +2100,7 @@ function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string
     throw actionGroundingError("Câu trả lời nói đã tạo đơn nhưng chưa có orderId");
   }
   if (
-    /(?:đã |em )?(?:chuyển|gửi).*(?:nhân viên|chuyên viên|bộ phận liên quan|cskh|sale)/iu.test(
-      normalized,
-    ) &&
+    /(?:đã |em )?(?:chuyển|gửi).*(?:nhân viên|chuyên viên|bộ phận liên quan|cskh|sale)/iu.test(normalized) &&
     state.pipeline !== "C3.Chờ CSKH" &&
     !state.handoffReason
   ) {

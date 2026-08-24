@@ -6,7 +6,10 @@ import { isBotAuthoredEcho, parseMetaWebhook } from "../adapters/metaEvents.js";
 import { PostgresStore } from "../infrastructure/postgres.js";
 import { RedisRuntime } from "../infrastructure/redis.js";
 import { StructuredLogger } from "../services/logger.js";
-import { reconcileKnowledgeBackedPopulationSafety } from "../services/metaChatBrain.js";
+import {
+  reconcileKnowledgeBackedPopulationSafety,
+  reconcilePendingConsultationAnswer,
+} from "../services/metaChatBrain.js";
 import {
   DemoChatService,
   isCompoundOrderUpdateQuestion,
@@ -267,9 +270,7 @@ const server = createServer(async (request, response) => {
           return json(response, 200, {
             ...result,
             ...(quality ? { quality } : {}),
-            ...(blockedReasons.length > 0
-              ? { qualityGate: { blocked: true, reasons: blockedReasons } }
-              : {}),
+            ...(blockedReasons.length > 0 ? { qualityGate: { blocked: true, reasons: blockedReasons } } : {}),
             llm: {
               provider: codexLlm.provider,
               status: "skipped",
@@ -301,9 +302,13 @@ const server = createServer(async (request, response) => {
           state: demoChat.peek(sessionId),
           knowledge: retrievedKnowledge,
         });
-        const interpreted = reconcileKnowledgeBackedPopulationSafety(
-          attachRetrievedGrounding(interpretedRaw, retrievedKnowledge),
-          retrievedKnowledge[0]?.id,
+        const interpreted = reconcilePendingConsultationAnswer(
+          reconcileKnowledgeBackedPopulationSafety(
+            attachRetrievedGrounding(interpretedRaw, retrievedKnowledge),
+            retrievedKnowledge[0]?.id,
+          ),
+          stateBefore,
+          body.text,
         );
         const result = demoChat.chat(sessionId, body.text, interpreted, context);
         const composed = codexLlm.adoptInterpretedDraft({
@@ -403,9 +408,7 @@ const server = createServer(async (request, response) => {
         return json(response, 200, {
           ...sourced,
           ...(quality ? { quality } : {}),
-          ...(blockedReasons.length > 0
-            ? { qualityGate: { blocked: true, reasons: blockedReasons } }
-            : {}),
+          ...(blockedReasons.length > 0 ? { qualityGate: { blocked: true, reasons: blockedReasons } } : {}),
           llm: {
             provider: interpreted.provider,
             status: composed.status === "enhanced" ? "enhanced" : interpreted.status,

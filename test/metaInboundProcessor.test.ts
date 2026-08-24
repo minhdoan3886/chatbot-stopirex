@@ -10,6 +10,7 @@ import {
   isFastTransition,
   MetaChatBrain,
   reconcileKnowledgeBackedPopulationSafety,
+  reconcilePendingConsultationAnswer,
 } from "../src/services/metaChatBrain.js";
 import {
   MetaInboundProcessor,
@@ -30,16 +31,19 @@ function fixture(options: {
   const sent: string[] = [];
   const processed: string[] = [];
   const runtimeUpdates: Array<Record<string, unknown>> = [];
-  const outbox = new Map<string, {
-    outboxId: string;
-    idempotencyKey: string;
-    recipientId: string;
-    texts: string[];
-    sentCount: number;
-    sourceEventIds: string[];
-    status: "pending" | "sent";
-    lastMessageId?: string;
-  }>();
+  const outbox = new Map<
+    string,
+    {
+      outboxId: string;
+      idempotencyKey: string;
+      recipientId: string;
+      texts: string[];
+      sentCount: number;
+      sourceEventIds: string[];
+      status: "pending" | "sent";
+      lastMessageId?: string;
+    }
+  >();
   const followupSchedules: Array<Record<string, unknown>> = [];
   const followupCancellations: Array<Record<string, unknown>> = [];
   let newerInbound = options.newerInbound ?? false;
@@ -265,9 +269,7 @@ test("Meta brain chỉ nhận câu trả lời AI có citation thuộc knowledge
   assert.equal(llmCalls, 1);
   assert.match(response.reply, /lăn thường.*khử.*che mùi/isu);
   assert.ok(
-    response.state.decisionTrace?.knowledgeEntityIds.includes(
-      "product-comparison-traditional-rollon",
-    ),
+    response.state.decisionTrace?.knowledgeEntityIds.includes("product-comparison-traditional-rollon"),
   );
 });
 
@@ -314,7 +316,111 @@ test("citation mang thai của LLM được ưu tiên hơn retrieval cho con bú
   assert.equal(reconciled.draftReply, undefined);
   const answerAction = reconciled.actions?.find((action) => action.type === "answer_question");
   assert.equal(answerAction?.type === "answer_question" ? answerAction.topic : undefined, "pregnancy");
-  assert.deepEqual(reconciled.actions?.map((action) => action.type), ["answer_question"]);
+  assert.deepEqual(
+    reconciled.actions?.map((action) => action.type),
+    ["answer_question"],
+  );
+});
+
+test("câu mô tả tình trạng trả lời câu hỏi đang chờ không bị coi là câu hỏi mới", () => {
+  const reconciled = reconcilePendingConsultationAnswer(
+    {
+      slots: { primarySymptom: "both" as const },
+      skill: "direct-answer" as const,
+      intent: "consultation" as const,
+      topic: "sweat" as const,
+      asksDirectAnswer: true,
+      replyTo: "offer_usage_guidance" as const,
+      draftReply: "Bản nháp bị gắn nhầm là câu trả lời FAQ.",
+      actions: [
+        {
+          type: "answer_question" as const,
+          topic: "sweat" as const,
+          source: "llm" as const,
+          confidence: 0.97,
+          evidence: ["mình bị cả mồ hôi làm ướt áo và mùi cơ thể"],
+        },
+      ],
+    },
+    { pendingQuestionTopic: "symptom" },
+    "Mình bị cả mồ hôi làm ướt áo và mùi cơ thể",
+  );
+
+  assert.equal(reconciled.asksDirectAnswer, false);
+  assert.deepEqual(reconciled.slots, { primarySymptom: "both" });
+  assert.equal(reconciled.actions, undefined);
+  assert.equal(reconciled.draftReply, undefined);
+  assert.equal(reconciled.replyTo, undefined);
+  assert.equal(reconciled.skill, undefined);
+});
+
+test("câu hỏi mới vẫn giữ nguyên phân loại trả lời trực tiếp", () => {
+  const semantic = {
+    slots: {},
+    skill: "direct-answer" as const,
+    intent: "consultation" as const,
+    topic: "sweat" as const,
+    asksDirectAnswer: true,
+    actions: [
+      {
+        type: "answer_question" as const,
+        topic: "sweat",
+        source: "llm" as const,
+        confidence: 0.97,
+        evidence: ["mồ hôi nhiều có dùng được không?"],
+      },
+    ],
+  } satisfies Parameters<typeof reconcilePendingConsultationAnswer>[0];
+  const reconciled = reconcilePendingConsultationAnswer(
+    semantic,
+    { pendingQuestionTopic: "symptom" },
+    "Mồ hôi nhiều có dùng được không?",
+  );
+
+  assert.equal(reconciled, semantic);
+});
+
+test("Meta tiếp tục tư vấn khi khách trả lời tình trạng sau báo giá", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "price-then-symptom-answer";
+  const price = chat.chat(sessionId, "alo e giá");
+  assert.equal(price.state.pendingQuestionTopic, "symptom");
+
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        summary: "Khách mô tả cả mồ hôi ướt áo và mùi cơ thể",
+        skill: "direct-answer",
+        intent: "consultation",
+        topic: "sweat",
+        subject: "customer",
+        scenario: "actual",
+        asksDirectAnswer: true,
+        confidence: 0.97,
+        slots: { primarySymptom: "both" },
+        actions: [
+          {
+            type: "answer_question",
+            topic: "sweat",
+            confidence: 0.97,
+            evidence: ["mồ hôi làm ướt áo và mùi cơ thể"],
+          },
+        ],
+        draftReply: "Dạ Stopirex hỗ trợ giảm mồ hôi và mùi ạ.",
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId,
+    text: "Mình bị cả mồ hôi làm ướt áo và mùi cơ thể",
+  });
+
+  assert.equal(response.state.consultationStage, "S1.context");
+  assert.equal(response.state.pendingQuestionTopic, "work_context");
+  assert.equal(response.state.activeSkill, "need-discovery");
+  assert.match(response.reply, /ngồi điều hòa/iu);
+  assert.doesNotMatch(response.reply, /chuyển bộ phận|chọn.*lọ/iu);
 });
 
 test("câu hỏi đang bầu trong lúc thu đơn vẫn dùng câu Knowledge của LLM và không đổi luồng", async () => {
@@ -391,9 +497,7 @@ test("câu hỏi đang bầu trong lúc thu đơn vẫn dùng câu Knowledge c�
   assert.notEqual(response.state.pendingQuestionTopic, "work_context");
   assert.equal(response.state.decisionTrace?.semantic.topic, "pregnancy");
   assert.equal(
-    response.state.decisionTrace?.actionPlan?.accepted.some(
-      (action) => action.type === "handoff_to_human",
-    ),
+    response.state.decisionTrace?.actionPlan?.accepted.some((action) => action.type === "handoff_to_human"),
     false,
   );
 });
@@ -526,10 +630,7 @@ test("câu chê giá và mua nhiều đi qua LLM, commerce guard chỉ kiểm so
 
   assert.equal(isFastTransition("Giá hơi cao nhỉ, bên khác bán rẻ hơn.", state), false);
   assert.equal(
-    isFastTransition(
-      "Mình lấy hẳn 3 lọ thì có bớt thêm đồng nào hay tặng kèm quà gì không?",
-      state,
-    ),
+    isFastTransition("Mình lấy hẳn 3 lọ thì có bớt thêm đồng nào hay tặng kèm quà gì không?", state),
     false,
   );
 });
@@ -539,10 +640,7 @@ test("mọi câu hỏi sản phẩm kể cả kích ứng hiện tại đi qua L
   const state = chat.peek("critical-fast-routes");
 
   assert.equal(
-    isFastTransition(
-      "Nó là thuốc chữa dứt điểm hay chỉ ngăn tạm thời? Ngừng bôi là mồ hôi lại ra à?",
-      state,
-    ),
+    isFastTransition("Nó là thuốc chữa dứt điểm hay chỉ ngăn tạm thời? Ngừng bôi là mồ hôi lại ra à?", state),
     false,
   );
   assert.equal(
@@ -552,10 +650,7 @@ test("mọi câu hỏi sản phẩm kể cả kích ứng hiện tại đi qua L
     ),
     false,
   );
-  assert.equal(
-    isFastTransition("Da đang đỏ rát nhưng nếu ổn thì lấy 1 lọ", state),
-    false,
-  );
+  assert.equal(isFastTransition("Da đang đỏ rát nhưng nếu ổn thì lấy 1 lọ", state), false);
 });
 
 test("xác nhận đã nhận giá rồi hỏi hiệu quả được xử lý nhanh theo ý sau từ nhưng", () => {
@@ -636,15 +731,13 @@ test("Meta brain dùng câu LLM grounded cho cách hỏi bôi mấy tháng là c
         knowledgeIds: ["usage-bottle-duration"],
         unsupportedQuestions: [],
         groundingConfidence: 0.98,
-        draftReply:
-          "Dạ một lọ Stopirex thường dùng khoảng 3–4 tháng khi mình lăn mỏng 2–3 lần/tuần ạ.",
+        draftReply: "Dạ một lọ Stopirex thường dùng khoảng 3–4 tháng khi mình lăn mỏng 2–3 lần/tuần ạ.",
         slots: {},
       });
     },
   });
   const brain = new MetaChatBrain(chat, llm);
-  const question =
-    "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?";
+  const question = "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?";
 
   const response = await brain.reply({ sessionId: "llm-first-bottle-duration", text: question });
 
@@ -717,13 +810,9 @@ test("Question Coverage Gate chấp nhận câu LLM diễn đạt lại thời �
 
   assert.match(response.reply, /trong tuần đầu/iu);
   assert.doesNotMatch(response.reply, /chưa gửi thông tin|chuyển bộ phận liên quan/iu);
-  assert.ok(
-    response.state.decisionTrace?.knowledgeEntityIds.includes("effectiveness-usage-journey"),
-  );
+  assert.ok(response.state.decisionTrace?.knowledgeEntityIds.includes("effectiveness-usage-journey"));
   assert.equal(
-    response.state.decisionTrace?.knowledgeEntityIds.includes(
-      "product-comparison-traditional-rollon",
-    ),
+    response.state.decisionTrace?.knowledgeEntityIds.includes("product-comparison-traditional-rollon"),
     false,
   );
 });
@@ -766,25 +855,21 @@ test("Grounding guard bỏ nguồn gần nghĩa sai và dùng nguồn chính xá
         knowledgeIds: ["usage-exercise-sweat-washoff"],
         unsupportedQuestions: ["Shop có xuất hóa đơn VAT điện tử không?"],
         groundingConfidence: 0.9,
-        draftReply:
-          "Dạ tắm lại bằng xà phòng không làm mất tác dụng ạ. Phần VAT em cần nhân viên kiểm tra.",
+        draftReply: "Dạ tắm lại bằng xà phòng không làm mất tác dụng ạ. Phần VAT em cần nhân viên kiểm tra.",
         slots: {},
       }),
   });
   const brain = new MetaChatBrain(chat, llm);
   const response = await brain.reply({
     sessionId: "coverage-ungrounded-soap",
-    text:
-      "Mình muốn lấy 1 lọ. Bôi xong sáng hôm sau tắm lại bằng xà phòng có mất tác dụng không? Shop có xuất hóa đơn VAT điện tử không?",
+    text: "Mình muốn lấy 1 lọ. Bôi xong sáng hôm sau tắm lại bằng xà phòng có mất tác dụng không? Shop có xuất hóa đơn VAT điện tử không?",
   });
 
   assert.equal(response.state.selectedQuantity, 1);
   assert.equal(response.state.orderFlowStatus, "paused");
   assert.match(response.reply, /xà phòng bình thường.*không làm mất tác dụng/isu);
   assert.match(response.reply, /hóa đơn VAT.*chuyển.*bộ phận liên quan/isu);
-  assert.ok(
-    response.state.decisionTrace?.knowledgeEntityIds.includes("usage-morning-wash-with-soap"),
-  );
+  assert.ok(response.state.decisionTrace?.knowledgeEntityIds.includes("usage-morning-wash-with-soap"));
   assert.equal(
     response.state.decisionTrace?.knowledgeEntityIds.includes("usage-exercise-sweat-washoff"),
     false,

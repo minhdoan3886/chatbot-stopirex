@@ -1,5 +1,5 @@
 import { retrieveKnowledgeMatches } from "../domain/knowledge.js";
-import { governCustomerResponse } from "../domain/responseGovernor.js";
+import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
 import {
   missingRequiredAnswerTopics,
   requiredAnswerTopics,
@@ -117,9 +117,10 @@ export class MetaChatBrain {
         validCitations.length > 0
           ? { ...rawLlmResult, knowledgeIds: validCitations }
           : repairMissingKnowledgeCitations(withoutRawCitations, citationCandidates);
-      const llmResult = reconcileKnowledgeBackedPopulationSafety(
-        groundedLlmResult,
-        matches[0]?.entity.id,
+      const llmResult = reconcilePendingConsultationAnswer(
+        reconcileKnowledgeBackedPopulationSafety(groundedLlmResult, matches[0]?.entity.id),
+        before,
+        input.text,
       );
       interpreted = llmResult;
       interpretationStatus = llmResult.status;
@@ -344,6 +345,39 @@ export class MetaChatBrain {
   }
 }
 
+/**
+ * A description supplied in response to the bot's latest discovery question is
+ * customer data, not a new question. The model remains responsible for
+ * extracting the consultation slots; this reconciliation only prevents a
+ * mislabeled `answer_question` action from making the quality gate demand an
+ * FAQ-style answer and halt an otherwise valid consultation.
+ */
+export function reconcilePendingConsultationAnswer<T extends SemanticUnderstanding>(
+  semantic: T,
+  state: Pick<DemoChatState, "pendingQuestionTopic">,
+  customerMessage: string,
+): T {
+  const pendingTopic = state.pendingQuestionTopic;
+  if (
+    !pendingTopic ||
+    !["work_context", "symptom", "prior_product", "usage", "child_age"].includes(pendingTopic) ||
+    !inferAnsweredTopicFromMessage(customerMessage, pendingTopic).includes(pendingTopic) ||
+    ![undefined, "consultation", "other"].includes(semantic.intent) ||
+    /[?？]/u.test(customerMessage)
+  ) {
+    return semantic;
+  }
+
+  const reconciled: T = { ...semantic, asksDirectAnswer: false };
+  const remainingActions = semantic.actions?.filter((action) => action.type !== "answer_question");
+  if (remainingActions?.length) reconciled.actions = remainingActions;
+  else delete reconciled.actions;
+  delete reconciled.draftReply;
+  delete reconciled.replyTo;
+  delete reconciled.skill;
+  return reconciled;
+}
+
 export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstanding>(
   semantic: T,
   primaryRetrievedKnowledgeId?: string,
@@ -356,9 +390,7 @@ export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnder
     ["audience-pregnancy", "pregnancy"],
     ["audience-breastfeeding", "breastfeeding"],
   ] as const;
-  const cited = citedPopulationTopics.filter(([knowledgeId]) =>
-    semantic.knowledgeIds?.includes(knowledgeId),
-  );
+  const cited = citedPopulationTopics.filter(([knowledgeId]) => semantic.knowledgeIds?.includes(knowledgeId));
   // A citation has already been validated against the retrieved Knowledge set
   // (or repaired from the grounded draft). Prefer that explicit LLM choice over
   // the first retrieval match, which can be a nearby population policy because
@@ -366,9 +398,7 @@ export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnder
   const supported =
     cited.length > 0
       ? cited
-      : citedPopulationTopics.filter(
-          ([knowledgeId]) => primaryRetrievedKnowledgeId === knowledgeId,
-        );
+      : citedPopulationTopics.filter(([knowledgeId]) => primaryRetrievedKnowledgeId === knowledgeId);
   if (supported.length !== 1) return semantic;
 
   const topic = supported[0]?.[1];
@@ -386,11 +416,7 @@ export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnder
   // planner will pause the existing order and leave it available to resume.
   reconciled.actions = semantic.actions
     .filter((action) => action.type === "answer_question")
-    .map((action) =>
-      action.type === "answer_question"
-        ? { ...action, topic }
-        : action,
-    );
+    .map((action) => (action.type === "answer_question" ? { ...action, topic } : action));
   reconciled.unsupportedQuestions = [];
   return reconciled;
 }

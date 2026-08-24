@@ -162,11 +162,10 @@ test("parser giữ toàn bộ actions của một tin nhắn thay vì ép còn m
   );
 
   assert.equal(parsed.summary, "Khách hỏi hiệu quả và chốt một lọ");
-  assert.deepEqual(parsed.actions?.map((action) => action.type), [
-    "answer_question",
-    "select_quantity",
-    "continue_order_collection",
-  ]);
+  assert.deepEqual(
+    parsed.actions?.map((action) => action.type),
+    ["answer_question", "select_quantity", "continue_order_collection"],
+  );
 });
 
 test("parser giữ nguồn knowledge, phần chưa hỗ trợ và độ tin cậy grounding", () => {
@@ -305,8 +304,7 @@ test("prompt compact là profile riêng và production vẫn mặc định legac
 
 test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng hành động và state", () => {
   const input = {
-    customerMessage:
-      "Giá mình biết rồi, nhưng đã tiêm botox mà bị lại thì Stopirex có ăn thua không?",
+    customerMessage: "Giá mình biết rồi, nhưng đã tiêm botox mà bị lại thì Stopirex có ăn thua không?",
     state: {
       ...state,
       selectedQuantity: 1 as const,
@@ -316,9 +314,7 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
         { role: "assistant" as const, text: "Mình gửi thông tin nhận hàng giúp em nhé." },
       ],
     },
-    knowledge: [
-      { id: "effect", title: "Hiệu quả", content: "Dữ liệu đã duyệt" },
-    ],
+    knowledge: [{ id: "effect", title: "Hiệu quả", content: "Dữ liệu đã duyệt" }],
   };
   const legacy = buildInterpretPromptForDiagnostics(input, "legacy");
   const compact = buildInterpretPromptForDiagnostics(input, "compact");
@@ -341,6 +337,7 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
   assert.match(compact, /không mở đầu 'Dạ có'/u);
   assert.match(compact, /answer_question \+ pause_order/u);
   assert.match(compact, /cấm xin số lượng\/Tên\/SĐT\/Địa chỉ/u);
+  assert.match(compact, /là câu trả lời, không phải câu hỏi/u);
 });
 
 test("ép OpenAI nhưng thiếu key thì bridge không tự báo sẵn sàng", () => {
@@ -613,10 +610,8 @@ test("single-pass draft không được nói đã chọn combo khi state chưa t
   const bridge = new CodexLlmBridge({ enabled: true, model: "test-model" });
   const result = bridge.adoptInterpretedDraft({
     customerMessage: "2",
-    draftReply:
-      "Dạ em ghi nhận combo 2 lọ ạ. Anh/chị gửi tên và SĐT để em lên đơn nhé?",
-    baseReply:
-      "Dạ em chưa xác định được lựa chọn. Mình chọn 1 lọ hay combo 2 lọ ạ?",
+    draftReply: "Dạ em ghi nhận combo 2 lọ ạ. Anh/chị gửi tên và SĐT để em lên đơn nhé?",
+    baseReply: "Dạ em chưa xác định được lựa chọn. Mình chọn 1 lọ hay combo 2 lọ ạ?",
     state,
     skillId: "order-closing",
   });
@@ -677,8 +672,7 @@ test("single-pass không được xin dữ liệu đơn khi action plan đang pa
       },
     },
   };
-  const baseReply =
-    "Dạ có ạ. Stopirex hỗ trợ kiểm soát mồ hôi khi mình ra nhiều mồ hôi cả lúc ngồi yên.";
+  const baseReply = "Dạ có ạ. Stopirex hỗ trợ kiểm soát mồ hôi khi mình ra nhiều mồ hôi cả lúc ngồi yên.";
   const result = bridge.adoptInterpretedDraft({
     customerMessage: "lăn cái này có tốt k, a ra nhiều mồ hôi, ngồi ko cũng ướt",
     draftReply:
@@ -749,10 +743,8 @@ test("single-pass có Knowledge vẫn không được bỏ câu hỏi nối ti�
 test("LLM-first giữ câu grounded đúng dù base regex đang trả sai chủ đề", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const result = bridge.adoptInterpretedDraft({
-    customerMessage:
-      "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?",
-    draftReply:
-      "Dạ một lọ Stopirex thường dùng khoảng 3–4 tháng khi mình lăn mỏng 2–3 lần/tuần ạ.",
+    customerMessage: "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?",
+    draftReply: "Dạ một lọ Stopirex thường dùng khoảng 3–4 tháng khi mình lăn mỏng 2–3 lần/tuần ạ.",
     baseReply:
       "Dạ mình dùng buổi tối khi da sạch, khô. Không dùng khi da trầy; nếu khó chịu thì tạm ngưng ạ.",
     state,
@@ -864,8 +856,7 @@ test("một lượt Routing Agent trả cả semantic và draft hội thoại", 
         topic: "comparison",
         asksDirectAnswer: true,
         confidence: 0.98,
-        draftReply:
-          "Dạ điểm khác chính là cơ chế và tần suất dùng ạ. Em gửi cách dùng hay giá trước ạ?",
+        draftReply: "Dạ điểm khác chính là cơ chế và tần suất dùng ạ. Em gửi cách dùng hay giá trước ạ?",
       });
     },
   });
@@ -877,8 +868,7 @@ test("một lượt Routing Agent trả cả semantic và draft hội thoại", 
   const composed = bridge.adoptInterpretedDraft({
     customerMessage: "Khác lăn thường ở đâu?",
     draftReply: interpreted.draftReply!,
-    baseReply:
-      "Dạ điểm khác chính là cơ chế và tần suất dùng ạ. Em gửi cách dùng hay giá trước ạ?",
+    baseReply: "Dạ điểm khác chính là cơ chế và tần suất dùng ạ. Em gửi cách dùng hay giá trước ạ?",
     state,
     skillId: "solution-guidance",
   });
@@ -953,8 +943,7 @@ test("single-pass draft bị loại nếu làm mất giới hạn hiệu quả t
     "Dạ Stopirex hỗ trợ kiểm soát mồ hôi. Hiệu quả còn tùy cơ địa và cách dùng nên bên em không cam kết hết tuyệt đối ạ. Mình muốn xem cách dùng không ạ?";
   const result = bridge.adoptInterpretedDraft({
     customerMessage: "Có cam kết hết 100% không?",
-    draftReply:
-      "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Mình muốn xem cách dùng không ạ?",
+    draftReply: "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Mình muốn xem cách dùng không ạ?",
     baseReply,
     state,
   });
@@ -973,8 +962,7 @@ test("single-pass chặn hàm ý chỉ đơn trực tiếp mới là hàng chín
     "Dạ sản phẩm Stopirex bên em cung cấp là hàng chính hãng. Khi nhận, mình có thể đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi ạ.";
   const result = bridge.adoptInterpretedDraft({
     customerMessage: "Có gì đảm bảo sản phẩm chính hãng không?",
-    draftReply:
-      "Dạ đơn đặt trực tiếp được gửi đúng hàng chính hãng; khi nhận mình kiểm tra bao bì và tem ạ.",
+    draftReply: "Dạ đơn đặt trực tiếp được gửi đúng hàng chính hãng; khi nhận mình kiểm tra bao bì và tem ạ.",
     baseReply,
     state,
   });
@@ -992,8 +980,7 @@ test("single-pass không được đổi 2–3 lần/tuần thành đơn vị kh
   const baseReply =
     "Dạ mình dùng Stopirex 2–3 lần/tuần ạ. Stopirex không dùng hương thơm để che mùi nên không làm lẫn hương Romano.";
   const result = bridge.adoptInterpretedDraft({
-    customerMessage:
-      "Thế 1 tuần bôi mấy lần? Sáng ra mình quệt thêm Romano có bị lộn mùi không?",
+    customerMessage: "Thế 1 tuần bôi mấy lần? Sáng ra mình quệt thêm Romano có bị lộn mùi không?",
     draftReply:
       "Dạ mình dùng giãn cách 2–3 ngày/lần. Stopirex không dùng hương thơm để che mùi nên không làm lẫn hương Romano.",
     baseReply,
@@ -1025,12 +1012,10 @@ test("single-pass chặn lời thoái thác khi khách không hỏi cam kết tu
     enabled: true,
     runner: async () => "{}",
   });
-  const baseReply =
-    "Dạ Stopirex hỗ trợ kiểm soát mồ hôi khi mình dùng đúng hướng dẫn ạ.";
+  const baseReply = "Dạ Stopirex hỗ trợ kiểm soát mồ hôi khi mình dùng đúng hướng dẫn ạ.";
   const result = bridge.adoptInterpretedDraft({
     customerMessage: "Loại này có hiệu quả không?",
-    draftReply:
-      "Dạ Stopirex hỗ trợ kiểm soát mồ hôi, nhưng hiệu quả tùy cơ địa và bên em không cam kết ạ.",
+    draftReply: "Dạ Stopirex hỗ trợ kiểm soát mồ hôi, nhưng hiệu quả tùy cơ địa và bên em không cam kết ạ.",
     baseReply,
     state,
   });
@@ -1109,8 +1094,7 @@ test("handoff mềm về khuyến mãi không làm LLM bị bỏ qua ở lượt
 });
 
 test("commerce guard chặn LLM tự thêm giảm giá hoặc freeship", async () => {
-  const baseReply =
-    "Dạ giá hiện tại là 285.000đ/lọ. Mình muốn chọn 1 lọ trải nghiệm không ạ?";
+  const baseReply = "Dạ giá hiện tại là 285.000đ/lọ. Mình muốn chọn 1 lọ trải nghiệm không ạ?";
   const bridge = new CodexLlmBridge({
     enabled: true,
     runner: async () =>
@@ -1129,12 +1113,10 @@ test("commerce guard chặn LLM tự thêm giảm giá hoặc freeship", async (
 });
 
 test("direction guard không cho bản viết lại làm mất câu dẫn chốt bước", async () => {
-  const baseReply =
-    "Stopirex hỗ trợ kiểm soát mồ hôi khi dùng đúng cách. Mình muốn xem bảng giá không ạ?";
+  const baseReply = "Stopirex hỗ trợ kiểm soát mồ hôi khi dùng đúng cách. Mình muốn xem bảng giá không ạ?";
   const bridge = new CodexLlmBridge({
     enabled: true,
-    runner: async () =>
-      "Stopirex hỗ trợ kiểm soát mồ hôi khi dùng đúng cách.",
+    runner: async () => "Stopirex hỗ trợ kiểm soát mồ hôi khi dùng đúng cách.",
   });
 
   const result = await bridge.enhance({
@@ -1184,8 +1166,7 @@ test("Codex viết lại mở đầu bị fallback nếu làm mất lựa chọn
     enabled: true,
     runner: async () => "Dạ mình muốn tư vấn theo hướng nào trước?",
   });
-  const baseReply =
-    "Dạ mình chọn giúp em:\n1. Tư vấn tình trạng\n2. Xem bảng giá";
+  const baseReply = "Dạ mình chọn giúp em:\n1. Tư vấn tình trạng\n2. Xem bảng giá";
   const result = await bridge.enhanceOpening({
     baseReply,
     variantId: "A.choice",
@@ -1402,8 +1383,7 @@ test("semantic parser nhận intent so sánh sản phẩm", () => {
 test("Codex composer fallback nếu làm mất mốc dùng giãn cách", async () => {
   const bridge = new CodexLlmBridge({
     enabled: true,
-    runner: async () =>
-      "Dạ Stopirex là dòng ngăn tiết mồ hôi chuyên sâu, khác lăn thông thường ạ.",
+    runner: async () => "Dạ Stopirex là dòng ngăn tiết mồ hôi chuyên sâu, khác lăn thông thường ạ.",
   });
   const result = await bridge.enhance({
     customerMessage: "Khác gì lăn truyền thống?",
@@ -1422,8 +1402,7 @@ test("Codex chấp nhận cách viết tự nhiên tương đương của tần 
       "Stopirex dùng buổi tối khoảng 2 đến 3 lần mỗi tuần. Mình đang dùng lăn nách hằng ngày không?",
   });
   const result = await bridge.enhanceOpening({
-    baseReply:
-      "Stopirex dùng buổi tối 2–3 lần/tuần. Mình đang dùng lăn nách hằng ngày không?",
+    baseReply: "Stopirex dùng buổi tối 2–3 lần/tuần. Mình đang dùng lăn nách hằng ngày không?",
     variantId: "C.prior",
   });
 

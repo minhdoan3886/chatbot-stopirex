@@ -43,6 +43,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Đối tượng sử dụng: phụ nữ mang thai",
       content: "Dạ phụ nữ đang mang thai nên tham khảo ý kiến bác sĩ trước khi sử dụng Stopirex ạ.",
+      searchAliases: ["mẹ bầu dùng Stopirex", "bà bầu", "đang có thai", "đang mang thai"],
       sourceRow: 5,
     },
     {
@@ -51,6 +52,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Đối tượng sử dụng: phụ nữ đang cho con bú",
       content: "Dạ phụ nữ đang cho con bú nên tham khảo ý kiến bác sĩ trước khi sử dụng Stopirex ạ.",
+      searchAliases: ["mẹ đang cho con bú", "nuôi con bằng sữa mẹ"],
       sourceRow: 6,
     },
     {
@@ -69,6 +71,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       title: "Cách sử dụng Stopirex đúng hướng dẫn",
       content:
         "Dùng vào buổi tối khi vùng da sạch và khô hoàn toàn. Lăn một lớp mỏng, dùng 2–3 lần/tuần theo hướng dẫn. Không dùng trên da đang trầy xước, rát hoặc ngứa; sau cạo hoặc wax cần chờ ít nhất 24 giờ.",
+      searchAliases: ["cách dùng", "hướng dẫn sử dụng", "dùng Stopirex như thế nào"],
       sourceRow: 8,
     },
     {
@@ -96,6 +99,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       title: "Thời gian sử dụng của một lọ",
       content:
         "Một lọ Stopirex thường dùng được khoảng 3–4 tháng khi lăn một lớp mỏng khoảng 2–3 lần/tuần theo hướng dẫn. Thời gian thực tế có thể chênh lệch tùy lượng dùng mỗi lần.",
+      searchAliases: ["một lọ dùng bao lâu", "một lọ dùng mấy tháng"],
       sourceRow: 11,
     },
     {
@@ -113,7 +117,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Xác nhận sản phẩm chính hãng trước khi mua",
       content:
-        "Sản phẩm Stopirex bên em cung cấp là hàng chính hãng. Khi nhận hàng, khách nên đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi; nếu thông tin không khớp, khách có quyền từ chối nhận và liên hệ bên em để kiểm tra. Không dùng cách diễn đạt 'đơn đặt trực tiếp được gửi đúng hàng chính hãng' vì có thể gây hiểu rằng sản phẩm ở kênh khác là hàng giả; không kết luận về hàng từ kênh khác khi chưa kiểm tra.",
+        "Sản phẩm Stopirex bên em cung cấp là hàng chính hãng. Khi nhận hàng, khách nên đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi; nếu thông tin không khớp, khách có quyền từ chối nhận và liên hệ bên em để kiểm tra.",
+      searchAliases: ["hàng thật", "hàng giả", "fake", "có chính hãng không", "đảm bảo chính hãng"],
+      responseGuidance:
+        "Không diễn đạt rằng chỉ đơn đặt trực tiếp mới được gửi hàng chính hãng. Không kết luận sản phẩm từ kênh khác là thật hay giả khi chưa kiểm tra.",
       sourceRow: 13,
     },
     {
@@ -122,7 +129,8 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Nếu xuất hiện rát, ngứa hoặc đỏ da sau khi dùng",
       content:
-        "Nếu sau khi lăn mà vùng da xuất hiện rát, ngứa hoặc đỏ, khách nên tạm ngưng sử dụng và không lăn lại khi da còn khó chịu. Khách cần nhắn lại để được kiểm tra tình trạng cụ thể.",
+        "Nếu khách đang hỏi trước về tình huống có thể xảy ra: khi vùng da xuất hiện rát, ngứa hoặc đỏ sau khi lăn, khách nên tạm ngưng sử dụng, không lăn lại khi da còn khó chịu và nhắn lại để được kiểm tra tình trạng cụ thể.",
+      searchAliases: ["nếu bị rát", "nếu bị ngứa", "lỡ bị đỏ da", "có bị kích ứng không"],
       sourceRow: 14,
     },
     {
@@ -158,7 +166,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Nguồn gốc và hồ sơ pháp lý",
       content:
-        "Stopirex có Phiếu công bố sản phẩm mỹ phẩm số 181339/22/CBMP-QLD, ngày tiếp nhận 12/09/2022, giá trị 5 năm kể từ ngày cấp. Hồ sơ ghi sản phẩm được sản xuất, đóng gói và xuất khẩu từ Pháp; đơn vị sản xuất/đóng gói là PREVOST LABORATORY CONCEPT. Sản phẩm có Phiếu kết quả thử nghiệm VNTEST mã DV142210268/01 ngày 17/09/2025. Chỉ nói sản phẩm có hồ sơ công bố và kết quả thử nghiệm; không diễn đạt thành cơ quan nhà nước chứng nhận hiệu quả hoặc bảo đảm tuyệt đối an toàn.",
+        "Stopirex có Phiếu công bố sản phẩm mỹ phẩm số 181339/22/CBMP-QLD, ngày tiếp nhận 12/09/2022, giá trị 5 năm kể từ ngày cấp. Hồ sơ ghi sản phẩm được sản xuất, đóng gói và xuất khẩu từ Pháp; đơn vị sản xuất/đóng gói là PREVOST LABORATORY CONCEPT. Sản phẩm có Phiếu kết quả thử nghiệm VNTEST mã DV142210268/01 ngày 17/09/2025.",
+      searchAliases: ["giấy tờ", "hồ sơ công bố", "pháp lý", "nguồn gốc Pháp"],
+      responseGuidance:
+        "Chỉ nói sản phẩm có hồ sơ công bố và kết quả thử nghiệm; không diễn đạt thành cơ quan nhà nước chứng nhận hiệu quả hoặc bảo đảm tuyệt đối an toàn.",
       sourceRow: 18,
     },
     {
@@ -230,7 +241,9 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Vùng sử dụng được hướng dẫn: vùng nách",
       content:
-        "Stopirex hiện được hướng dẫn dùng cho vùng da dưới cánh tay. Không tự hướng dẫn khách lăn sản phẩm lên lòng bàn tay hoặc lòng bàn chân. Trường hợp mồ hôi tay hoặc chân cần sản phẩm hay hướng dẫn phù hợp riêng; nếu tình trạng nhiều và ảnh hưởng sinh hoạt, khách nên hỏi bác sĩ da liễu.",
+        "Stopirex hiện được hướng dẫn dùng cho vùng da dưới cánh tay. Với mồ hôi tay hoặc chân, hệ thống chưa có sản phẩm hoặc cách dùng cho vùng này đã được duyệt; nếu tình trạng nhiều và ảnh hưởng sinh hoạt, khách nên hỏi bác sĩ da liễu.",
+      searchAliases: ["mồ hôi tay", "mồ hôi chân", "lòng bàn tay", "lòng bàn chân", "dùng ở đâu"],
+      responseGuidance: "Không hướng dẫn khách lăn Stopirex lên lòng bàn tay hoặc lòng bàn chân.",
       sourceRow: 52,
     },
     {
@@ -248,7 +261,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "price",
       title: "Giá và phương án mua đã duyệt",
       content:
-        "Giá Facebook đã duyệt: 1 lọ 285.000đ và phí giao 30.000đ; combo 2 lọ 510.000đ, combo 3 lọ 750.000đ, combo 4 lọ 1.000.000đ, combo 5 lọ 1.250.000đ. Khi khách hỏi giá chung, chỉ báo phương án 1, 2, 3 lọ và quà tặng; giá combo 4 hoặc 5 lọ chỉ trả lời khi khách hỏi đúng số lượng đó. Combo 2–5 lọ miễn phí giao. Mọi đơn từ 2 lọ trở lên được tặng đúng 1 túi đa năng vải dệt Stopirex; quà tính theo đơn hàng, không tính theo số lọ và không cộng nhiều túi khi mua nhiều lọ. Đơn 1 lọ được duyệt miễn phí giao khi khách mặc cả hoặc từ lúc hệ thống bắt đầu gửi follow-up. Chỉ nhắc việc chuyển tư vấn viên cho nhu cầu từ 6 lọ trở lên khi khách thực sự hỏi số lượng này; bot không tự chốt đơn.",
+        "Giá Facebook đã duyệt: 1 lọ 285.000đ và phí giao 30.000đ; combo 2 lọ 510.000đ; combo 3 lọ 750.000đ; combo 4 lọ 1.000.000đ; combo 5 lọ 1.250.000đ. Combo 2–5 lọ miễn phí giao. Mọi đơn từ 2 lọ trở lên được tặng đúng 1 túi đa năng vải dệt Stopirex; quà tính theo đơn hàng, không tính theo số lọ. Đơn 1 lọ được miễn phí giao khi khách mặc cả hoặc từ lúc hệ thống bắt đầu gửi follow-up.",
+      searchAliases: ["giá bao nhiêu", "báo giá", "giá một lọ", "giá combo", "phí giao hàng"],
+      responseGuidance:
+        "Nếu khách hỏi giá chung, chỉ báo phương án 1–3 lọ và quà tặng. Chỉ báo combo 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó. Chỉ nhắc chuyển tư vấn viên khi khách thực sự hỏi từ 6 lọ trở lên. Không tự chốt đơn.",
       sourceRow: 25,
     },
     {
@@ -257,7 +273,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Quà tặng túi đa năng cho đơn từ 2 lọ",
       content:
-        "Đơn hàng mua từ 2 lọ Stopirex trở lên được tặng 1 túi đa năng vải dệt Stopirex. Mỗi đơn hàng chỉ tặng 1 túi, không phải mỗi lọ một túi; mua 2, 3, 4 hoặc 5 lọ đều nhận đúng 1 túi. Đơn 1 lọ không áp dụng quà tặng này. Từ 6 lọ trở lên chuyển tư vấn viên hỗ trợ riêng nhưng bot không được tự tăng số túi quà.",
+        "Đơn hàng mua từ 2 lọ Stopirex trở lên được tặng 1 túi đa năng vải dệt Stopirex. Mỗi đơn hàng chỉ tặng 1 túi, không phải mỗi lọ một túi. Đơn 1 lọ không áp dụng quà tặng này.",
+      searchAliases: ["quà tặng", "tặng túi", "mua hai lọ có quà", "mỗi lọ một túi"],
+      responseGuidance:
+        "Không tự tăng số túi theo số lọ. Chỉ nhắc chuyển tư vấn viên cho số lượng từ 6 lọ khi khách thực sự hỏi số lượng đó.",
       sourceRow: 54,
     },
     {
@@ -276,6 +295,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       title: "Nghi phản ứng dị ứng sau khi dùng",
       content:
         "Nếu khách xuất hiện ngứa, đỏ, phát ban, nổi mề đay, sưng hoặc khó chịu bất thường sau khi dùng: hướng dẫn ngưng sản phẩm ngay, không lăn lại và liên hệ nhân viên để ghi nhận sản phẩm, thời điểm dùng, lượng dùng, triệu chứng và ảnh vùng da nếu phù hợp. Khuyên khách liên hệ bác sĩ để được đánh giá. Nếu có khó thở, khò khè, choáng, khó nuốt hoặc sưng môi/mặt/lưỡi thì cần đi cấp cứu ngay. Bot không tự chẩn đoán nguyên nhân và không khuyên khách thử lại sản phẩm.",
+      searchAliases: ["đang bị ngứa đỏ", "bị ngứa sau khi dùng", "đang nổi mề đay", "bị sưng sau khi lăn"],
       sourceRow: 27,
     },
     {
@@ -446,7 +466,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "script",
       title: "Kết quả thử nghiệm hiệu quả đến 72 giờ và cách tư vấn",
       content:
-        "Mốc đến 72 giờ là kết quả thử nghiệm hiệu quả của Stopirex trên nhóm mẫu thử khi sử dụng đúng hướng dẫn; tài liệu hiện có chưa nêu cỡ mẫu nên bot không tự thêm số người hoặc tỷ lệ phần trăm. Khi tư vấn có thể nói: 'Theo thử nghiệm sản phẩm, Stopirex hỗ trợ kiểm soát mồ hôi đến 72 giờ khi dùng đúng hướng dẫn. Thời gian duy trì thực tế có thể khác theo mức tiết mồ hôi, cường độ vận động, môi trường và cách sử dụng.' Không nói mọi khách chắc chắn khô tuyệt đối đủ 72 giờ, không rút gọn thành câu thoái thác chung chung 'tùy cơ địa', và không dùng mốc này thay thế quy trình xử lý khiếu nại. Khi khách hỏi 'bao lâu thấy hiệu quả', phải truy xuất cùng knowledge effectiveness-usage-journey để trả đủ lộ trình, không chỉ ném ra mốc 72 giờ.",
+        "Mốc đến 72 giờ là kết quả thử nghiệm hiệu quả của Stopirex trên nhóm mẫu thử khi sử dụng đúng hướng dẫn. Thời gian duy trì thực tế có thể khác theo mức tiết mồ hôi, cường độ vận động, môi trường và cách sử dụng. Tài liệu hiện có chưa nêu cỡ mẫu.",
+      searchAliases: ["hiệu quả 72 giờ", "tác dụng 72 giờ", "duy trì 72 giờ"],
+      responseGuidance:
+        "Không tự thêm cỡ mẫu hoặc tỷ lệ phần trăm; không bảo đảm mọi khách khô tuyệt đối đủ 72 giờ; không chỉ dùng câu 'tùy cơ địa'. Nếu khách hỏi bao lâu bắt đầu thấy hiệu quả, ưu tiên nguồn effectiveness-usage-journey.",
       sourceRow: 45,
     },
     {
@@ -455,7 +478,15 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "script",
       title: "Lộ trình bắt đầu, thời gian duy trì và tần suất sử dụng",
       content:
-        "Khi dùng đúng hướng dẫn, khách có thể bắt đầu cảm nhận vùng nách khô thoáng hơn trong tuần đầu. Mốc hỗ trợ kiểm soát đến 72 giờ là kết quả thử nghiệm trên nhóm mẫu cho mỗi lần dùng đúng hướng dẫn, không phải cam kết mọi người khô tuyệt đối đủ 72 giờ. Giai đoạn đầu dùng buổi tối trên da sạch, khô hoàn toàn, lăn mỏng 2–3 lần/tuần; khi tình trạng ổn định thì duy trì giãn cách khoảng 2–3 ngày/lần theo hướng dẫn. Sản phẩm hỗ trợ kiểm soát mồ hôi trong quá trình duy trì, không phải phương pháp loại bỏ tuyến mồ hôi và không có cam kết khỏi vĩnh viễn. Khi trả lời câu hỏi về 'bao lâu/hiệu quả', phải nêu đủ phần bắt đầu cảm nhận, mốc thử nghiệm 72 giờ có điều kiện và tần suất duy trì liên quan; không chỉ trả một con số rời rạc.",
+        "Khi dùng đúng hướng dẫn, khách có thể bắt đầu cảm nhận vùng nách khô thoáng hơn trong tuần đầu. Mốc hỗ trợ kiểm soát đến 72 giờ là kết quả thử nghiệm trên nhóm mẫu cho mỗi lần dùng đúng hướng dẫn, không phải cam kết mọi người khô tuyệt đối đủ 72 giờ. Giai đoạn đầu dùng buổi tối trên da sạch, khô hoàn toàn, lăn mỏng 2–3 lần/tuần; khi tình trạng ổn định thì duy trì giãn cách khoảng 2–3 ngày/lần theo hướng dẫn. Sản phẩm hỗ trợ kiểm soát mồ hôi trong quá trình duy trì, không phải phương pháp loại bỏ tuyến mồ hôi và không có cam kết khỏi vĩnh viễn.",
+      searchAliases: [
+        "bao lâu thấy hiệu quả",
+        "mấy ngày thấy hiệu quả",
+        "khi nào thấy khô",
+        "lộ trình sử dụng",
+      ],
+      responseGuidance:
+        "Khi khách hỏi bao lâu thấy hiệu quả, trả đủ thời điểm bắt đầu cảm nhận, mốc 72 giờ có điều kiện và tần suất duy trì; không chỉ trả một con số rời rạc.",
       sourceRow: 46,
     },
     {
@@ -464,7 +495,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Giao hàng nội địa, thời gian nhận và kiểm tra hàng",
       content:
-        "Khu vực Hà Nội thường nhận hàng trong khoảng 1–2 ngày làm việc. Đây là mốc vận hành tiêu chuẩn, thời tiết hoặc vận hành thực tế có thể làm chậm hơn; thời gian chính xác được theo dõi theo vận đơn sau khi lên đơn. Các tỉnh/thành khác chưa có bảng ETA cố định nên bot không tự hứa số ngày. Khi nhận hàng, khách được kiểm tra bao bì ngoài, tem, đúng sản phẩm Stopirex và thông tin người gửi; không mở seal hoặc tem niêm phong của chính sản phẩm trước khi xác nhận nhận hàng. Nếu khách hỏi đồng thời ETA và kiểm hàng, trả lời đủ cả hai ý; không fallback sang bảng giá.",
+        "Khu vực Hà Nội thường nhận hàng trong khoảng 1–2 ngày làm việc. Đây là mốc vận hành tiêu chuẩn; thời tiết hoặc vận hành thực tế có thể làm chậm hơn và thời gian chính xác được theo dõi theo vận đơn sau khi lên đơn. Các tỉnh/thành khác chưa có bảng thời gian giao cố định. Khi nhận hàng, khách được kiểm tra bao bì ngoài, tem, đúng sản phẩm Stopirex và thông tin người gửi; không mở seal hoặc tem niêm phong của chính sản phẩm trước khi xác nhận nhận hàng.",
+      searchAliases: ["bao lâu nhận hàng", "mấy ngày giao", "kiểm hàng", "bóc hàng", "Hà Nội giao hàng"],
+      responseGuidance:
+        "Không tự hứa số ngày cho tỉnh/thành khác. Nếu khách hỏi đồng thời thời gian giao và kiểm hàng, trả lời đủ cả hai ý; không chuyển sang báo giá.",
       sourceRow: 47,
     },
     {
@@ -473,7 +507,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "script",
       title: "Cách tư vấn Alcohol và mùi được doanh nghiệp phê duyệt",
       content:
-        "Nội dung được doanh nghiệp phê duyệt ngày 14/08/2026: Stopirex có Alcohol, dùng làm dung môi trong ngưỡng an toàn của công thức; không được nói sản phẩm không cồn. Sản phẩm có mùi đặc trưng nhẹ và bay nhanh, không phải hương thơm dùng để che mùi; không được nói hoàn toàn không mùi. Không tự nêu phần trăm Alcohol vì hồ sơ hiện có không công bố nồng độ cụ thể.",
+        "Stopirex có Alcohol, dùng làm dung môi trong ngưỡng an toàn của công thức. Sản phẩm có mùi đặc trưng nhẹ và bay nhanh, không phải hương thơm dùng để che mùi. Hồ sơ hiện có không công bố nồng độ Alcohol cụ thể.",
+      searchAliases: ["có cồn không", "chứa Alcohol", "mùi có nồng không", "có mùi không"],
+      responseGuidance:
+        "Không nói sản phẩm không cồn hoặc hoàn toàn không mùi. Chỉ nhắc việc chưa có nồng độ Alcohol cụ thể khi khách hỏi tỷ lệ.",
       sourceRow: 48,
     },
     {
@@ -491,7 +528,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Chương trình hiện hành không kèm quà sữa tắm",
       content:
-        "Chương trình bán lẻ hiện hành không có quà tặng sữa tắm. Quà đang áp dụng là 1 túi đa năng vải dệt Stopirex cho mỗi đơn từ 2 lọ trở lên; mỗi đơn chỉ nhận đúng 1 túi. Ưu đãi đã duyệt gồm: 1 lọ 285.000đ cộng 30.000đ phí giao; 2 lọ 510.000đ miễn phí giao; 3 lọ 750.000đ miễn phí giao; 4 lọ 1.000.000đ miễn phí giao; 5 lọ 1.250.000đ miễn phí giao. Không nhận lỗi hoặc xác nhận một quà tặng cũ chỉ từ lời kể của khách; chỉ nói chính sách hiện đang áp dụng.",
+        "Chương trình bán lẻ hiện hành không có quà tặng sữa tắm. Quà đang áp dụng là 1 túi đa năng vải dệt Stopirex cho mỗi đơn từ 2 lọ trở lên; mỗi đơn chỉ nhận đúng 1 túi.",
+      searchAliases: ["quà sữa tắm", "có tặng sữa tắm không", "quà cũ"],
+      responseGuidance:
+        "Không nhận lỗi hoặc xác nhận một quà tặng cũ chỉ từ lời kể của khách; chỉ nói chính sách hiện đang áp dụng.",
       sourceRow: 50,
     },
     {

@@ -88,7 +88,12 @@ export class MetaChatBrain {
         entities: liveKnowledge,
         limit: 3,
       });
-      knowledge = matches.map(({ entity: { id, title, content } }) => ({ id, title, content }));
+      knowledge = matches.map(({ entity: { id, title, content, responseGuidance } }) => ({
+        id,
+        title,
+        content,
+        ...(responseGuidance ? { responseGuidance } : {}),
+      }));
       const rawLlmResult = await this.llm.interpret({
         customerMessage: input.text,
         state: before,

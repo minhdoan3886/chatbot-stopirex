@@ -810,7 +810,12 @@ function retrieveApprovedKnowledge(query: string) {
     query,
     entities: approvedKnowledge,
     limit: 3,
-  }).map(({ id, title, content }) => ({ id, title, content }));
+  }).map(({ id, title, content, responseGuidance }) => ({
+    id,
+    title,
+    content,
+    ...(responseGuidance ? { responseGuidance } : {}),
+  }));
 }
 
 /**

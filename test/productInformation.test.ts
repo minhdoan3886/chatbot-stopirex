@@ -197,3 +197,29 @@ test("retrieval đưa đúng hồ sơ mới vào các câu hỏi thành phần, 
   assert.equal(topIds("mẹ bầu dùng được k e")[0], "audience-pregnancy");
   assert.equal(topIds("phụ nữ đang bầu có dùng dược k")[0], "audience-pregnancy");
 });
+
+test("retrieval ưu tiên đúng knowledge hẹp và không để hướng dẫn nội bộ làm nhiễu", () => {
+  const currentTenant = tenantId("knowledge-precision");
+  const entities = stopirexApprovedKnowledge(currentTenant);
+  const topIds = (query: string) =>
+    retrieveKnowledgeMatches({ tenantId: currentTenant, query, entities, limit: 3 }).map(
+      (item) => item.entity.id,
+    );
+
+  assert.equal(topIds("giá bao nhiêu")[0], "pricing-approved-options-2026-08");
+  assert.equal(topIds("có cồn không")[0], "business-approved-alcohol-odor-guidance-2026-08");
+  assert.equal(topIds("bao lâu thấy hiệu quả")[0], "effectiveness-usage-journey");
+  assert.deepEqual(topIds("mồ hôi tay dùng được không"), ["usage-approved-area-underarms-only"]);
+  assert.deepEqual(topIds("cách dùng như nào"), ["usage-general"]);
+  assert.equal(topIds("bị ngứa đỏ sau khi dùng")[0], "care-suspected-allergic-reaction");
+
+  const pricing = entities.find((item) => item.id === "pricing-approved-options-2026-08");
+  assert.ok(pricing?.responseGuidance?.includes("chỉ báo phương án 1–3 lọ"));
+  assert.equal(pricing?.content.includes("Khi khách hỏi giá chung"), false);
+  assert.equal(
+    entities
+      .find((item) => item.id === "product-training-72h-conditional-claim")
+      ?.content.includes("bao lâu thấy hiệu quả"),
+    false,
+  );
+});

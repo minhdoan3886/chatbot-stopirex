@@ -483,7 +483,6 @@ test("LLM ưu tiên trả lời mồ hôi khi đơn đang dở ở bước chọ
       evidence: ["lăn cái này có tốt k", "a ra nhiều mồ hôi", "ngồi ko cũng ướt"],
       slots: {
         primarySymptom: "sweat",
-        workContext: "rest_or_stress",
       },
       actions: [
         {

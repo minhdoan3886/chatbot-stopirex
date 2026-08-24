@@ -3603,7 +3603,12 @@ function productEffectReply(
       "Dạ Stopirex hỗ trợ kiểm soát tiết mồ hôi, giúp giảm nách ẩm và áo bị ướt ạ. Với mức mồ hôi nặng đến ướt sũng, mình dùng buổi tối khi da sạch, khô, lăn mỏng và theo dõi 2 tuần; nếu chưa cải thiện, nhắn bên em kiểm tra cách dùng nhé.";
     return nextQuestion ? `${answer}\n\n${nextQuestion}` : answer;
   }
-  if ((topic === "sweat" || topic === "both") && workContext === "rest_or_stress") {
+  const restingSweatContext =
+    workContext === "rest_or_stress" ||
+    /phong lanh|dieu hoa|van phong|ngoi yen|ngoi mat|ngoi (?:khong|ko|k)(?: cung)?|it van dong|cang thang/.test(
+      customerText,
+    );
+  if ((topic === "sweat" || topic === "both") && restingSweatContext) {
     const answer =
       "Dạ có ạ. Việc mình ngồi yên mà vùng nách vẫn ướt cho thấy lượng mồ hôi đang khá nhiều. Stopirex hỗ trợ kiểm soát tiết mồ hôi, giúp giảm tình trạng ẩm và ướt áo. Mình dùng buổi tối khi da sạch, khô, lăn mỏng và theo dõi trong 2 tuần đầu; nếu chưa cải thiện, nhắn bên em kiểm tra cách dùng ạ.";
     return nextQuestion ? `${answer}\n\n${nextQuestion}` : answer;

@@ -46,6 +46,7 @@ function fixture(options: {
   >();
   const followupSchedules: Array<Record<string, unknown>> = [];
   const followupCancellations: Array<Record<string, unknown>> = [];
+  const inboxPushes: Array<Record<string, unknown>> = [];
   let newerInbound = options.newerInbound ?? false;
   let sendAttempts = 0;
   const store: MetaInboundStore = {
@@ -142,6 +143,12 @@ function fixture(options: {
     liveSendEnabled: options.live,
     staffName: "Mai Lan",
     openingVariantId: "AUTO.dynamic",
+    orderInbox: {
+      async push(input) {
+        inboxPushes.push(input as unknown as Record<string, unknown>);
+        return input;
+      },
+    },
     ...(options.followups ? { followups } : {}),
   });
   return {
@@ -151,6 +158,7 @@ function fixture(options: {
     runtimeUpdates,
     followupSchedules,
     followupCancellations,
+    inboxPushes,
     setNewerInbound(value: boolean) {
       newerInbound = value;
     },
@@ -182,6 +190,27 @@ test("Meta inbound chỉ lưu dữ liệu khi công tắc gửi thật đang t�
   assert.deepEqual(result, { status: "ingested", replyCount: 0 });
   assert.deepEqual(context.sent, []);
   assert.deepEqual(context.processed, ["message-1"]);
+});
+
+test("Meta xác nhận đơn ghi vào inbox và không gửi mã demo", async () => {
+  const context = fixture({ live: true });
+  await context.processor.processBatch([job({ eventId: "order-1", text: "Giá bao nhiêu?" })]);
+  await context.processor.processBatch([job({ eventId: "order-2", text: "Mình lấy combo 2 lọ" })]);
+  await context.processor.processBatch([
+    job({
+      eventId: "order-3",
+      text: "Nguyễn Văn A, 0912345678, số 12 Đội Cấn, phường Đội Cấn, quận Ba Đình, Hà Nội",
+    }),
+  ]);
+  const confirmed = await context.processor.processBatch([job({ eventId: "order-4", text: "ĐỒNG Ý" })]);
+
+  assert.equal(confirmed.status, "replied");
+  assert.equal(context.inboxPushes.length, 1);
+  assert.equal(context.inboxPushes[0]?.sessionId, "page-1:customer-1");
+  assert.ok(context.inboxPushes[0]?.confirmedAt instanceof Date);
+  assert.equal((context.inboxPushes[0]?.draft as { phone?: string })?.phone, "0912345678");
+  assert.ok(context.sent.some((reply) => /đã ghi nhận thông tin đơn/iu.test(reply)));
+  assert.ok(context.sent.every((reply) => !/DEMO-|SPX-DEMO|đã lên đơn thành công/iu.test(reply)));
 });
 
 test("Meta inbound dùng brain để trả lời và lưu state khi đã bật gửi", async () => {

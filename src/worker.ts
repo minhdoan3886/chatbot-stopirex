@@ -11,6 +11,7 @@ import { StructuredLogger } from "./services/logger.js";
 import { MetaChatBrain } from "./services/metaChatBrain.js";
 import { MetaInboundProcessor, type MetaInboundJob } from "./services/metaInboundProcessor.js";
 import { PgFollowupRepository } from "./services/followupRepository.js";
+import { OrderInboxService } from "./services/orderInbox.js";
 
 const queueTopic = "inbound";
 const queueGroup = "meta-inbound-v1";
@@ -32,6 +33,7 @@ if (!env.redisUrl || !env.databaseUrl) {
   const redis = new RedisRuntime(env.redisUrl);
   const postgres = new PostgresStore(env.databaseUrl);
   const followups = new PgFollowupRepository(postgres.pool);
+  const orderInbox = new OrderInboxService(postgres.pool);
   const chat = new DemoChatService();
   const llm = CodexLlmBridge.fromEnvironment(
     process.env,
@@ -55,6 +57,7 @@ if (!env.redisUrl || !env.databaseUrl) {
     liveSendEnabled: env.metaLiveSendEnabled,
     staffName: env.metaStaffName,
     openingVariantId: parseOpeningVariant(env.metaOpeningVariant),
+    orderInbox,
     ...(env.followupMode !== "disabled" ? { followups } : {}),
   });
 

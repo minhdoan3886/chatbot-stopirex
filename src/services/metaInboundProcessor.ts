@@ -11,6 +11,8 @@ import type { DemoChatService } from "./demoChat.js";
 import { MetaChatBrain } from "./metaChatBrain.js";
 import type { StructuredLogger } from "./logger.js";
 import type { FollowupCycleSchedule } from "./followupRepository.js";
+import type { OrderDraft } from "../domain/orders.js";
+import type { PushOrderInboxInput } from "./orderInbox.js";
 
 export type FollowupCoordinator = {
   cancelConversation(input: {
@@ -19,6 +21,10 @@ export type FollowupCoordinator = {
     reason: string;
   }): Promise<number>;
   scheduleCycle(input: FollowupCycleSchedule): Promise<{ cycleId: string; created: boolean }>;
+};
+
+export type OrderInboxWriter = {
+  push(input: PushOrderInboxInput): Promise<unknown>;
 };
 
 export type MetaInboundJob = {
@@ -60,6 +66,7 @@ export class MetaInboundProcessor {
       liveSendEnabled: boolean;
       staffName: string;
       openingVariantId: OpeningVariantId;
+      orderInbox?: OrderInboxWriter;
       followups?: FollowupCoordinator;
     },
   ) {}
@@ -85,6 +92,7 @@ export class MetaInboundProcessor {
       pageId: first.pageId,
       externalCustomerId: first.senderId,
     });
+    const sessionId = `${first.pageId}:${first.senderId}`;
     const contentJobs = jobs.filter(
       (job) => job.kind === "text" || job.kind === "image" || job.kind === "postback",
     );
@@ -140,6 +148,10 @@ export class MetaInboundProcessor {
       let replyCount = 0;
       let lastMessageId = existingOutbound.lastMessageId;
       let suppressed = false;
+      await this.pushCreatedOrder({
+        sessionId,
+        state: conversation.runtimeState,
+      });
       if (existingOutbound.status !== "sent") {
         const dispatched = await this.dispatchOutbound(
           first,
@@ -198,7 +210,6 @@ export class MetaInboundProcessor {
       return { status: "paused", replyCount: dispatched.count };
     }
 
-    const sessionId = `${first.pageId}:${first.senderId}`;
     this.options.chat.restoreSession(
       sessionId,
       conversation.runtimeState,
@@ -259,6 +270,10 @@ export class MetaInboundProcessor {
         texts: result.replies.slice(0, 2),
       },
     });
+    await this.pushCreatedOrder({
+      sessionId,
+      state: result.state,
+    });
     const dispatched = await this.dispatchOutbound(
       first,
       conversation,
@@ -286,6 +301,7 @@ export class MetaInboundProcessor {
   private context(): {
     identity: { salutation: "anh/chị"; staffFirstName: string };
     openingVariantId: OpeningVariantId;
+    orderConfirmationMode: "inbox";
   } {
     return {
       identity: {
@@ -293,7 +309,36 @@ export class MetaInboundProcessor {
         staffFirstName: this.options.staffName,
       },
       openingVariantId: this.options.openingVariantId,
+      orderConfirmationMode: "inbox",
     };
+  }
+
+  private async pushCreatedOrder(input: { sessionId: string; state: unknown }): Promise<void> {
+    if (!this.options.orderInbox || !input.state || typeof input.state !== "object") return;
+    const state = input.state as {
+      pipeline?: string;
+      orderFlowStatus?: string;
+      orderDraft?: OrderDraft;
+      order?: OrderDraft;
+    };
+    const draft = state.orderDraft ?? state.order;
+    const created = state.orderFlowStatus === "created" || state.pipeline === "6.Đã tạo đơn";
+    if (!created || !draft?.customerConfirmedAt) return;
+    const confirmedAt =
+      draft.customerConfirmedAt instanceof Date
+        ? draft.customerConfirmedAt
+        : new Date(draft.customerConfirmedAt);
+    if (Number.isNaN(confirmedAt.getTime())) throw new Error("invalid_order_confirmation_timestamp");
+    await this.options.orderInbox.push({
+      sessionId: input.sessionId,
+      channel: "meta",
+      draft,
+      confirmedAt,
+    });
+    this.options.logger.log("info", "order_inbox_recorded", {
+      sessionId: input.sessionId,
+      confirmedAt: confirmedAt.toISOString(),
+    });
   }
 
   private async dispatchOutbound(

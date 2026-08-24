@@ -73,14 +73,12 @@ test("push() trả về record khi INSERT thành công", async () => {
   assert.equal(result.paymentMethod, "cod");
 });
 
-test("push() trả về record từ SELECT khi ON CONFLICT bắn ra (rows rỗng lần 1)", async () => {
-  let callCount = 0;
+test("push() dùng khóa idempotency ổn định khi retry", async () => {
+  const queries: string[] = [];
   const pool = {
-    async query(_text: string, _params?: unknown[]) {
-      callCount++;
-      // Lần 1 (INSERT): rows rỗng → ON CONFLICT
-      // Lần 2 (SELECT fallback): trả record
-      return { rows: callCount === 1 ? [] : [savedRecord] };
+    async query(text: string, _params?: unknown[]) {
+      queries.push(text);
+      return { rows: [savedRecord] };
     },
   };
   const service = new OrderInboxService(pool as never);
@@ -91,7 +89,8 @@ test("push() trả về record từ SELECT khi ON CONFLICT bắn ra (rows rỗng
     confirmedAt: new Date("2026-08-18T09:00:00.000Z"),
   });
 
-  assert.equal(callCount, 2, "Phải gọi SELECT fallback sau khi ON CONFLICT");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0]!, /ON CONFLICT \(session_id, idempotency_key\)/u);
   assert.equal(result.id, savedRecord.id);
   assert.equal(result.status, "pending");
 });
@@ -112,8 +111,9 @@ test("push() tự động điền channel mặc định là 'meta'", async () =>
     confirmedAt: new Date(),
   });
 
-  // Tham số thứ 2 (index 1) là channel
-  assert.equal(capturedParams[0]?.[1], "meta");
+  // Tham số thứ 3 (index 2) là channel; index 1 là idempotency key.
+  assert.equal(capturedParams[0]?.[2], "meta");
+  assert.equal(capturedParams[0]?.[1], `session-001:${capturedParams[0]?.[11]}`);
 });
 
 // ---------------------------------------------------------------------------

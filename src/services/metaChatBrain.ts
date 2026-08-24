@@ -72,10 +72,12 @@ export class MetaChatBrain {
     conversationId?: string;
     identity?: ConversationIdentity;
     openingVariantId?: OpeningVariantId;
+    orderConfirmationMode?: "sandbox" | "inbox";
   }): Promise<DemoChatResponse> {
     const context = {
       ...(input.identity ? { identity: input.identity } : {}),
       ...(input.openingVariantId ? { openingVariantId: input.openingVariantId } : {}),
+      ...(input.orderConfirmationMode ? { orderConfirmationMode: input.orderConfirmationMode } : {}),
     };
     const before = this.chat.peek(input.sessionId);
     const fastTransition = !this.llm.enabled || isFastTransition(input.text, before);

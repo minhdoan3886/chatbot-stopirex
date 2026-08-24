@@ -103,6 +103,7 @@ type DemoSession = {
   skillReason?: string;
   orderId?: string;
   trackingNumber?: string;
+  orderConfirmationMode: "sandbox" | "inbox";
   identity: ConversationIdentity;
   openingVariantId: OpeningVariantId;
   openingSelectionMode: "auto" | "manual";
@@ -217,6 +218,7 @@ export type DemoChatContext = {
   identity?: ConversationIdentity;
   openingVariantId?: OpeningVariantId;
   actionExecutionMode?: ActionExecutionMode;
+  orderConfirmationMode?: "sandbox" | "inbox";
 };
 
 export class DemoChatService {
@@ -657,9 +659,11 @@ export class DemoChatService {
       this.move(session, "order_created");
       session.signal = undefined;
       session.lastIntent = "buying";
-      session.orderId = `DEMO-${randomUUID().slice(0, 8).toUpperCase()}`;
-      session.trackingNumber = `SPX-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
-      return this.respond(session, [orderCreatingReply(), orderCreatedReply(session)]);
+      if (session.orderConfirmationMode === "sandbox") {
+        session.orderId = `DEMO-${randomUUID().slice(0, 8).toUpperCase()}`;
+        session.trackingNumber = `SPX-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
+      }
+      return this.respond(session, [orderCreatingReply(session), orderCreatedReply(session)]);
     }
 
     if (retailEscapeFromWholesale) {
@@ -1506,9 +1510,11 @@ export class DemoChatService {
       this.move(session, "order_created");
       session.signal = undefined;
       session.lastIntent = "buying";
-      session.orderId = `DEMO-${randomUUID().slice(0, 8).toUpperCase()}`;
-      session.trackingNumber = `SPX-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
-      return this.respond(session, [orderCreatingReply(), orderCreatedReply(session)]);
+      if (session.orderConfirmationMode === "sandbox") {
+        session.orderId = `DEMO-${randomUUID().slice(0, 8).toUpperCase()}`;
+        session.trackingNumber = `SPX-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
+      }
+      return this.respond(session, [orderCreatingReply(session), orderCreatedReply(session)]);
     }
 
     if (decision.route === "order_collection") {
@@ -2629,6 +2635,7 @@ function newSession(id: string, context: DemoChatContext = {}): DemoSession {
     orderCollectionPaused: false,
     freeShippingApproved: false,
     optedOut: false,
+    orderConfirmationMode: context.orderConfirmationMode ?? "sandbox",
     messages: 0,
     history: [],
     identity: { ...(context.identity ?? {}) },
@@ -2673,6 +2680,7 @@ function applyChatContext(session: DemoSession, context: DemoChatContext): void 
     session.openingSelectionMode = context.openingVariantId === "AUTO.dynamic" ? "auto" : "manual";
     delete session.openingStrategyReason;
   }
+  if (context.orderConfirmationMode) session.orderConfirmationMode = context.orderConfirmationMode;
 }
 
 function openingStage(variantId: OpeningVariantId): ConsultationState["stage"] {
@@ -6480,6 +6488,13 @@ function resolveOrderFlowStatus(session: DemoSession): NonNullable<DemoChatState
 
 function orderCreatedReply(session: DemoSession): string {
   const order = session.order;
+  if (session.orderConfirmationMode === "inbox") {
+    return [
+      "Dạ em đã ghi nhận thông tin đơn của mình rồi ạ ✅",
+      "",
+      "Bộ phận bán hàng sẽ kiểm tra và lên đơn trên hệ thống, sau đó gửi lại mã đơn cho mình ạ.",
+    ].join("\n");
+  }
   const trackingNumber = session.trackingNumber ?? "SPX-DEMO";
   return [
     "Dạ em đã lên đơn thành công rồi ạ ✅",
@@ -6503,7 +6518,10 @@ function orderCreatedReply(session: DemoSession): string {
   ].join("\n");
 }
 
-function orderCreatingReply(): string {
+function orderCreatingReply(session: DemoSession): string {
+  if (session.orderConfirmationMode === "inbox") {
+    return "Dạ em đang ghi nhận thông tin đơn để chuyển bộ phận bán hàng xử lý ạ.";
+  }
   return [
     "Dạ vâng, em xin phép lên đơn trên hệ thống cho mình ạ.",
     "",

@@ -9,6 +9,7 @@ import {
   extractCustomerQuestionClauses,
   isFastTransition,
   MetaChatBrain,
+  reconcileKnowledgeBackedPopulationSafety,
 } from "../src/services/metaChatBrain.js";
 import {
   MetaInboundProcessor,
@@ -270,11 +271,51 @@ test("Meta brain chỉ nhận câu trả lời AI có citation thuộc knowledge
   );
 });
 
-test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người khi Knowledge đã trả lời đủ", async () => {
+test("citation mang thai của LLM được ưu tiên hơn retrieval cho con bú đứng đầu", () => {
+  const reconciled = reconcileKnowledgeBackedPopulationSafety(
+    {
+      status: "interpreted" as const,
+      provider: "openai" as const,
+      model: "gpt-5.4-mini",
+      latencyMs: 10,
+      slots: {},
+      skill: "direct-answer" as const,
+      intent: "consultation" as const,
+      topic: "child_age" as const,
+      subject: "customer" as const,
+      affirmation: true,
+      replyTo: "offer_usage_guidance" as const,
+      actions: [
+        {
+          type: "answer_question" as const,
+          topic: "child_age",
+          source: "llm" as const,
+          confidence: 0.98,
+          evidence: ["phụ nữ đang bầu có dùng dược k"],
+        },
+      ],
+      knowledgeIds: ["audience-pregnancy"],
+      unsupportedQuestions: [],
+      draftReply: "Dạ phụ nữ mang thai nên tham khảo ý kiến bác sĩ trước khi dùng ạ.",
+    },
+    "audience-breastfeeding",
+  );
+
+  assert.equal(reconciled.intent, "safety");
+  assert.equal(reconciled.topic, "pregnancy");
+  assert.equal(reconciled.affirmation, false);
+  assert.equal(reconciled.replyTo, undefined);
+  assert.equal(reconciled.draftReply, undefined);
+  const answerAction = reconciled.actions?.find((action) => action.type === "answer_question");
+  assert.equal(answerAction?.type === "answer_question" ? answerAction.topic : undefined, "pregnancy");
+});
+
+test("câu hỏi đang bầu trong lúc thu đơn vẫn dùng câu Knowledge của LLM và không đổi luồng", async () => {
   const chat = new DemoChatService();
   const sessionId = "pregnancy-after-price";
   chat.chat(sessionId, "Giá");
-  chat.chat(sessionId, "ok");
+  chat.chat(sessionId, "2");
+  chat.chat(sessionId, "mà lăn có hết mùi ko em");
 
   let receivedPregnancyKnowledge = false;
   const llm = new CodexLlmBridge({
@@ -295,24 +336,24 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
         asksDirectAnswer: true,
         confidence: 0.92,
         needsClarification: false,
-        evidence: ["mẹ bầu dùng được k e"],
+        evidence: ["phụ nữ đang bầu có dùng dược k"],
         actions: [
           {
             type: "answer_question",
             topic: "child_age",
             confidence: 0.92,
-            evidence: ["mẹ bầu dùng được k e"],
+            evidence: ["phụ nữ đang bầu có dùng dược k"],
           },
           {
             type: "handoff_to_human",
             reason: "Chưa có thông tin xác nhận",
             confidence: 0.8,
-            evidence: ["mẹ bầu dùng được k e"],
+            evidence: ["phụ nữ đang bầu có dùng dược k"],
           },
         ],
         uncertainties: ["Chưa có thông tin xác nhận"],
         knowledgeIds: ["audience-pregnancy"],
-        unsupportedQuestions: ["mẹ bầu dùng được k e"],
+        unsupportedQuestions: ["phụ nữ đang bầu có dùng dược k"],
         draftReply:
           "Dạ mẹ bầu nên tham khảo ý kiến bác sĩ trước khi dùng Stopirex ạ. Em chuyển bộ phận liên quan kiểm tra và hỗ trợ mình tiếp nhé.",
         slots: {},
@@ -321,7 +362,10 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
   });
   const brain = new MetaChatBrain(chat, llm);
 
-  const response = await brain.reply({ sessionId, text: "mẹ bầu dùng được k e" });
+  const response = await brain.reply({
+    sessionId,
+    text: "phụ nữ đang bầu có dùng dược k",
+  });
 
   assert.equal(receivedPregnancyKnowledge, true);
   assert.equal(response.replies.length, 1, JSON.stringify(response.replies));
@@ -331,6 +375,8 @@ test("câu hỏi mẹ bầu sau lịch sử giá không bị chuyển người k
   assert.equal(response.replies.length, 1);
   assert.equal(response.state.botPaused, false);
   assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(response.state.orderFlowStatus, "paused");
+  assert.notEqual(response.state.pendingQuestionTopic, "work_context");
   assert.equal(response.state.decisionTrace?.semantic.topic, "pregnancy");
   assert.equal(
     response.state.decisionTrace?.actionPlan?.accepted.some(

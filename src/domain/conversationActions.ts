@@ -422,7 +422,9 @@ function inferredAnswerTopic(
     return "usage";
   }
   if (intent === "safety") {
-    if (/mang thai|me bau|co bau/.test(text)) return "pregnancy";
+    if (/mang thai|me bau|ba bau|dang bau|phu nu bau|bau bi|co bau/.test(text)) {
+      return "pregnancy";
+    }
     if (/cho con bu|dang bu/.test(text)) return "breastfeeding";
     if (/duoi 12|\b(?:be|tre)\b.*\b(?:tuoi|dung)\b/.test(text)) return "child_age";
     if (/nhay cam/.test(text)) return "sensitive_skin";

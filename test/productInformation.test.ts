@@ -195,4 +195,5 @@ test("retrieval đưa đúng hồ sơ mới vào các câu hỏi thành phần, 
     topIds("Đà Nẵng mấy ngày nhận và có bóc kiểm hàng không").includes("domestic-delivery-inspection-policy"),
   );
   assert.equal(topIds("mẹ bầu dùng được k e")[0], "audience-pregnancy");
+  assert.equal(topIds("phụ nữ đang bầu có dùng dược k")[0], "audience-pregnancy");
 });

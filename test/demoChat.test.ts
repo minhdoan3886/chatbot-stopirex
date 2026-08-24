@@ -2028,6 +2028,21 @@ test("trả lời đối tượng sử dụng từ kho kiến thức an toàn", 
   assert.match(pregnant.reply, /tham khảo ý kiến bác sĩ trước khi sử dụng/);
   assert.doesNotMatch(pregnant.reply, /trẻ em|da nhạy cảm|cho con bú/);
 
+  const pregnantColloquial = chat.chat(
+    "pregnancy-colloquial-safety",
+    "phụ nữ đang bầu có dùng dược k",
+    {
+      intent: "safety",
+      topic: "child_age",
+      subject: "customer",
+      asksDirectAnswer: true,
+      slots: {},
+    },
+  );
+  assert.equal(pregnantColloquial.state.lastIntent, "safety");
+  assert.match(pregnantColloquial.reply, /mang thai.*tham khảo ý kiến bác sĩ/isu);
+  assert.doesNotMatch(pregnantColloquial.reply, /bé|12 tuổi|điều hòa/iu);
+
   const child = chat.chat("child-safety", "tẻ e dùng được k");
   assert.equal(child.state.lastIntent, "safety");
   assert.match(child.reply, /không dùng cho bé dưới 12 tuổi/);

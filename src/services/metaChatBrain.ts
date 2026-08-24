@@ -356,9 +356,19 @@ export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnder
     ["audience-pregnancy", "pregnancy"],
     ["audience-breastfeeding", "breastfeeding"],
   ] as const;
-  const supported = citedPopulationTopics.filter(([knowledgeId]) =>
-    semantic.knowledgeIds?.includes(knowledgeId) || primaryRetrievedKnowledgeId === knowledgeId,
+  const cited = citedPopulationTopics.filter(([knowledgeId]) =>
+    semantic.knowledgeIds?.includes(knowledgeId),
   );
+  // A citation has already been validated against the retrieved Knowledge set
+  // (or repaired from the grounded draft). Prefer that explicit LLM choice over
+  // the first retrieval match, which can be a nearby population policy because
+  // the two approved answers intentionally share most of their wording.
+  const supported =
+    cited.length > 0
+      ? cited
+      : citedPopulationTopics.filter(
+          ([knowledgeId]) => primaryRetrievedKnowledgeId === knowledgeId,
+        );
   if (supported.length !== 1) return semantic;
 
   const topic = supported[0]?.[1];

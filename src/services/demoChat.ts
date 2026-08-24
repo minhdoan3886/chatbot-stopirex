@@ -3875,13 +3875,15 @@ function priceChangeReply(raw: string, semantic: SemanticUnderstanding): Grounde
 function audienceSafetyReply(text: string, semantic: SemanticUnderstanding): GroundedReply {
   const asksBreastfeeding =
     semantic.topic === "breastfeeding" || /cho con bu|dang cho bu|me sua|me bim sua/.test(text);
+  const asksPregnancy =
+    semantic.topic === "pregnancy" ||
+    /me bau|ba bau|pa pau|ba pau|dang bau|phu nu bau|mang thai|bau bi|co bau/.test(text);
   const asksChild =
     !asksBreastfeeding &&
+    !asksPregnancy &&
     (semantic.topic === "child_age" ||
       semantic.subject === "child" ||
       /\b(?:tre|te)\s*(?:em|e|nho)?\b|\bbe\b|duoi 12|12 tuoi/.test(text));
-  const asksPregnancy =
-    semantic.topic === "pregnancy" || /me bau|ba bau|pa pau|ba pau|mang thai|bau bi|co bau/.test(text);
   const asksSensitiveSkin =
     semantic.topic === "sensitive_skin" ||
     /da (?:minh )?mong|da nhay cam|nhay cam|da yeu|de kich ung/.test(text);

@@ -56,3 +56,10 @@ test("câu trả lời ngắn được gắn đúng chủ đề đang chờ", ()
     ["work_context"],
   );
 });
+
+test("câu hỏi mới không bị coi là câu trả lời cho chủ đề đang chờ", () => {
+  assert.deepEqual(
+    inferAnsweredTopicFromMessage("Giá combo 2 lọ bao nhiêu?", "symptom"),
+    ["quantity"],
+  );
+});

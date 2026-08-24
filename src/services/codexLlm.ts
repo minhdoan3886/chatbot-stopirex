@@ -509,8 +509,8 @@ export class CodexLlmBridge {
       });
       if (!groundedKnowledgeFirst) {
         assertRequiredFactsPreserved(input.baseReply, reply);
-        assertConversationDirectionPreserved(input.baseReply, reply);
       }
+      assertConversationDirectionPreserved(input.baseReply, reply);
       const citedKnowledge = (input.knowledge ?? [])
         .filter((entity) => input.knowledgeIds?.includes(entity.id))
         .map((entity) => entity.content)

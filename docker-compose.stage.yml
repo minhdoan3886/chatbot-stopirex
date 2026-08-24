@@ -1,0 +1,112 @@
+name: stopirex-chatbot-stage
+
+services:
+  api:
+    build: .
+    expose:
+      - "8080"
+    environment: &stage_app_environment
+      NODE_ENV: production
+      PORT: 8080
+      META_VERIFY_TOKEN: ${STAGE_META_VERIFY_TOKEN:?STAGE_META_VERIFY_TOKEN is required}
+      META_APP_ID: ${STAGE_META_APP_ID:?STAGE_META_APP_ID is required}
+      META_APP_SECRET: ${STAGE_META_APP_SECRET:?STAGE_META_APP_SECRET is required}
+      META_TEST_PAGE_ACCESS_TOKEN: ${STAGE_META_TEST_PAGE_ACCESS_TOKEN:?STAGE_META_TEST_PAGE_ACCESS_TOKEN is required}
+      META_TEST_PAGE_ID: ${STAGE_META_TEST_PAGE_ID:?STAGE_META_TEST_PAGE_ID is required}
+      META_ACTIVE_PAGE: test
+      META_GRAPH_VERSION: ${STAGE_META_GRAPH_VERSION:-v25.0}
+      META_LIVE_SEND_ENABLED: "false"
+      MULTI_ACTION_ROLLOUT_MODE: shadow
+      MULTI_ACTION_CANARY_PERCENT: 0
+      MULTI_ACTION_PRIMARY_APPROVED: "false"
+      FOLLOWUP_MODE: shadow
+      FOLLOWUP_PRIMARY_APPROVED: "false"
+      META_STAFF_NAME: ${STAGE_META_STAFF_NAME:-Mai Lan}
+      META_OPENING_VARIANT: ${STAGE_META_OPENING_VARIANT:-AUTO.dynamic}
+      META_WORKER_CONSUMER: stage-worker-1
+      META_DEBOUNCE_MS: ${STAGE_META_DEBOUNCE_MS:-4000}
+      META_PUBLIC_WEBHOOK_URL: ${STAGE_META_PUBLIC_WEBHOOK_URL:?STAGE_META_PUBLIC_WEBHOOK_URL is required}
+      DATABASE_URL: postgresql://stopirex_stage:${STAGE_POSTGRES_PASSWORD:?STAGE_POSTGRES_PASSWORD is required}@postgres:5432/stopirex_stage
+      REDIS_URL: redis://redis:6379
+      ADMIN_API_KEY: ${STAGE_ADMIN_API_KEY:?STAGE_ADMIN_API_KEY is required}
+      ENCRYPTION_KEY: ${STAGE_ENCRYPTION_KEY:?STAGE_ENCRYPTION_KEY is required}
+      DATA_RETENTION_DAYS: ${STAGE_DATA_RETENTION_DAYS:-30}
+      OUTBOUND_WINDOW_HOURS: ${STAGE_OUTBOUND_WINDOW_HOURS:-24}
+      LLM_PROVIDER: ${STAGE_LLM_PROVIDER:-hybrid}
+      LLM_ENABLED: ${STAGE_LLM_ENABLED:-true}
+      OPENAI_API_KEY: ${STAGE_OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${STAGE_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${STAGE_OPENAI_MODEL:-gpt-5.4-nano}
+      LLM_PROMPT_PROFILE: ${STAGE_LLM_PROMPT_PROFILE:-legacy}
+      OPENAI_TIMEOUT_MS: ${STAGE_OPENAI_TIMEOUT_MS:-30000}
+      OPENAI_MAX_OUTPUT_TOKENS: ${STAGE_OPENAI_MAX_OUTPUT_TOKENS:-1200}
+      LLM_USD_TO_VND_RATE: ${STAGE_LLM_USD_TO_VND_RATE:-26000}
+      LLM_HYBRID_PROVIDER_TIMEOUT_MS: ${STAGE_LLM_HYBRID_PROVIDER_TIMEOUT_MS:-15000}
+      LLM_HYBRID_FALLBACK_TIMEOUT_MS: ${STAGE_LLM_HYBRID_FALLBACK_TIMEOUT_MS:-30000}
+      LLM_HYBRID_HEDGE_DELAY_MS: ${STAGE_LLM_HYBRID_HEDGE_DELAY_MS:-2500}
+      LLM_HYBRID_COOLDOWN_MS: ${STAGE_LLM_HYBRID_COOLDOWN_MS:-300000}
+      CODEX_LLM_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  worker:
+    build: .
+    command: ["node", "dist/src/worker.js"]
+    environment: *stage_app_environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  followup-worker:
+    build: .
+    command: ["node", "dist/src/followupWorker.js"]
+    environment: *stage_app_environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: stopirex_stage
+      POSTGRES_USER: stopirex_stage
+      POSTGRES_PASSWORD: ${STAGE_POSTGRES_PASSWORD:?STAGE_POSTGRES_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stopirex_stage -d stopirex_stage"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - stage_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - stage_redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  stage_postgres_data:
+    name: stopirex_chatbot_stage_postgres_data
+  stage_redis_data:
+    name: stopirex_chatbot_stage_redis_data

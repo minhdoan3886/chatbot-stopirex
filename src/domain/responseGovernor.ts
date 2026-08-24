@@ -116,6 +116,7 @@ export function inferAnsweredTopicFromMessage(
   }
   if (
     pending &&
+    !/[?？]/u.test(message) &&
     !/khong biet|ko biet|chua de y|khong ro|ko ro/.test(text) &&
     message.trim().length > 0
   ) {

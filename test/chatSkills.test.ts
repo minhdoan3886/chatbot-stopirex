@@ -14,7 +14,7 @@ test("giọng tư vấn không tự chèn lời thoái thác", () => {
   assert.match(principles, /khách hỏi cam kết tuyệt đối/iu);
 });
 
-test("mỗi lượt chỉ chọn một skill chính và chấp nhận gợi ý LLM phù hợp", () => {
+test("hỏi giá thông thường dùng direct-answer và không nhận nhầm skill phản đối giá", () => {
   const result = resolveConversationSkill({
     suggestedSkill: "pricing-objection",
     route: "direct_intent",
@@ -23,8 +23,8 @@ test("mỗi lượt chỉ chọn một skill chính và chấp nhận gợi ý L
     pipeline: "2.Đang tư vấn",
   });
 
-  assert.equal(result.skill.id, "pricing-objection");
-  assert.equal(result.suggestionAccepted, true);
+  assert.equal(result.skill.id, "direct-answer");
+  assert.equal(result.suggestionAccepted, false);
 });
 
 test("pricing-objection bắt buộc mềm, dựa trên giá trị đã duyệt và đúng ưu đãi", () => {

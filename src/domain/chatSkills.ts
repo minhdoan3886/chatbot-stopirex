@@ -279,7 +279,7 @@ function compatibleSuggestion(
   skillId: ConversationSkillId,
   input: ResolveConversationSkillInput,
 ): boolean {
-  if (skillId === "pricing-objection") return isPricingIntent(input.intent);
+  if (skillId === "pricing-objection") return isPricingObjectionIntent(input.intent);
   if (skillId === "solution-guidance") {
     return [
       "product_effect",
@@ -294,7 +294,7 @@ function compatibleSuggestion(
     return input.route === "consultation" || input.intent === "consultation";
   }
   if (skillId === "direct-answer") {
-    return input.route === "direct_intent" && !isPricingIntent(input.intent);
+    return input.route === "direct_intent" && !isPricingObjectionIntent(input.intent);
   }
   return false;
 }
@@ -302,7 +302,7 @@ function compatibleSuggestion(
 function fallbackSkill(
   input: ResolveConversationSkillInput,
 ): { id: ConversationSkillId; reason: string } {
-  if (isPricingIntent(input.intent)) {
+  if (isPricingObjectionIntent(input.intent)) {
     return {
       id: "pricing-objection",
       reason: "Intent thuộc giá, phí giao, giảm giá hoặc băn khoăn chi phí.",
@@ -335,10 +335,9 @@ function fallbackSkill(
   };
 }
 
-function isPricingIntent(intent: CustomerIntent | undefined): boolean {
+function isPricingObjectionIntent(intent: CustomerIntent | undefined): boolean {
   return [
     "price_change",
-    "price_request",
     "price_objection",
     "negotiation",
     "decline_purchase",

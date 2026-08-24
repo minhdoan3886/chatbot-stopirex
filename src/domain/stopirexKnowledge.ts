@@ -248,7 +248,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "price",
       title: "Giá và phương án mua đã duyệt",
       content:
-        "Giá Facebook đã duyệt: 1 lọ 285.000đ và phí giao 30.000đ; combo 2 lọ 510.000đ, combo 3 lọ 750.000đ, combo 4 lọ 1.000.000đ, combo 5 lọ 1.250.000đ. Combo 2–5 lọ miễn phí giao. Mọi đơn từ 2 lọ trở lên được tặng đúng 1 túi đa năng vải dệt Stopirex; quà tính theo đơn hàng, không tính theo số lọ và không cộng nhiều túi khi mua nhiều lọ. Đơn 1 lọ được duyệt miễn phí giao khi khách mặc cả hoặc từ lúc hệ thống bắt đầu gửi follow-up. Từ 6 lọ trở lên phải chuyển tư vấn viên hỗ trợ riêng, bot không tự chốt đơn.",
+        "Giá Facebook đã duyệt: 1 lọ 285.000đ và phí giao 30.000đ; combo 2 lọ 510.000đ, combo 3 lọ 750.000đ, combo 4 lọ 1.000.000đ, combo 5 lọ 1.250.000đ. Khi khách hỏi giá chung, chỉ báo phương án 1, 2, 3 lọ và quà tặng; giá combo 4 hoặc 5 lọ chỉ trả lời khi khách hỏi đúng số lượng đó. Combo 2–5 lọ miễn phí giao. Mọi đơn từ 2 lọ trở lên được tặng đúng 1 túi đa năng vải dệt Stopirex; quà tính theo đơn hàng, không tính theo số lọ và không cộng nhiều túi khi mua nhiều lọ. Đơn 1 lọ được duyệt miễn phí giao khi khách mặc cả hoặc từ lúc hệ thống bắt đầu gửi follow-up. Chỉ nhắc việc chuyển tư vấn viên cho nhu cầu từ 6 lọ trở lên khi khách thực sự hỏi số lượng này; bot không tự chốt đơn.",
       sourceRow: 25,
     },
     {

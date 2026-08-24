@@ -6,6 +6,7 @@ dist/
 !.env.example
 !.env.test.example
 !.env.production.example
+!.env.stage.example
 coverage/
 *.log
 outputs/

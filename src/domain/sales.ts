@@ -105,6 +105,7 @@ export function formatPriceOffer(
   single: PriceQuote,
   combo: PriceQuote,
   bulk: readonly PriceQuote[] = [],
+  nextQuestion = "Anh/chị muốn chọn phương án mấy lọ ạ?",
 ): string {
   const money = (value: number) => `${value.toLocaleString("vi-VN")}đ`;
   const saved = single.productPrice.amount * 2 - combo.productPrice.amount;
@@ -117,8 +118,7 @@ export function formatPriceOffer(
         `• Combo ${offer.quantity} lọ: ${money(offer.total.amount)}${offer.shippingFee.amount === 0 ? ", miễn phí giao" : `, phí giao ${money(offer.shippingFee.amount)}`}.`,
     ),
     "• Quà tặng: đơn từ 2 lọ trở lên được tặng 1 túi đa năng vải dệt Stopirex (1 túi/đơn).",
-    "Từ 6 lọ trở lên, bên em chuyển tư vấn viên hỗ trợ riêng ạ.",
-    "Anh/chị muốn chọn phương án mấy lọ ạ?",
+    nextQuestion,
   ].join("\n");
 }
 

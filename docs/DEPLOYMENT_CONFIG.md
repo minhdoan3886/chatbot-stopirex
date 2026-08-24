@@ -18,6 +18,38 @@ npm run meta:preflight
 Giữ `META_ACTIVE_PAGE=test`, `META_LIVE_SEND_ENABLED=false` trong bước nhận sự
 kiện. Chỉ bật live send sau khi webhook, chữ ký và Page test đã được kiểm tra.
 
+## Staging cô lập trên máy chủ
+
+Dùng `docker-compose.stage.yml` cho một resource/stack mới, không thay file compose
+hoặc resource đang chạy product. Stack này có tên `stopirex-chatbot-stage`, dùng
+PostgreSQL và Redis nội bộ riêng, không publish cổng database/cache ra host và lưu
+dữ liệu trong hai volume chỉ dành cho staging.
+
+Các chốt an toàn được khóa ngay trong compose:
+
+- `META_ACTIVE_PAGE=test`
+- `META_LIVE_SEND_ENABLED=false`
+- `MULTI_ACTION_ROLLOUT_MODE=shadow`
+- `FOLLOWUP_MODE=shadow`
+- không truyền `META_PAGE_ID` hoặc `META_PAGE_ACCESS_TOKEN` của Page primary
+
+Trong Coolify, tạo **resource Docker Compose mới** từ một branch deploy riêng,
+chọn file `/docker-compose.stage.yml`, gắn domain staging vào service `api` cổng
+`8080` và nhập các biến `STAGE_*` theo `.env.stage.example`. Không copy toàn bộ
+Environment Variables từ resource product. Nếu chưa xác minh resource nào đang
+auto-deploy branch `staging`, dùng branch mới như `codex/stage-isolated` để lần
+push đầu tiên không restart resource hiện hữu.
+
+Sau khi deploy, chạy trong container `api` của resource staging:
+
+```bash
+npm run meta:register-page:prod
+npm run meta:preflight:prod
+```
+
+Callback của Meta App test phải là domain staging cộng `/webhooks/meta`. Không đổi
+callback của Meta App đang phục vụ Page primary.
+
 ## Product
 
 Trên máy product, tạo file env được bảo vệ quyền đọc (hoặc dùng secret manager)

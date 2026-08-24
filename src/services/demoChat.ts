@@ -1048,10 +1048,11 @@ export class DemoChatService {
 
     if (dynamicOpeningChoice === "3") {
       session.lastIntent = "price_request";
-      session.activeSkill = "pricing-objection";
-      session.skillReason = "Khách chọn bảng giá từ menu mở đầu đã hiển thị.";
-      showPrice(session);
-      return this.respond(session, priceReply());
+      session.activeSkill = "direct-answer";
+      session.skillReason =
+        "Khách chọn bảng giá ở đầu hành trình; báo giá trước rồi hỏi tình trạng để tư vấn tiếp.";
+      const continuation = showPrice(session);
+      return this.respond(session, priceReply(continuationQuestion(continuation)));
     }
 
     if (decision.route === "active_care" && session.care) {
@@ -1289,9 +1290,9 @@ export class DemoChatService {
     if (decision.route === "pending_action" && session.pendingAction === "send_price") {
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
-      showPrice(session);
+      const continuation = showPrice(session);
       session.lastIntent = "price_request";
-      return this.respond(session, priceReply());
+      return this.respond(session, priceReply(continuationQuestion(continuation)));
     }
     if (
       decision.route === "pending_action" &&
@@ -1321,8 +1322,8 @@ export class DemoChatService {
 
     if (session.openingVariantId === "A.choice" && session.consultation.stage === "S0.new" && text === "2") {
       session.lastIntent = "price_request";
-      showPrice(session);
-      return this.respond(session, priceReply());
+      const continuation = showPrice(session);
+      return this.respond(session, priceReply(continuationQuestion(continuation)));
     }
 
     if (session.openingVariantId === "A.choice" && session.consultation.stage === "S0.new" && text === "1") {
@@ -1587,8 +1588,8 @@ export class DemoChatService {
       );
     }
     if (directIntent === "price_request") {
-      showPrice(session);
-      return this.respond(session, priceReply());
+      const continuation = showPrice(session);
+      return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
     }
 
     if (directIntent === "order_support" && isReturnsPolicyQuestion(text)) {
@@ -1909,8 +1910,8 @@ export class DemoChatService {
       isGuidancePriceChoice(text) &&
       !isBuyingIntent(text)
     ) {
-      showPrice(session);
-      return this.respond(session, priceReply());
+      const continuation = showPrice(session);
+      return this.respond(session, priceReply(continuationQuestion(continuation)));
     }
 
     const quantity = detectQuantity(text);
@@ -1936,8 +1937,8 @@ export class DemoChatService {
     }
 
     if (isPriceRequest(text)) {
-      showPrice(session);
-      return this.respond(session, priceReply());
+      const continuation = showPrice(session);
+      return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
     }
 
     if (session.messages === 1 && !session.openingSent && isGenericOpening(text)) {
@@ -2413,7 +2414,7 @@ function shouldPreserveFullResponse(session: DemoSession, replies: readonly stri
   if (session.mode === "care") return true;
   if (session.selectedQuantity || session.orderId) return true;
   const text = replies.join("\n");
-  return /GIÁ SANDBOX|Combo 5 lọ|Tên người nhận:|Địa chỉ trước sáp nhập:|Mã vận đơn|ĐỒNG Ý|chuyển nhân viên kiểm tra/u.test(
+  return /Dạ giá hiện tại:|Tên người nhận:|Địa chỉ trước sáp nhập:|Mã vận đơn|ĐỒNG Ý|chuyển nhân viên kiểm tra/u.test(
     text,
   );
 }
@@ -3482,7 +3483,7 @@ function negotiationReply(
   if (selectedQuantity && selectedQuantity >= 2) {
     return `Dạ combo ${selectedQuantity} lọ đang là ${formatVnd(quote(selectedQuantity).total.amount)}, đã miễn phí giao và được tặng ${stopirexGiftForQuantity(selectedQuantity)} ạ.\n\nNếu mình tiếp tục đơn này, em xin thông tin người nhận để lên đơn nhé ạ?`;
   }
-  return "Dạ em hiểu mình muốn bên em hỗ trợ thêm về giá ạ. Lần này bên em duyệt miễn phí giao cho 1 lọ, tổng còn 285.000đ. Combo 2–5 lọ được miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex cho mỗi đơn ạ.\n\nMình muốn lấy mấy lọ ạ?";
+  return "Dạ em hiểu mình muốn bên em hỗ trợ thêm về giá ạ. Lần này bên em duyệt miễn phí giao cho 1 lọ, tổng còn 285.000đ. Đơn từ 2 lọ trở lên được miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex cho mỗi đơn ạ.\n\nMình muốn lấy mấy lọ ạ?";
 }
 
 function priceObjectionReply(session: DemoSession): string {
@@ -3507,7 +3508,7 @@ function priceObjectionReply(session: DemoSession): string {
     return `Dạ em hiểu băn khoăn của mình ạ. ${value}\n\nPhương án 1 lọ hiện là ${money(single.productPrice.amount)}, ${shipping}. Mình muốn giữ 1 lọ hay xem phương án combo tiết kiệm hơn ạ?`;
   }
 
-  return `Dạ em hiểu băn khoăn của mình ạ. ${value}\n\nLần này bên em hỗ trợ miễn phí giao cho 1 lọ; combo 2–5 lọ miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex cho mỗi đơn. Mình muốn chọn mấy lọ ạ?`;
+  return `Dạ em hiểu băn khoăn của mình ạ. ${value}\n\nLần này bên em hỗ trợ miễn phí giao cho 1 lọ; đơn từ 2 lọ trở lên được miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex cho mỗi đơn. Mình muốn chọn mấy lọ ạ?`;
 }
 
 function productEffectTopic(text: string, semanticSlots: ConsultationSlots): PrimarySymptom | undefined {
@@ -4469,7 +4470,7 @@ function multiActionAnswer(
       );
     } else {
       answers.push(
-        "Dạ giá hiện tại: 1 lọ 285.000đ + 30.000đ giao; 2 lọ 510.000đ; 3 lọ 750.000đ; 4 lọ 1.000.000đ; 5 lọ 1.250.000đ. Combo 2–5 lọ miễn phí giao và mỗi đơn được tặng 1 túi đa năng vải dệt Stopirex ạ.",
+        "Dạ giá hiện tại:\n• 1 lọ: 285.000đ + 30.000đ phí giao.\n• Combo 2 lọ: 510.000đ, miễn phí giao, tiết kiệm 60.000đ.\n• Combo 3 lọ: 750.000đ, miễn phí giao.\n• Quà tặng: đơn từ 2 lọ trở lên được tặng 1 túi đa năng vải dệt Stopirex (1 túi/đơn).",
       );
     }
   }
@@ -4968,7 +4969,12 @@ function assertCustomerFacingCopy(reply: string): void {
   }
 }
 
-function showPrice(session: DemoSession): void {
+type PriceContinuation = "discover_symptom" | "choose_quantity";
+
+function showPrice(
+  session: DemoSession,
+  forcedContinuation?: PriceContinuation,
+): PriceContinuation {
   if (session.pipeline !== "3.Đã báo giá") {
     if (session.pipeline === "0.Chưa tư vấn") session.pipeline = "1.Phân loại";
     try {
@@ -4977,16 +4983,51 @@ function showPrice(session: DemoSession): void {
       session.pipeline = "3.Đã báo giá";
     }
   }
+  const continuation = forcedContinuation ?? priceContinuationFor(session);
+  if (continuation === "discover_symptom") {
+    session.consultation = { ...session.consultation, stage: "S2.symptom" };
+    delete session.pendingAction;
+    if (session.lastDecision) delete session.lastDecision.pendingActionAfter;
+    return continuation;
+  }
   session.consultation = { ...session.consultation, stage: "S7.waiting" };
   session.pendingAction = "choose_quantity";
   if (session.lastDecision) session.lastDecision.pendingActionAfter = "choose_quantity";
+  return continuation;
 }
 
-function priceReply(): string {
+function priceContinuationFor(session: DemoSession): PriceContinuation {
+  const slots = session.consultation.slots;
+  const symptomKnown =
+    Boolean(slots.primarySymptom) ||
+    slots.sweatPresent !== undefined ||
+    slots.odorPresent !== undefined ||
+    session.answeredTopics.includes("symptom");
+  const consultationDelivered = session.consultation.stage === "S5.guidance";
+  return symptomKnown && consultationDelivered ? "choose_quantity" : "discover_symptom";
+}
+
+function continuationQuestion(continuation: PriceContinuation): string {
+  return continuation === "discover_symptom"
+    ? "Để em tư vấn sát hơn, hiện mình khó chịu chủ yếu vì mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai tình trạng ạ?"
+    : "Anh/chị muốn chọn phương án mấy lọ ạ?";
+}
+
+function priceReply(nextQuestion = continuationQuestion("choose_quantity")): string {
   const single = quote(1);
   const combo = quote(2);
-  const bulk = ([3, 4, 5] as const).map(quote);
-  return `⚠️ GIÁ SANDBOX — chỉ để kiểm thử localhost, chưa phải dữ liệu production.\n${formatPriceOffer(single, combo, bulk)}`;
+  const visibleAdditionalOffers = [quote(3)];
+  return formatPriceOffer(single, combo, visibleAdditionalOffers, nextQuestion);
+}
+
+function priceReplyForRequest(
+  text: string,
+  nextQuestion = continuationQuestion("choose_quantity"),
+): string {
+  const requestedQuantity = detectQuantity(text);
+  return requestedQuantity
+    ? `${selectedOrderPriceReply(requestedQuantity)}\n\n${nextQuestion}`
+    : priceReply(nextQuestion);
 }
 
 function quote(quantity: SupportedOrderQuantity) {

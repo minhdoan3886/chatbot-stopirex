@@ -150,11 +150,25 @@ export function reconcileConversationActions(input: {
   }
 
   const explicitQuantity = extractExplicitPurchaseQuantity(text);
+  const trustedLlmQuantity = trustedLlmPurchaseQuantity({
+    raw,
+    semantic: input.semantic,
+    candidates,
+    collectingOrder: input.collectingOrder,
+  });
   if (explicitQuantity) {
     candidates.push({
       ...baseAction("select_quantity", "guardrail", [quantityEvidence(raw)]),
       quantity: explicitQuantity,
     });
+    candidates.push(baseAction("continue_order_collection", "state", [quantityEvidence(raw)]));
+  } else if (
+    trustedLlmQuantity &&
+    !candidates.some((action) => action.type === "continue_order_collection")
+  ) {
+    // The LLM owns natural-language interpretation. Once a high-confidence,
+    // verbatim-grounded quantity survives the linguistic trust gate, state may
+    // complete the mechanical order action without requiring canonical words.
     candidates.push(baseAction("continue_order_collection", "state", [quantityEvidence(raw)]));
   }
 
@@ -224,6 +238,7 @@ export function reconcileConversationActions(input: {
     if (
       candidate.type === "continue_order_collection" &&
       !explicitQuantity &&
+      !trustedLlmQuantity &&
       !input.collectingOrder
     ) {
       rejected.push({ action: candidate, reason: "policy_verification_required" });
@@ -263,7 +278,7 @@ export function reconcileConversationActions(input: {
       rejected.push({ action: candidate, reason: "unverifiable_purchase_condition" });
       continue;
     }
-    const rejection = validateAction(candidate, text);
+    const rejection = validateAction(candidate, text, raw, trustedLlmQuantity);
     if (rejection) rejected.push({ action: candidate, reason: rejection });
     else accepted.push(candidate);
   }
@@ -359,6 +374,15 @@ export function reconcileConversationActions(input: {
     : input.priorOtherProductAdverseExperience && input.exactIntent
       ? input.exactIntent
       : primaryIntent(accepted, input.semantic.intent, input.exactIntent);
+  const trustedLinguisticDecision =
+    Boolean(selected && selected.quantity === trustedLlmQuantity) ||
+    accepted.some(
+      (action) =>
+        action.type === "decline_purchase" &&
+        action.source === "llm" &&
+        action.confidence >= 0.85 &&
+        hasGroundedEvidence(action, raw),
+    );
 
   return {
     accepted,
@@ -370,7 +394,7 @@ export function reconcileConversationActions(input: {
     ...(resolvedPrimaryIntent ? { primaryIntent: resolvedPrimaryIntent } : {}),
     shouldClarify:
       conflicts.some((conflict) => conflict.includes("vừa có tín hiệu mua")) ||
-      input.semantic.needsClarification === true,
+      (input.semantic.needsClarification === true && !trustedLinguisticDecision),
     hasMultipleActions: accepted.filter((action) => action.type !== "pause_order").length > 1,
   };
 }
@@ -417,12 +441,27 @@ function isQuantityPolicyQuestion(text: string): boolean {
 function validateAction(
   action: ConversationAction,
   text: string,
+  raw: string,
+  trustedLlmQuantity: SupportedOrderQuantity | undefined,
 ): RejectedConversationAction["reason"] | undefined {
   if (action.source === "llm" && action.confidence < 0.65) return "low_confidence";
   if (action.source === "llm" && action.evidence.length === 0) return "missing_evidence";
   if (action.type === "select_quantity") {
     if (![1, 2, 3, 4, 5].includes(action.quantity)) return "unsupported_quantity";
-    if (!explicitQuantityAppears(text, action.quantity)) return "missing_evidence";
+    const trustedLinguisticSelection =
+      action.source === "llm" &&
+      action.quantity === trustedLlmQuantity &&
+      hasGroundedEvidence(action, raw);
+    if (!explicitQuantityAppears(text, action.quantity) && !trustedLinguisticSelection) {
+      return "missing_evidence";
+    }
+  }
+  if (
+    action.type === "decline_purchase" &&
+    action.source === "llm" &&
+    !hasGroundedEvidence(action, raw)
+  ) {
+    return "missing_evidence";
   }
   if (action.type === "update_order" && Object.keys(action.fields).length === 0) {
     return "invalid_order_update";
@@ -442,6 +481,60 @@ function validateAction(
     return "invalid_fact";
   }
   return undefined;
+}
+
+function trustedLlmPurchaseQuantity(input: {
+  raw: string;
+  semantic: SemanticUnderstanding;
+  candidates: readonly ConversationAction[];
+  collectingOrder: boolean;
+}): SupportedOrderQuantity | undefined {
+  const semanticConfidence = input.semantic.confidence ?? 0;
+  if (semanticConfidence < 0.85) return undefined;
+
+  const groundedDecline = input.candidates.some(
+    (action) =>
+      action.type === "decline_purchase" &&
+      action.source === "llm" &&
+      action.confidence >= 0.85 &&
+      hasGroundedEvidence(action, input.raw),
+  );
+  const semanticSupportsPurchase =
+    input.semantic.intent === "buying" ||
+    (input.collectingOrder && input.semantic.intent === "order_support") ||
+    (input.semantic.intent === "decline_purchase" && groundedDecline);
+  if (!semanticSupportsPurchase) return undefined;
+
+  const quantities = input.candidates
+    .filter(
+      (action): action is Extract<ConversationAction, { type: "select_quantity" }> =>
+        action.type === "select_quantity" &&
+        action.source === "llm" &&
+        action.confidence >= 0.85 &&
+        [1, 2, 3, 4, 5].includes(action.quantity) &&
+        hasGroundedEvidence(action, input.raw),
+    )
+    .map((action) => action.quantity)
+    .filter((quantity, index, all) => all.indexOf(quantity) === index);
+  return quantities.length === 1 ? quantities[0] : undefined;
+}
+
+function hasGroundedEvidence(action: ConversationAction, raw: string): boolean {
+  const normalizedMessage = normalizeEvidence(raw);
+  return action.evidence.some((evidence) => {
+    const normalizedEvidence = normalizeEvidence(evidence);
+    return (
+      normalizedEvidence.split(" ").filter(Boolean).length >= 2 &&
+      normalizedMessage.includes(normalizedEvidence)
+    );
+  });
+}
+
+function normalizeEvidence(value: string): string {
+  return normalize(value)
+    .replace(/[^a-z0-9\s]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function canonicalOrderUpdateField(

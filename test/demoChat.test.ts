@@ -1759,6 +1759,46 @@ test("replay: câu chốt 1 lọ ghi đè pending báo giá và tin PII gộp đ
   assert.doesNotMatch(details.reply, /chưa nghe rõ.*giá|mức giá cũ|phí giao 30\.000đ/isu);
 });
 
+test("replay: LLM hiểu câu địa phương sai chính tả và không bị pending giá kéo lệch luồng", () => {
+  const chat = new DemoChatService();
+  const sessionId = "pending-price-local-language-order";
+  chat.chat(sessionId, "Mình làm ngoài trời");
+  const guidance = chat.chat(sessionId, "Mình bị cả mồ hôi và mùi");
+  assert.equal(guidance.state.pendingAction, "send_price");
+
+  const message = "chốt giùm tui mọt chai nghen";
+  const selected = chat.chat(sessionId, message, {
+    slots: {},
+    intent: "buying",
+    topic: "order",
+    confidence: 0.98,
+    needsClarification: true,
+    actions: [
+      {
+        type: "select_quantity",
+        quantity: 1,
+        confidence: 0.98,
+        evidence: [message],
+        source: "llm",
+      },
+      {
+        type: "continue_order_collection",
+        confidence: 0.97,
+        evidence: [message],
+        source: "llm",
+      },
+    ],
+  });
+
+  assert.equal(selected.state.selectedQuantity, 1);
+  assert.equal(selected.state.pipeline, "5.Chờ TT KH");
+  assert.equal(selected.state.decisionTrace?.selectedRoute, "direct_intent");
+  assert.equal(selected.state.decisionTrace?.actionPlan?.shouldClarify, false);
+  assert.match(selected.reply, /ghi nhận.*1 lọ/iu);
+  assert.match(selected.reply, /tên người nhận.*SĐT.*địa chỉ/isu);
+  assert.doesNotMatch(selected.reply, /chưa rõ|giá|phí giao/iu);
+});
+
 test("replay: chọn 1 lọ sau câu hỏi xem giá chưa được coi là chốt mua", () => {
   const chat = new DemoChatService();
   chat.chat("pending-price-one", "Mình làm ngoài trời");

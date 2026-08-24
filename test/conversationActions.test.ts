@@ -142,6 +142,135 @@ test("Reconciler hiểu chữ a viết tắt trong lệnh cho a 1 lọ", () => {
   assert.ok(plan.accepted.some((action) => action.type === "continue_order_collection"));
 });
 
+test("LLM được quyền hiểu tiếng địa phương và lỗi chính tả khi evidence có nguyên văn", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "chốt giùm tui mọt chai nghen",
+    semantic: semantic({
+      intent: "buying",
+      confidence: 0.98,
+      needsClarification: true,
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 1,
+          confidence: 0.98,
+          evidence: ["chốt giùm tui mọt chai nghen"],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.97,
+          evidence: ["chốt giùm tui mọt chai nghen"],
+          source: "llm",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: false,
+  });
+
+  assert.equal(plan.quantity, 1);
+  assert.equal(plan.primaryIntent, "buying");
+  assert.equal(plan.shouldClarify, false);
+  assert.deepEqual(
+    plan.accepted.map((action) => action.type),
+    ["select_quantity", "continue_order_collection"],
+  );
+});
+
+test("LLM không được tạo đơn khi evidence không nằm trong lời khách", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "Tư vấn giúp mình loại nào hợp",
+    semantic: semantic({
+      intent: "buying",
+      confidence: 0.99,
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 2,
+          confidence: 0.99,
+          evidence: ["chốt combo 2 lọ"],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.99,
+          evidence: ["chốt combo 2 lọ"],
+          source: "llm",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: false,
+  });
+
+  assert.equal(plan.quantity, undefined);
+  assert.equal(plan.accepted.some((action) => action.type === "continue_order_collection"), false);
+  assert.ok(plan.rejected.some((item) => item.reason === "missing_evidence"));
+  assert.ok(plan.rejected.some((item) => item.reason === "policy_verification_required"));
+});
+
+test("tiếng địa phương vừa chốt vừa phủ định vẫn phải hỏi lại", () => {
+  const message = "chốt giùm tui mọt chai, mà thui hông lấy nữa";
+  const plan = reconcileConversationActions({
+    customerMessage: message,
+    semantic: semantic({
+      intent: "decline_purchase",
+      confidence: 0.98,
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 1,
+          confidence: 0.97,
+          evidence: ["chốt giùm tui mọt chai"],
+          source: "llm",
+        },
+        {
+          type: "decline_purchase",
+          confidence: 0.99,
+          evidence: ["thui hông lấy nữa"],
+          source: "llm",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: false,
+  });
+
+  assert.equal(plan.quantity, undefined);
+  assert.equal(plan.shouldClarify, true);
+  assert.ok(plan.conflicts.some((conflict) => conflict.includes("vừa có tín hiệu mua")));
+});
+
+test("safety guard vẫn chặn lệnh mua địa phương khi khách đang kích ứng", () => {
+  const message = "da tui đang đỏ rát, chốt giùm tui mọt chai nghen";
+  const plan = reconcileConversationActions({
+    customerMessage: message,
+    semantic: semantic({
+      intent: "buying",
+      scenario: "actual",
+      confidence: 0.98,
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 1,
+          confidence: 0.98,
+          evidence: ["chốt giùm tui mọt chai nghen"],
+          source: "llm",
+        },
+      ],
+    }),
+    detectedCareIssue: "irritation",
+    careScenario: "actual",
+    optOut: false,
+    collectingOrder: false,
+  });
+
+  assert.equal(plan.quantity, undefined);
+  assert.equal(plan.careIssue, "irritation");
+  assert.ok(plan.rejected.some((item) => item.reason === "safety_precedence"));
+});
+
 test("Reconciler chấp nhận số lượng 3 đến 5 lọ đã duyệt", () => {
   for (const quantity of [3, 4, 5] as const) {
     const plan = reconcileConversationActions({

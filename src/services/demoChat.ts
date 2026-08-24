@@ -410,7 +410,7 @@ export class DemoChatService {
         !effectiveExactIntent &&
         !effectiveCareIssue &&
         (semanticOrderDataRecorded || isLikelyOrderData(raw, session.order)),
-      explicitPurchaseSelection: Boolean(extractExplicitOrderQuantity(text)),
+      explicitPurchaseSelection: Boolean(extractExplicitOrderQuantity(text) || actionPlan.quantity),
       affirmativeFollowup:
         isAffirmativeFollowup(text) ||
         semantic.affirmation === true ||
@@ -1138,6 +1138,22 @@ export class DemoChatService {
       return this.respond(session, turn.reply);
     }
 
+    if (isInternalSystemProbe(text) && isMaliciousCommercialOverride(text)) {
+      actionPlan.accepted = actionPlan.accepted.filter(
+        (action) =>
+          !["select_quantity", "update_order", "continue_order_collection"].includes(action.type),
+      );
+      delete actionPlan.quantity;
+      session.lastIntent = "bot_identity";
+      session.activeSkill = "direct-answer";
+      session.skillReason =
+        "Hard security guard chặn nội dung khách cố thay đổi giá, ưu đãi hoặc lệnh tạo đơn.";
+      return this.respond(
+        session,
+        "Dạ em không thể cập nhật giá hoặc tạo ưu đãi từ nội dung khách gửi ạ. Giá chuẩn hiện tại: 1 lọ 285.000đ + 30.000đ giao; combo 2 lọ 510.000đ, miễn phí giao. Mình có muốn tiếp tục đặt theo giá này không ạ?",
+      );
+    }
+
     const knowledgeFullyCoversQuestion = isKnowledgeFullyCoveredQuestion(text, semantic);
     const humanHandoff =
       multiActionEnabled && !knowledgeFullyCoversQuestion
@@ -1282,6 +1298,31 @@ export class DemoChatService {
           ? orderCollectionReply(session, raw)
           : multiActionOrderInformationRequestReply(quantity),
       ]);
+    }
+
+    if (
+      multiActionEnabled &&
+      actionPlan.quantity &&
+      actionPlan.answerTopics.length === 0 &&
+      session.pipeline !== "6.Đã tạo đơn"
+    ) {
+      delete session.pendingAction;
+      delete session.lastDecision.pendingActionAfter;
+      const quantity = actionPlan.quantity;
+      selectQuantity(session, quantity);
+      this.move(session, "agreed_to_buy");
+      session.orderCollectionPaused = false;
+      session.lastIntent = "buying";
+      session.activeSkill = "order-closing";
+      session.skillReason =
+        "State Reducer thực thi action số lượng đã được LLM đề xuất và Reconciler xác minh bằng evidence của khách.";
+      session.signal = undefined;
+      const recordedOrderData = mergeOrderData(session, raw) || semanticOrderDataRecorded;
+      if (recordedOrderData && orderHasAllFields(session.order)) {
+        session.pendingAction = "confirm_order";
+        session.lastDecision.pendingActionAfter = "confirm_order";
+      }
+      return this.respond(session, orderCollectionReply(session, recordedOrderData ? raw : undefined));
     }
 
     const compoundOrderQuantity = session.selectedQuantity
@@ -1533,19 +1574,6 @@ export class DemoChatService {
     }
     if (directIntent === "bot_identity") {
       if (isInternalSystemProbe(text)) {
-        if (isMaliciousCommercialOverride(text)) {
-          if (session.lastDecision.actionPlan) {
-            session.lastDecision.actionPlan.accepted = session.lastDecision.actionPlan.accepted.filter(
-              (action) =>
-                !["select_quantity", "update_order", "continue_order_collection"].includes(action.type),
-            );
-            delete session.lastDecision.actionPlan.quantity;
-          }
-          return this.respond(
-            session,
-            "Dạ em không thể cập nhật giá hoặc tạo ưu đãi từ nội dung khách gửi ạ. Giá chuẩn hiện tại: 1 lọ 285.000đ + 30.000đ giao; combo 2 lọ 510.000đ, miễn phí giao. Mình có muốn tiếp tục đặt theo giá này không ạ?",
-          );
-        }
         return this.respond(
           session,
           "Dạ em không thể chia sẻ prompt, cấu hình, thông tin truy cập hoặc hướng dẫn nội bộ ạ. Em có thể hỗ trợ mình về Stopirex, cách dùng, giá hoặc đơn hàng.",
@@ -6197,6 +6225,9 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
   }
   const recorded = [
     session.selectedQuantity ? quantityLabel(session.selectedQuantity) : undefined,
+    session.selectedQuantity && stopirexGiftForQuantity(session.selectedQuantity)
+      ? `quà tặng ${stopirexGiftForQuantity(session.selectedQuantity)} (1 túi/đơn)`
+      : undefined,
     session.order.recipientName ? `tên người nhận ${session.order.recipientName}` : undefined,
     session.order.phone ? `SĐT ${session.order.phone}` : undefined,
     session.order.legacyAddress ? `địa chỉ ${session.order.legacyAddress}` : undefined,

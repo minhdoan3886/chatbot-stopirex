@@ -353,8 +353,13 @@ const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
   body_area_hands_feet: ["mo hoi tay", "mo hoi chan", "long ban tay", "long ban chan"],
   effectiveness_start: [
     "bao lau thay hieu qua",
+    "bao lau thi thay hieu qua",
+    "sau bao lau moi thay hieu qua",
     "khi nao thay hieu qua",
     "may ngay thay hieu qua",
+    "may hom thi co tac dung",
+    "khi nao bat dau co tac dung",
+    "dung bao nhieu ngay thi do mo hoi",
     "bao lau thay kho",
   ],
   general_usage: ["cach dung nhu nao", "huong dan su dung stopirex", "dung stopirex nhu the nao"],

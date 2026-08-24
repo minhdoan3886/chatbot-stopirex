@@ -682,6 +682,46 @@ test("Question Coverage Gate chặn thu đơn khi LLM timeout làm mất câu h�
   assert.doesNotMatch(response.reply, /tên người nhận|SĐT|địa chỉ trước sáp nhập/iu);
 });
 
+test("Question Coverage Gate chấp nhận câu LLM diễn đạt lại thời điểm hiệu quả khi có Knowledge", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        intent: "product_effect",
+        topic: "effectiveness",
+        asksDirectAnswer: true,
+        confidence: 0.98,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "effectiveness",
+            confidence: 0.98,
+            evidence: ["bao lâu thì thấy hiệu quả"],
+          },
+        ],
+        knowledgeIds: ["effectiveness-usage-journey"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Dạ khi dùng đúng hướng dẫn, mình có thể bắt đầu cảm nhận vùng nách khô thoáng hơn trong tuần đầu. Mỗi lần dùng hỗ trợ đến 72 giờ; giai đoạn đầu lăn buổi tối 2–3 lần/tuần.",
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "coverage-grounded-effectiveness-paraphrase",
+    text: "bao lâu thì thấy hiệu quả?",
+  });
+
+  assert.match(response.reply, /trong tuần đầu/iu);
+  assert.doesNotMatch(response.reply, /chưa gửi thông tin|chuyển bộ phận liên quan/iu);
+  assert.ok(
+    response.state.decisionTrace?.knowledgeEntityIds.includes("effectiveness-usage-journey"),
+  );
+});
+
 test("Grounding guard bỏ nguồn gần nghĩa sai và dùng nguồn chính xác về tắm xà phòng", async () => {
   const chat = new DemoChatService();
   const llm = new CodexLlmBridge({

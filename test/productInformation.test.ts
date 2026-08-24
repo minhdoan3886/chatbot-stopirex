@@ -209,6 +209,8 @@ test("retrieval ưu tiên đúng knowledge hẹp và không để hướng dẫn
   assert.equal(topIds("giá bao nhiêu")[0], "pricing-approved-options-2026-08");
   assert.equal(topIds("có cồn không")[0], "business-approved-alcohol-odor-guidance-2026-08");
   assert.equal(topIds("bao lâu thấy hiệu quả")[0], "effectiveness-usage-journey");
+  assert.deepEqual(topIds("bao lâu thì thấy hiệu quả"), ["effectiveness-usage-journey"]);
+  assert.deepEqual(topIds("mấy hôm thì có tác dụng"), ["effectiveness-usage-journey"]);
   assert.deepEqual(topIds("mồ hôi tay dùng được không"), ["usage-approved-area-underarms-only"]);
   assert.deepEqual(topIds("cách dùng như nào"), ["usage-general"]);
   assert.equal(topIds("bị ngứa đỏ sau khi dùng")[0], "care-suspected-allergic-reaction");

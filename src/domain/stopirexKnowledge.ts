@@ -481,7 +481,12 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
         "Khi dùng đúng hướng dẫn, khách có thể bắt đầu cảm nhận vùng nách khô thoáng hơn trong tuần đầu. Mốc hỗ trợ kiểm soát đến 72 giờ là kết quả thử nghiệm trên nhóm mẫu cho mỗi lần dùng đúng hướng dẫn, không phải cam kết mọi người khô tuyệt đối đủ 72 giờ. Giai đoạn đầu dùng buổi tối trên da sạch, khô hoàn toàn, lăn mỏng 2–3 lần/tuần; khi tình trạng ổn định thì duy trì giãn cách khoảng 2–3 ngày/lần theo hướng dẫn. Sản phẩm hỗ trợ kiểm soát mồ hôi trong quá trình duy trì, không phải phương pháp loại bỏ tuyến mồ hôi và không có cam kết khỏi vĩnh viễn.",
       searchAliases: [
         "bao lâu thấy hiệu quả",
+        "bao lâu thì thấy hiệu quả",
+        "sau bao lâu mới thấy hiệu quả",
         "mấy ngày thấy hiệu quả",
+        "mấy hôm thì có tác dụng",
+        "khi nào bắt đầu có tác dụng",
+        "dùng bao nhiêu ngày thì đỡ mồ hôi",
         "khi nào thấy khô",
         "lộ trình sử dụng",
       ],

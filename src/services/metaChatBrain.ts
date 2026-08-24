@@ -475,13 +475,24 @@ function assessQuestionCoverage(input: {
   const groundedBaseCoveredCount = input.base.state.decisionTrace?.knowledgeEntityIds.length
     ? responseCoveredCount
     : 0;
+  const groundedLlmCoveredCount =
+    input.interpretationStatus === "interpreted" &&
+    input.compositionStatus === "enhanced" &&
+    (input.interpreted.knowledgeIds?.length ?? 0) > 0
+      ? actionCoveredCount
+      : 0;
   // The LLM is still called first for product questions. If it returns only a
   // semantic classification, a deterministic response grounded in approved KB
   // may pass — but only when the actual reply covers every customer question.
-  // This keeps timeout/multi-intent omissions fail-closed.
+  // A grounded LLM draft may paraphrase the question without sharing literal
+  // words (for example "bao lâu" -> "trong tuần đầu"). Its answer action can
+  // satisfy coverage because the separate knowledge-grounding guard has already
+  // verified the cited source and factual overlap. Timeouts and uncited drafts
+  // still fail closed.
   const coveredCount = Math.max(
     Math.min(actionCoveredCount, responseCoveredCount),
     groundedBaseCoveredCount,
+    groundedLlmCoveredCount,
   );
   const missingCount = Math.max(0, questionCount - coveredCount);
   return {

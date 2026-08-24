@@ -1808,7 +1808,13 @@ export class DemoChatService {
       session.signal = undefined;
       if (session.pipeline === "1.Phân loại") this.move(session, "classified");
       recordKnowledge(session, [
-        "product-comparison-traditional-rollon",
+        ...(isEffectivenessJourneyQuestion(text)
+          ? [
+              "effectiveness-usage-journey",
+              "product-training-72h-conditional-claim",
+              "usage-general",
+            ]
+          : ["product-comparison-traditional-rollon"]),
         ...(isApplicationFeelOrClothingConcern(text) ? ["usage-application-feel-clothing"] : []),
         ...(isSweatWashOffConcern(text) ? ["usage-exercise-sweat-washoff"] : []),
         ...(isPermanentControlQuestion(text) ? ["mechanism-control-not-permanent"] : []),
@@ -4726,7 +4732,10 @@ function knowledgeForActionTopics(topics: readonly SemanticTopic[], text: string
     ids.add("product-official-ingredient-list-2022");
   }
   for (const topic of topics) {
-    if (["effectiveness", "sweat", "odor", "comparison"].includes(topic)) {
+    if (
+      ["effectiveness", "sweat", "odor", "comparison"].includes(topic) &&
+      !isEffectivenessJourneyQuestion(text)
+    ) {
       ids.add("product-comparison-traditional-rollon");
     }
     if (topic === "usage") {

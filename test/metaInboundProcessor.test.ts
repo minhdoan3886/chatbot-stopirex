@@ -720,6 +720,12 @@ test("Question Coverage Gate chấp nhận câu LLM diễn đạt lại thời �
   assert.ok(
     response.state.decisionTrace?.knowledgeEntityIds.includes("effectiveness-usage-journey"),
   );
+  assert.equal(
+    response.state.decisionTrace?.knowledgeEntityIds.includes(
+      "product-comparison-traditional-rollon",
+    ),
+    false,
+  );
 });
 
 test("Grounding guard bỏ nguồn gần nghĩa sai và dùng nguồn chính xác về tắm xà phòng", async () => {

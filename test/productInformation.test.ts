@@ -227,6 +227,19 @@ test("retrieval ưu tiên đúng knowledge hẹp và không để hướng dẫn
   assert.ok(dialectCompound.includes("usage-application-feel-clothing"));
   assert.ok(dialectCompound.includes("effectiveness-usage-journey"));
 
+  const dialectUsageRefund = retrieveKnowledgeMatches({
+    tenantId: currentTenant,
+    query:
+      "alo shop ấy, họa m thấy qc trên tóp top. lọ số tốp pi réch này xài tnao đấy? bôi xong có bị bết k nhỉ? mk bị hôi nách nặng từ hồi c3 rồ, dùng bh loại k khỏi. nếu mức 1 c mà k đỡ có dc hoàn xèng k. t ship về tp thái bình",
+    entities,
+    limit: 6,
+  }).map((item) => item.entity.id);
+  assert.ok(dialectUsageRefund.includes("usage-general"));
+  assert.ok(dialectUsageRefund.includes("usage-application-feel-clothing"));
+  assert.ok(dialectUsageRefund.includes("care-ineffective-refund"));
+  assert.ok(dialectUsageRefund.includes("refund-used-ineffective"));
+  assert.ok(dialectUsageRefund.includes("pricing-approved-options-2026-08"));
+
   const pricing = entities.find((item) => item.id === "pricing-approved-options-2026-08");
   assert.ok(pricing?.responseGuidance?.includes("chỉ báo phương án 1–3 lọ"));
   assert.equal(pricing?.content.includes("Khi khách hỏi giá chung"), false);

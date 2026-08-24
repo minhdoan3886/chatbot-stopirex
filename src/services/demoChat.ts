@@ -348,11 +348,17 @@ export class DemoChatService {
       optOut: isOptOut(text),
       collectingOrder: session.pipeline !== "6.Đã tạo đơn" && Boolean(session.selectedQuantity),
     });
+    const quantityBlockedByConditionalRefund = actionPlan.conflicts.some((conflict) =>
+      conflict.includes("giả định hoàn tiền"),
+    );
     const semanticOrderDataRecorded =
       session.pipeline !== "6.Đã tạo đơn" &&
       Boolean(
         session.selectedQuantity ||
-        (semantic.intent === "buying" && requestedQuantity && requestedQuantity <= 5),
+        (!quantityBlockedByConditionalRefund &&
+          semantic.intent === "buying" &&
+          requestedQuantity &&
+          requestedQuantity <= 5),
       ) &&
       applySemanticOrderUpdates(session, actionPlan.accepted, raw);
     const exactRouteIsHardGuard = Boolean(
@@ -726,7 +732,11 @@ export class DemoChatService {
     const llmInterpretationFailed = Boolean(semantic.status && semantic.status !== "interpreted");
     if (multiActionEnabled && llmInterpretationFailed && isExplicitCustomerQuestion(raw)) {
       const fallback = llmFailureKnowledgeAnswer(raw, semanticSlots);
-      if (committedRequestedQuantity && committedRequestedQuantity <= 5) {
+      if (
+        !quantityBlockedByConditionalRefund &&
+        committedRequestedQuantity &&
+        committedRequestedQuantity <= 5
+      ) {
         selectQuantity(session, committedRequestedQuantity as SupportedOrderQuantity);
         this.move(session, "agreed_to_buy");
       }
@@ -746,7 +756,7 @@ export class DemoChatService {
       const replies = [
         ...(fallback ? [fallback.reply] : []),
         ...(needsHuman ? [unsupportedQuestionHandoffReply(raw, [raw])] : []),
-        ...(committedRequestedQuantity && session.selectedQuantity
+        ...(!quantityBlockedByConditionalRefund && committedRequestedQuantity && session.selectedQuantity
           ? [`Dạ em đã ghi nhận mình muốn lấy ${session.selectedQuantity} lọ ạ.`]
           : []),
       ];
@@ -3257,7 +3267,9 @@ export function isOutOfScopeAssistantProbe(value: string): boolean {
 
 export function isReturnsPolicyQuestion(value: string): boolean {
   const text = normalize(value);
-  return /doi tra|tra hang|hoan tien|chinh sach doi|doi hang|phi doi tra|duoc doi khong/.test(text);
+  return /doi tra|tra hang|hoan tien|hoan xeng|tra tien|chinh sach doi|doi hang|phi doi tra|duoc doi khong/.test(
+    text,
+  );
 }
 
 function isProductComparison(text: string): boolean {
@@ -3411,7 +3423,8 @@ export function isSweatWashOffConcern(value: string): boolean {
 export function isApplicationFeelOrClothingConcern(value: string): boolean {
   const text = normalize(value);
   const asksApplicationFeel =
-    /\b(?:moi|vua|luc|sau khi) (?:lan|boi)\b.{0,55}\b(?:uot|am|nhep|bet|dinh)\b/.test(text);
+    /\b(?:moi|vua|luc|sau khi) (?:lan|boi)\b.{0,55}\b(?:uot|am|nhep|bet|dinh)\b/.test(text) ||
+    /\b(?:lan|boi)(?: xong| len| vao)?\b.{0,45}\b(?:uot|am|nhep|bet|dinh)\b/.test(text);
   const asksClothingEffect =
     /\b(?:bam|dinh|o|vang|vet trang|cung vai)\b.{0,35}\b(?:ao|so mi|vai)\b|\b(?:ao|so mi|vai)\b.{0,35}\b(?:bam|dinh|o|vang|vet trang|cung)\b/.test(
       text,
@@ -3917,9 +3930,9 @@ function isHypotheticalIrritationRefundQuestion(value: string): boolean {
 function isUsedIneffectiveRefundQuestion(value: string): boolean {
   const text = normalize(value);
   return (
-    /da dung dung|dung khong do|khong hieu qua|chua hieu qua|khong do|khong cai thien|(?:nhỡ|nho|neu).{0,50}(?:khong do|khong hieu qua)|(?:sau|du)\s*2\s*tuan.{0,45}(?:van uot|van ra mo hoi|khong kho|khong cai thien)/.test(
+    /da dung dung|dung (?:khong|k) do|(?:khong|k) hieu qua|chua hieu qua|(?:khong|k) (?:do|khoi|het)|khong cai thien|(?:nhỡ|nho|neu).{0,50}(?:(?:khong|k) (?:do|khoi)|khong hieu qua)|(?:sau|du)\s*2\s*tuan.{0,45}(?:van uot|van ra mo hoi|khong kho|khong cai thien)/.test(
       text,
-    ) && /hoan tien|gui tra|tra hang|doi tra/.test(text)
+    ) && /hoan tien|hoan xeng|tra tien|gui tra|tra hang|doi tra/.test(text)
   );
 }
 
@@ -4549,7 +4562,14 @@ function multiActionAnswer(
   if (isPriorOtherProductAdverseExperience(text) || isPriorSweatProcedureEffectQuestion(text)) {
     return productComparisonReply(false, text);
   }
-  if (isReturnsPolicyQuestion(text)) return returnsPolicyReply(text);
+  const returnsPolicyQuestion = isReturnsPolicyQuestion(text);
+  if (
+    returnsPolicyQuestion &&
+    uniqueTopics.every((topic) => ["order", "other"].includes(topic)) &&
+    !isApplicationFeelOrClothingConcern(text)
+  ) {
+    return returnsPolicyReply(text);
+  }
   if (isProductCompositionMythQuestion(text)) {
     return isIndustrialAlcoholMythQuestion(text)
       ? "Dạ hồ sơ công bố của Stopirex có thành phần Alcohol dùng trong công thức mỹ phẩm, không có dữ liệu nào ghi sản phẩm chứa ‘cồn công nghiệp’ ạ. Stopirex hỗ trợ kiểm soát mồ hôi và không làm teo tuyến mồ hôi vĩnh viễn."
@@ -4585,7 +4605,8 @@ function multiActionAnswer(
       "Sản phẩm có mùi dược tính đặc trưng nhẹ và bay hơi rất nhanh, nên mình dùng nước hoa vẫn không bị lẫn mùi ạ.",
     ].join("\n\n");
   }
-  if (uniqueTopics.some((topic) => ["effectiveness", "sweat", "odor"].includes(topic))) {
+  const hasEffectAnswer = uniqueTopics.some((topic) => ["effectiveness", "sweat", "odor"].includes(topic));
+  if (hasEffectAnswer) {
     const effectTopic = productEffectTopic(text, semanticSlots) ?? semanticSlots.primarySymptom ?? "both";
     answers.push(productEffectReply(effectTopic, undefined, text, semanticSlots.workContext));
   }
@@ -4600,6 +4621,10 @@ function multiActionAnswer(
             : "Dạ mình dùng Stopirex vào buổi tối khi da sạch, khô hoàn toàn; lăn một lớp mỏng khoảng 2–3 lần/tuần ạ.",
     );
   }
+  if (isApplicationFeelOrClothingConcern(text) && !hasEffectAnswer) {
+    answers.push(productEffectReply("both", undefined, text, semanticSlots.workContext));
+  }
+  if (returnsPolicyQuestion) answers.push(returnsPolicyReply(text));
   if (uniqueTopics.includes("comparison")) {
     answers.push(
       "Dạ lăn thông thường thường dùng hằng ngày để khử hoặc che mùi; Stopirex hỗ trợ kiểm soát tiết mồ hôi, dùng buổi tối và không dùng hương thơm để che mùi ạ.",
@@ -4714,6 +4739,17 @@ function llmFailureKnowledgeAnswer(
       reply:
         "Dạ mình chưa bôi ngay sáng nay ạ. Sau nhổ, cạo, wax hoặc triệt lông, mình chờ 24–48 giờ và chỉ dùng khi da đã ổn. Stopirex dùng buổi tối trên da sạch, khô, lăn mỏng; chờ khô rồi mặc áo. Dùng đúng hướng dẫn, sản phẩm không bết và không gây ố vàng nách áo.",
       knowledgeIds: ["usage-after-hair-removal", "usage-application-feel-clothing"],
+      intent: "usage_guidance",
+    };
+  }
+  if (isReturnsPolicyQuestion(text) && isApplicationFeelOrClothingConcern(text)) {
+    return {
+      reply: [
+        "Dạ mình dùng Stopirex buổi tối trên da sạch, khô hoàn toàn; lăn một lớp mỏng 2–3 lần/tuần ạ.",
+        "Lúc mới lăn da có thể hơi ẩm nhẹ nhưng sản phẩm khô nhanh và không bết khi dùng đúng lượng; mình chờ khô rồi mặc áo nhé.",
+        "Nếu dùng đúng hướng dẫn đủ 2 tuần mà chưa hiệu quả, bên em hỗ trợ hoàn tiền; hồ sơ gồm thông tin tài khoản và clip nhúng hủy sản phẩm, không cần gửi lại sản phẩm ạ.",
+      ].join("\n\n"),
+      knowledgeIds: ["usage-general", "usage-application-feel-clothing", "refund-used-ineffective"],
       intent: "usage_guidance",
     };
   }

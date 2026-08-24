@@ -241,7 +241,16 @@ export function retrieveKnowledgeMatches(input: {
     [...queryConcepts].filter((concept) => precisionSearchConcepts.has(concept)),
   );
   const hasNonPrecisionConcept = [...queryConcepts].some((concept) => !precisionSearchConcepts.has(concept));
-  const allowsMixedCommerceRecall = precisionQueryConcepts.has("price") && hasNonPrecisionConcept;
+  const hasCompoundNonPrecisionConcept = [...queryConcepts].some(
+    (concept) => !precisionSearchConcepts.has(concept) && concept !== "usage",
+  );
+  // Precision concepts prevent broad single-topic queries from drifting. In a
+  // genuinely compound message they must not suppress the other detected
+  // concepts (for example cách dùng + bết + hoàn tiền + ship).
+  const allowsMixedPrecisionRecall =
+    hasNonPrecisionConcept &&
+    hasCompoundNonPrecisionConcept &&
+    (precisionQueryConcepts.has("price") || precisionQueryConcepts.has("general_usage"));
   const queryNgrams = characterNgrams(queryText);
   const ranked = input.entities
     .filter((entity) => entity.tenantId === input.tenantId)
@@ -283,7 +292,7 @@ export function retrieveKnowledgeMatches(input: {
     .filter(
       (item) =>
         (precisionQueryConcepts.size === 0 ||
-          allowsMixedCommerceRecall ||
+          allowsMixedPrecisionRecall ||
           item.matchedConcepts.some((concept) => precisionQueryConcepts.has(concept))) &&
         (item.matchedTerms.length > 0 || item.matchedConcepts.length > 0 || item.score >= 1.2),
     )
@@ -292,7 +301,14 @@ export function retrieveKnowledgeMatches(input: {
   const conceptLeaders = [...queryConcepts]
     .map((concept) => ranked.find((item) => item.matchedConcepts.includes(concept)))
     .filter((item): item is KnowledgeMatch => Boolean(item));
-  const selected = [...conceptLeaders, ...ranked.filter((item) => item.score >= strongestScore * 0.55)]
+  const selected = [
+    ...conceptLeaders,
+    ...ranked.filter((item) => item.score >= strongestScore * 0.55),
+    // Fill any remaining context slots by score. This matters when one very
+    // strong spelling alias would otherwise raise the relative threshold and
+    // hide another valid topic from a compound customer message.
+    ...ranked,
+  ]
     .filter(
       (item, index, all) => all.findIndex((candidate) => candidate.entity.id === item.entity.id) === index,
     )
@@ -338,9 +354,19 @@ const searchStopWords = new Set([
 const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
   price: ["price", "price bao nhieu", "bao nhieu tien", "bao price", "combo"],
   promotion: ["uu dai", "khuyen mai", "giam price", "bot them", "bot dong", "tang kem", "qua tang", "gift"],
-  shipping: ["fs", "ship", "phi giao", "phi ship", "freeship", "free ship", "mien phi giao", "bao ship"],
+  shipping: [
+    "fs",
+    "ship",
+    "phi giao",
+    "phi ship",
+    "freeship",
+    "free ship",
+    "mien phi giao",
+    "bao ship",
+    "ship ve",
+  ],
   darkening: ["tham", "tham nach", "sam nach", "sam mau"],
-  clothing: ["o ao", "ao trang", "dinh ao", "bet dinh"],
+  clothing: ["o ao", "ao trang", "dinh ao", "bet dinh", "bi bet", "bet k", "bet khong"],
   pregnancy: [
     "me bau",
     "ba bau",
@@ -367,14 +393,22 @@ const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
     "dung bao nhieu ngay thi do mo hoi",
     "bao lau thay kho",
   ],
-  general_usage: ["cach dung nhu nao", "huong dan su dung stopirex", "dung stopirex nhu the nao"],
+  general_usage: [
+    "cach dung nhu nao",
+    "huong dan su dung stopirex",
+    "dung stopirex nhu the nao",
+    "xai nhu nao",
+    "xai tnao",
+    "dung tnao",
+  ],
   usage: ["cach dung", "huong dan", "boi", "lan", "su dung"],
   duration: ["dung duoc bao lau", "dung may thang", "thoi gian su dung"],
   sweat: ["mo hoi", "uot ao", "uot sung", "tiet mo hoi", "kho thoang"],
   odor: ["mui", "hoi nach", "khu mui", "mui co the"],
   irritation: ["rat", "ngua", "viem", "kich ung", "cham chich", "do da"],
   damaged: ["vo", "hong", "be", "ro ri", "mop", "do san pham"],
-  returns: ["doi tra", "tra hang", "hoan tien", "bao hanh"],
+  returns: ["doi tra", "tra hang", "hoan tien", "hoan xeng", "tra tien", "bao hanh"],
+  ineffective: ["khong do", "k do", "khong khoi", "k khoi", "khong hieu qua", "khong cai thien"],
   authenticity: ["hang gia", "chinh hang", "hang that", "fake", "nguon goc"],
   exercise: ["tap gym", "da bong", "the thao", "van dong", "ra mo hoi"],
   permanent: ["dut diem", "tam thoi", "dung ca doi", "ngung boi", "ra lai"],

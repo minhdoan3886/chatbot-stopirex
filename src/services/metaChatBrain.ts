@@ -2,6 +2,7 @@ import { retrieveKnowledgeMatches, type KnowledgeMatch } from "../domain/knowled
 import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
 import {
   missingRequiredAnswerTopics,
+  replyCoversRequiredAnswerTopic,
   requiredAnswerTopics,
   type RequiredAnswerTopic,
 } from "../domain/requiredAnswerTopics.js";
@@ -160,6 +161,10 @@ export class MetaChatBrain {
         confidence: llmResult.confidence,
         actionCount: llmResult.actions?.length ?? 0,
         actions: llmResult.actions?.map((action) => action.type) ?? [],
+        actionTopics:
+          llmResult.actions
+            ?.filter((action) => action.type === "answer_question")
+            .map((action) => action.topic) ?? [],
         uncertaintyCount: llmResult.uncertainties?.length ?? 0,
         retrievedKnowledge: matches.map((match) => ({
           id: match.entity.id,
@@ -499,12 +504,14 @@ function assessQuestionCoverage(input: {
   const explicitQuestionCount = extractCustomerQuestionClauses(input.customerMessage).length;
   const requiredFactTopics = requiredAnswerTopics(input.customerMessage);
   const requiredSemanticTopics = semanticAnswerTopics(input.interpreted);
+  const requiredTopics = [...new Set([...requiredFactTopics, ...requiredSemanticTopics])];
   const questionCount = Math.max(
     explicitQuestionCount,
     requiredSemanticTopics.length,
+    requiredFactTopics.length,
+    requiredTopics.length,
     input.interpreted.unsupportedQuestions?.length ?? 0,
   );
-  const requiredTopics = [...new Set([...requiredFactTopics, ...requiredSemanticTopics])];
   const missingTopics = [
     ...missingRequiredAnswerTopics(input.customerMessage, input.candidateReply),
     ...requiredSemanticTopics.filter((topic) => !replyCoversSemanticTopic(topic, input.candidateReply)),
@@ -560,6 +567,9 @@ function assessQuestionCoverage(input: {
   const semanticCoveredCount = requiredSemanticTopics.filter((topic) =>
     replyCoversSemanticTopic(topic, input.candidateReply),
   ).length;
+  const factCoveredCount = requiredFactTopics.filter((topic) =>
+    replyCoversRequiredAnswerTopic(topic, input.candidateReply),
+  ).length;
   // The LLM is still called first for product questions. If it returns only a
   // semantic classification, a deterministic response grounded in approved KB
   // may pass — but only when the actual reply covers every customer question.
@@ -572,7 +582,7 @@ function assessQuestionCoverage(input: {
     Math.min(actionCoveredCount, responseCoveredCount),
     groundedBaseCoveredCount,
     groundedLlmCoveredCount,
-    semanticCoveredCount,
+    semanticCoveredCount + factCoveredCount,
   );
   const missingCount = Math.max(0, questionCount - coveredCount);
   return {
@@ -852,6 +862,7 @@ function semanticKnowledgeQueries(semantic: SemanticUnderstanding): string[] {
     queries.add("hiệu quả giảm mồ hôi mùi cơ thể thâm nách bết dính ố áo");
   }
   if (topics.has("usage")) queries.add("cách dùng thời điểm tần suất lăn Stopirex");
+  if (topics.has("order")) queries.add("không đỡ không hiệu quả hoàn tiền đổi trả điều kiện 2 tuần");
   if (topics.has("pregnancy")) queries.add("phụ nữ mang thai mẹ bầu dùng Stopirex");
   if (topics.has("breastfeeding")) queries.add("phụ nữ cho con bú dùng Stopirex");
   if (topics.has("child_age")) queries.add("trẻ em độ tuổi dùng Stopirex");

@@ -149,7 +149,10 @@ export function reconcileConversationActions(input: {
     }
   }
 
-  const explicitQuantity = extractExplicitPurchaseQuantity(text);
+  const conditionalRefundPolicyQuestion = isConditionalRefundQuantityQuestion(text);
+  const explicitQuantity = conditionalRefundPolicyQuestion
+    ? undefined
+    : extractExplicitPurchaseQuantity(text);
   const trustedLlmQuantity = trustedLlmPurchaseQuantity({
     raw,
     semantic: input.semantic,
@@ -175,12 +178,7 @@ export function reconcileConversationActions(input: {
   const answerTopic = inferredAnswerTopic(input.semantic, input.exactIntent, text);
   for (const line of batchedMessageLines(raw)) {
     const topic = inferredBatchedLineAnswerTopic(line.normalized);
-    if (
-      topic &&
-      !candidates.some(
-        (action) => action.type === "answer_question" && action.topic === topic,
-      )
-    ) {
+    if (topic && !candidates.some((action) => action.type === "answer_question" && action.topic === topic)) {
       candidates.push({
         ...baseAction("answer_question", "state", [line.raw]),
         topic,
@@ -201,9 +199,7 @@ export function reconcileConversationActions(input: {
   }
   if (
     answerTopic &&
-    !candidates.some(
-      (action) => action.type === "answer_question" && action.topic === answerTopic,
-    )
+    !candidates.some((action) => action.type === "answer_question" && action.topic === answerTopic)
   ) {
     candidates.push({
       ...baseAction("answer_question", input.exactIntent ? "guardrail" : "state", [raw]),
@@ -344,6 +340,15 @@ export function reconcileConversationActions(input: {
     );
     conflicts.push("Số lượng nằm trong câu hỏi giá/ship; chưa phải quyết định mua.");
   }
+  if (conditionalRefundPolicyQuestion) {
+    rejectAccepted(
+      accepted,
+      rejected,
+      (action) => action.type === "select_quantity" || action.type === "continue_order_collection",
+      "policy_verification_required",
+    );
+    conflicts.push("Số lượng nằm trong giả định hoàn tiền; chưa phải quyết định mua.");
+  }
 
   const hasDecline = hasAction(accepted, "decline_purchase");
   const hasSelect = hasAction(accepted, "select_quantity");
@@ -399,6 +404,14 @@ export function reconcileConversationActions(input: {
   };
 }
 
+function isConditionalRefundQuantityQuestion(text: string): boolean {
+  return (
+    /\bneu\b.{0,45}\b(?:mua|lay|dung)\b.{0,25}\b(?:1|mot)\s*(?:lo|chai)\b/.test(text) &&
+    /\b(?:khong|ko|k)\s*(?:do|khoi|het|hieu qua|cai thien)\b/.test(text) &&
+    /\b(?:hoan tien|hoan xeng|tra tien|tra hang|doi tra)\b/.test(text)
+  );
+}
+
 function isUsedIneffectiveRefundQuestion(text: string): boolean {
   return (
     /(?:dung|xai|boi).*(?:khong do|khong hieu qua|chua hieu qua)|(?:khong do|khong hieu qua|chua hieu qua).*(?:hoan tien|doi tra)/.test(
@@ -449,18 +462,12 @@ function validateAction(
   if (action.type === "select_quantity") {
     if (![1, 2, 3, 4, 5].includes(action.quantity)) return "unsupported_quantity";
     const trustedLinguisticSelection =
-      action.source === "llm" &&
-      action.quantity === trustedLlmQuantity &&
-      hasGroundedEvidence(action, raw);
+      action.source === "llm" && action.quantity === trustedLlmQuantity && hasGroundedEvidence(action, raw);
     if (!explicitQuantityAppears(text, action.quantity) && !trustedLinguisticSelection) {
       return "missing_evidence";
     }
   }
-  if (
-    action.type === "decline_purchase" &&
-    action.source === "llm" &&
-    !hasGroundedEvidence(action, raw)
-  ) {
+  if (action.type === "decline_purchase" && action.source === "llm" && !hasGroundedEvidence(action, raw)) {
     return "missing_evidence";
   }
   if (action.type === "update_order" && Object.keys(action.fields).length === 0) {
@@ -563,14 +570,13 @@ function groundedOrderUpdateFields(
       const normalizedValue = normalize(value);
       if (!normalizedValue || !normalizedMessage.includes(normalizedValue)) return false;
       if (field === "recipientName") {
-        return (
-          value.length <= 50 &&
-          /^[\p{L}\s]+$/u.test(value) &&
-          value.trim().split(/\s+/u).length <= 6
-        );
+        return value.length <= 50 && /^[\p{L}\s]+$/u.test(value) && value.trim().split(/\s+/u).length <= 6;
       }
       if (field === "legacyAddress") {
-        return value.length <= 160 && /\d|\b(?:duong|pho|ngo|thon|phuong|xa|quan|huyen|tinh|ha noi)\b/u.test(normalizedValue);
+        return (
+          value.length <= 160 &&
+          /\d|\b(?:duong|pho|ngo|thon|phuong|xa|quan|huyen|tinh|ha noi)\b/u.test(normalizedValue)
+        );
       }
       return value.length <= 160;
     }),
@@ -634,19 +640,13 @@ function batchedMessageLines(raw: string): Array<{ raw: string; normalized: stri
  */
 function inferredBatchedLineAnswerTopic(text: string): SemanticTopic | undefined {
   const asksOncePerDay =
-    /\b(?:1|mot)\s+ngay\b.*\b(?:chi\s+)?(?:lan|boi|dung|su dung)\b.*\b(?:1|mot)\s+lan\b/.test(
-      text,
-    ) ||
-    /\b(?:lan|boi|dung|su dung)\b.*\b(?:1|mot)\s+lan\b.*\b(?:1|mot)\s+ngay\b/.test(
-      text,
-    );
+    /\b(?:1|mot)\s+ngay\b.*\b(?:chi\s+)?(?:lan|boi|dung|su dung)\b.*\b(?:1|mot)\s+lan\b/.test(text) ||
+    /\b(?:lan|boi|dung|su dung)\b.*\b(?:1|mot)\s+lan\b.*\b(?:1|mot)\s+ngay\b/.test(text);
   if (asksOncePerDay) return "usage";
 
   const comparesDailyRollOn =
     /\bgiong\b.*\blan khu mui\b|\blan khu mui\b.*\bgiong\b/.test(text) &&
-    /\b(?:giam|kiem soat|ngan)\b.*\bmo hoi\b|\bmo hoi\b.*\b(?:giam|kiem soat|ngan)\b/.test(
-      text,
-    );
+    /\b(?:giam|kiem soat|ngan)\b.*\bmo hoi\b|\bmo hoi\b.*\b(?:giam|kiem soat|ngan)\b/.test(text);
   if (comparesDailyRollOn) return "comparison";
   return undefined;
 }

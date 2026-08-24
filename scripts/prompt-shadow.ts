@@ -43,8 +43,7 @@ const cases: readonly ShadowCase[] = [
   },
   {
     id: "permanent-or-control",
-    message:
-      "Nó là thuốc chữa dứt điểm hay chỉ ngăn tạm thời thôi? Ngừng bôi là mồ hôi lại ra à?",
+    message: "Nó là thuốc chữa dứt điểm hay chỉ ngăn tạm thời thôi? Ngừng bôi là mồ hôi lại ra à?",
     expectedIntents: ["product_effect", "knowledge_unknown"],
     requiredActions: ["answer_question"],
     rejectDraft: /^Dạ có(?: ạ)?[.!]/iu,
@@ -86,13 +85,22 @@ const cases: readonly ShadowCase[] = [
   },
   {
     id: "application-feel-clothing",
-    message:
-      "Bôi cái này lúc mới lăn lên nó có bị ướt nhẹp hay bết dính, ố ra áo sơ mi trắng không shop?",
+    message: "Bôi cái này lúc mới lăn lên nó có bị ướt nhẹp hay bết dính, ố ra áo sơ mi trắng không shop?",
     expectedIntents: ["product_effect"],
     requiredActions: ["answer_question"],
     requireFinalReply: /khô nhanh|khô hoàn toàn|khô hẳn|không bám|không (?:gây )?ố/iu,
     rejectFinalReply: /chưa thấy thông tin|chuyển nhân viên/iu,
     reconcile: { exactIntent: "product_effect" },
+  },
+  {
+    id: "dialect-usage-feel-refund",
+    message:
+      "alo shop ấy, họa m thấy qc trên tóp top. lọ số tốp pi réch này xài tnao đấy? bôi xong có bị bết k nhỉ? mk bị hôi nách nặng từ hồi c3 rồ, dùng bh loại k khỏi. nếu mức 1 c mà k đỡ có dc hoàn xèng k. t ship về tp thái bình",
+    expectedIntents: ["usage_guidance", "order_support", "product_effect"],
+    requiredActions: ["answer_question"],
+    forbiddenActions: ["continue_order_collection", "select_quantity", "handoff_to_human"],
+    requireFinalReply: /(?=[\s\S]*không bết)(?=[\s\S]*2 tuần)(?=[\s\S]*hoàn tiền)/iu,
+    rejectFinalReply: /chưa có đủ thông tin|chuyển bộ phận liên quan/iu,
   },
   {
     id: "gym-sweat-washoff",
@@ -131,8 +139,7 @@ const cases: readonly ShadowCase[] = [
   },
   {
     id: "bottle-duration-boi-can",
-    message:
-      "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?",
+    message: "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?",
     expectedIntents: ["usage_frequency"],
     requiredActions: ["answer_question"],
     requireFinalReply: /3–4 tháng|3-4 tháng/iu,
@@ -169,10 +176,7 @@ const selectedCaseIds = new Set(
     .map((item) => item.trim())
     .filter(Boolean),
 );
-const selectedCases =
-  selectedCaseIds.size > 0
-    ? cases.filter((item) => selectedCaseIds.has(item.id))
-    : cases;
+const selectedCases = selectedCaseIds.size > 0 ? cases.filter((item) => selectedCaseIds.has(item.id)) : cases;
 
 const promptProfile = process.env.PROMPT_SHADOW_PROFILE === "legacy" ? "legacy" : "compact";
 const bridge = CodexLlmBridge.fromEnvironment({
@@ -182,8 +186,7 @@ const bridge = CodexLlmBridge.fromEnvironment({
   LLM_PROMPT_PROFILE: promptProfile,
   CODEX_LLM_TIMEOUT_MS: process.env.PROMPT_SHADOW_TIMEOUT_MS ?? "60000",
   CODEX_STRUCTURED_INTERPRET_OUTPUT: "true",
-  CODEX_LLM_REASONING_EFFORT:
-    process.env.PROMPT_SHADOW_REASONING_EFFORT ?? "low",
+  CODEX_LLM_REASONING_EFFORT: process.env.PROMPT_SHADOW_REASONING_EFFORT ?? "low",
 });
 
 const results = [];
@@ -212,17 +215,12 @@ for (const fixture of selectedCases) {
   const actionPlan = reconcileConversationActions({
     customerMessage: fixture.message,
     semantic: interpreted,
-    ...(fixture.reconcile?.exactIntent
-      ? { exactIntent: fixture.reconcile.exactIntent }
-      : {}),
+    ...(fixture.reconcile?.exactIntent ? { exactIntent: fixture.reconcile.exactIntent } : {}),
     ...(fixture.reconcile?.detectedCareIssue
       ? { detectedCareIssue: fixture.reconcile.detectedCareIssue }
       : {}),
-    ...(fixture.reconcile?.careScenario
-      ? { careScenario: fixture.reconcile.careScenario }
-      : {}),
-    priorOtherProductAdverseExperience:
-      fixture.reconcile?.priorOtherProductAdverseExperience ?? false,
+    ...(fixture.reconcile?.careScenario ? { careScenario: fixture.reconcile.careScenario } : {}),
+    priorOtherProductAdverseExperience: fixture.reconcile?.priorOtherProductAdverseExperience ?? false,
     optOut: false,
     collectingOrder: false,
   });
@@ -255,15 +253,11 @@ for (const fixture of selectedCases) {
     ...(base.state.activeSkill ? { skillId: base.state.activeSkill } : {}),
     knowledge: relevantKnowledge,
     ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
-    ...(interpreted.unsupportedQuestions
-      ? { unsupportedQuestions: interpreted.unsupportedQuestions }
-      : {}),
+    ...(interpreted.unsupportedQuestions ? { unsupportedQuestions: interpreted.unsupportedQuestions } : {}),
     ...(interpreted.groundingConfidence !== undefined
       ? { groundingConfidence: interpreted.groundingConfidence }
       : {}),
-    knowledgeGroundingRequired: requiresKnowledgeGrounding(
-      base.state.decisionTrace?.selectedIntent,
-    ),
+    knowledgeGroundingRequired: requiresKnowledgeGrounding(base.state.decisionTrace?.selectedIntent),
   });
   const finalReply = composed.reply;
   if (fixture.requireFinalReply && !fixture.requireFinalReply.test(finalReply)) {

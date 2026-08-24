@@ -371,6 +371,84 @@ test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge th
   assert.doesNotMatch(response.reply, /chuyển bộ phận|chưa có đủ thông tin/iu);
 });
 
+test("Meta brain không handoff câu địa phương hỏi cách dùng, bết và hoàn xèng", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        summary: "Khách hỏi cách dùng, bết dính, hiệu quả và hoàn tiền nếu không đỡ",
+        skill: "direct-answer",
+        intent: "usage_guidance",
+        topic: "usage",
+        subject: "product",
+        scenario: "hypothetical",
+        asksDirectAnswer: true,
+        confidence: 0.98,
+        needsClarification: false,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "usage",
+            confidence: 0.98,
+            evidence: ["xài tnao đấy"],
+          },
+          {
+            type: "answer_question",
+            topic: "usage",
+            confidence: 0.98,
+            evidence: ["bôi xong có bị bết k nhỉ"],
+          },
+          {
+            type: "continue_order_collection",
+            confidence: 0.91,
+            evidence: ["nếu mức 1 c mà k đỡ"],
+          },
+        ],
+        uncertainties: ["mức 1 c"],
+        knowledgeIds: ["usage-general", "usage-application-feel-clothing", "refund-used-ineffective"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Dạ mình dùng Stopirex buổi tối trên da sạch, khô; lăn mỏng 2–3 lần/tuần ạ. Sản phẩm hơi ẩm nhẹ lúc mới lăn nhưng khô nhanh và không bết khi dùng đúng lượng, mình chờ khô rồi mặc áo. Nếu dùng đúng hướng dẫn đủ 2 tuần mà chưa hiệu quả, bên em hỗ trợ hoàn tiền; không cần gửi lại sản phẩm ạ.",
+        slots: { primarySymptom: "odor", odorPresent: true },
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId: "dialect-usage-refund",
+    text: "alo shop ấy, họa m thấy qc trên tóp top. lọ số tốp pi réch này xài tnao đấy? bôi xong có bị bết k nhỉ? mk bị hôi nách nặng từ hồi c3 rồ, dùng bh loại k khỏi. nếu mức 1 c mà k đỡ có dc hoàn xèng k. t ship về tp thái bình",
+  });
+
+  assert.match(response.reply, /buổi tối.*2–3 lần\/tuần/isu);
+  assert.match(response.reply, /khô nhanh.*không bết/isu);
+  assert.match(response.reply, /đúng hướng dẫn đủ 2 tuần.*hoàn tiền/isu);
+  assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận liên quan/iu);
+  assert.equal(response.state.selectedQuantity, undefined);
+  assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
+});
+
+test("Meta brain vẫn trả đủ câu địa phương khi cả LLM lỗi", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () => {
+      throw new Error("provider timeout");
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId: "dialect-usage-refund-llm-failure",
+    text: "lọ Stopirex này xài tnao đấy? bôi xong có bị bết k nhỉ? nếu mua 1 chai mà k đỡ có dc hoàn xèng k.",
+  });
+
+  assert.match(response.reply, /buổi tối.*2–3 lần\/tuần/isu);
+  assert.match(response.reply, /khô nhanh.*không bết/isu);
+  assert.match(response.reply, /đúng hướng dẫn đủ 2 tuần.*hoàn tiền/isu);
+  assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận liên quan/iu);
+  assert.equal(response.state.selectedQuantity, undefined);
+});
+
 test("citation mang thai của LLM được ưu tiên hơn retrieval cho con bú đứng đầu", () => {
   const reconciled = reconcileKnowledgeBackedPopulationSafety(
     {

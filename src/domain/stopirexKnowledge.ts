@@ -140,6 +140,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       title: "Không hiệu quả: kiểm tra cách dùng và điều kiện chuyển hoàn tiền",
       content:
         "Nếu khách chưa nói rõ, chỉ hỏi phần còn thiếu: dùng vào thời điểm nào, da đã lau khô hoàn toàn chưa và đã dùng đều bao lâu. Nếu dùng sai, hướng dẫn lại quy trình chuẩn. Nếu khách xác nhận dùng đúng đủ 2 tuần mà vẫn không hiệu quả, thu số tài khoản, tên ngân hàng, tên người thụ hưởng và clip nhúng hủy sản phẩm xuống nước; đủ hồ sơ thì chuyển bộ phận liên quan xử lý tiếp.",
+      searchAliases: ["không đỡ", "không khỏi", "không hiệu quả", "hoàn xèng", "hoàn tiền nếu không đỡ"],
       sourceRow: 15,
     },
     {
@@ -215,6 +216,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       title: "Hoàn tiền khi đã dùng đúng nhưng chưa hiệu quả",
       content:
         "Chỉ áp dụng khi khách xác nhận đã dùng đúng hướng dẫn và đủ 2 tuần. Khách cần cung cấp số tài khoản, tên ngân hàng, tên người thụ hưởng và clip nhúng hủy sản phẩm xuống nước. Đây là quy trình hủy sản phẩm để xử lý hoàn tiền nên khách không cần giữ vỏ hộp, không cần gửi sản phẩm về và không phát sinh bước thu hồi hàng. Khi nhận đủ bộ hồ sơ, chuyển bộ phận liên quan xử lý tiếp.",
+      searchAliases: ["dùng không đỡ có hoàn tiền không", "không khỏi hoàn xèng", "hoàn tiền sau 2 tuần"],
       sourceRow: 23,
     },
     {
@@ -224,6 +226,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       title: "Cảm giác khi lăn và cam kết không bám, ố hoặc làm cứng áo",
       content:
         "Stopirex là roll-on dạng dung dịch nên da có thể hơi ẩm nhẹ ngay sau khi lăn; sản phẩm khô nhanh và không bết khi dùng đúng lượng. Khách cần lăn một lớp mỏng trên da sạch, khô hoàn toàn và chờ sản phẩm khô trước khi mặc áo. Khi sử dụng đúng hướng dẫn, Stopirex không bám, không gây ố vàng nách áo và không làm cứng vải. Nếu khách phản ánh vẫn xảy ra dù đã dùng đúng, ghi nhận, xin ảnh và chuyển bộ phận liên quan kiểm tra; không tranh luận với khách.",
+      searchAliases: ["bôi xong có bị bết không", "bết k", "dính dính", "ướt áo", "ố áo"],
       sourceRow: 24,
     },
     {

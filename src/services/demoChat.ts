@@ -476,6 +476,75 @@ export class DemoChatService {
         "LLM đã xác định câu hỏi cần trả lời trực tiếp và Reconciler đã chấp nhận answer action.";
     }
 
+    // A reconciled CSKH route must run before deterministic product/logistics
+    // helpers. Otherwise one phrase such as "giao lâu" can answer only the ETA
+    // clause and discard an LLM-confirmed cancellation or urgent complaint.
+    if (decision.route === "active_care" && session.care) {
+      const turn = advanceCareFlow(session.care, raw);
+      session.care = turn.state;
+      this.careCases.save(turn.state.case);
+      session.pipeline = turn.pipeline;
+      session.mode = "care";
+      session.customerType = "returning";
+      return this.respond(session, turn.reply);
+    }
+
+    if (decision.route === "start_care" && decision.careIssue) {
+      const careIssue = decision.careIssue;
+      const turn = startCareFlow(
+        `CARE-${randomUUID().slice(0, 8).toUpperCase()}`,
+        careIssue,
+        new Date(),
+        raw,
+      );
+      const safety = detectSafety(text);
+      session.previousSalesPipeline = session.pipeline;
+      session.care = turn.state;
+      this.careCases.save(turn.state.case);
+      session.pipeline = turn.pipeline;
+      session.mode = "care";
+      session.customerType = "returning";
+      session.signal = signalForIssue(careIssue);
+      if (careIssue === "complaint") {
+        session.orderCollectionPaused = true;
+        delete session.pendingAction;
+      }
+      if (safety.redFlag) {
+        session.consultation = mergeConfirmedSlots(session.consultation, safety.slots);
+      }
+      if (careIssue === "irritation" && isSevereAllergicReaction(text)) {
+        recordKnowledge(session, ["care-suspected-allergic-reaction"]);
+        return this.respond(
+          session,
+          "Dạ mình ngưng dùng ngay và không lăn lại ạ. Nếu đang khó thở, khò khè, choáng, khó nuốt hoặc sưng môi/mặt/lưỡi, mình cần đi cấp cứu ngay; bên em đã chuyển bộ phận liên quan ghi nhận trường hợp này.",
+        );
+      }
+      // Complaint responses must acknowledge and pause automation first. Do
+      // not replace them with a product fact merely because the same message
+      // also contains a resolvable product question.
+      if (careIssue === "complaint") {
+        return this.respond(session, turn.reply);
+      }
+      const careHandoff = actionPlan.accepted.find((action) => action.type === "handoff_to_human");
+      if (
+        multiActionEnabled &&
+        actionPlan.answerTopics.length > 0 &&
+        (careHandoff || (semantic.unsupportedQuestions?.length ?? 0) > 0)
+      ) {
+        pauseForHumanReview(session, careHandoff?.reason ?? "Có phần câu hỏi chưa có dữ liệu được duyệt");
+        session.orderCollectionPaused = true;
+        session.activeSkill = "knowledge-handoff";
+        session.skillReason =
+          "Trả lời chính sách có nguồn trước, rồi chuyển người xử lý phần nghiệp vụ còn thiếu.";
+        recordKnowledge(session, [...knowledgeForActionTopics(actionPlan.answerTopics, text)]);
+        return this.respond(session, [
+          multiActionAnswer(actionPlan.answerTopics, raw, semanticSlots),
+          unsupportedQuestionHandoffReply(raw, semantic.unsupportedQuestions ?? []),
+        ]);
+      }
+      return this.respond(session, turn.reply);
+    }
+
     if (isExplicitOrderCancellation(text)) {
       clearOrderDraft(session);
       session.lastIntent = "decline_purchase";
@@ -1113,66 +1182,6 @@ export class DemoChatService {
         "Khách chọn bảng giá ở đầu hành trình; báo giá trước rồi hỏi tình trạng để tư vấn tiếp.";
       const continuation = showPrice(session);
       return this.respond(session, priceReply(continuationQuestion(continuation)));
-    }
-
-    if (decision.route === "active_care" && session.care) {
-      const turn = advanceCareFlow(session.care, raw);
-      session.care = turn.state;
-      this.careCases.save(turn.state.case);
-      session.pipeline = turn.pipeline;
-      session.mode = "care";
-      session.customerType = "returning";
-      return this.respond(session, turn.reply);
-    }
-
-    if (decision.route === "start_care" && decision.careIssue) {
-      const careIssue = decision.careIssue;
-      const turn = startCareFlow(
-        `CARE-${randomUUID().slice(0, 8).toUpperCase()}`,
-        careIssue,
-        new Date(),
-        raw,
-      );
-      const safety = detectSafety(text);
-      session.previousSalesPipeline = session.pipeline;
-      session.care = turn.state;
-      this.careCases.save(turn.state.case);
-      session.pipeline = turn.pipeline;
-      session.mode = "care";
-      session.customerType = "returning";
-      session.signal = signalForIssue(careIssue);
-      if (careIssue === "complaint") {
-        session.orderCollectionPaused = true;
-        delete session.pendingAction;
-      }
-      if (safety.redFlag) {
-        session.consultation = mergeConfirmedSlots(session.consultation, safety.slots);
-      }
-      if (careIssue === "irritation" && isSevereAllergicReaction(text)) {
-        recordKnowledge(session, ["care-suspected-allergic-reaction"]);
-        return this.respond(
-          session,
-          "Dạ mình ngưng dùng ngay và không lăn lại ạ. Nếu đang khó thở, khò khè, choáng, khó nuốt hoặc sưng môi/mặt/lưỡi, mình cần đi cấp cứu ngay; bên em đã chuyển bộ phận liên quan ghi nhận trường hợp này.",
-        );
-      }
-      const careHandoff = actionPlan.accepted.find((action) => action.type === "handoff_to_human");
-      if (
-        multiActionEnabled &&
-        actionPlan.answerTopics.length > 0 &&
-        (careHandoff || (semantic.unsupportedQuestions?.length ?? 0) > 0)
-      ) {
-        pauseForHumanReview(session, careHandoff?.reason ?? "Có phần câu hỏi chưa có dữ liệu được duyệt");
-        session.orderCollectionPaused = true;
-        session.activeSkill = "knowledge-handoff";
-        session.skillReason =
-          "Trả lời chính sách có nguồn trước, rồi chuyển người xử lý phần nghiệp vụ còn thiếu.";
-        recordKnowledge(session, [...knowledgeForActionTopics(actionPlan.answerTopics, text)]);
-        return this.respond(session, [
-          multiActionAnswer(actionPlan.answerTopics, raw, semanticSlots),
-          unsupportedQuestionHandoffReply(raw, semantic.unsupportedQuestions ?? []),
-        ]);
-      }
-      return this.respond(session, turn.reply);
     }
 
     if (isInternalSystemProbe(text) && isMaliciousCommercialOverride(text)) {

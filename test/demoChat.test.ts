@@ -2104,6 +2104,68 @@ test("khiếu nại kiểm tra đơn thắng tín hiệu 1 lọ và khóa bán h
   );
 });
 
+test("khiếu nại nhiều ý vẫn ưu tiên care route đã được LLM xác nhận", () => {
+  const chat = new DemoChatService();
+  const message = "Giao lâu thế? Hủy đi, bôi bị bết dính ở vùng nách, làm ăn lôm côm!";
+  const result = chat.chat(
+    "delivery-cancel-application-complaint",
+    message,
+    {
+      skill: "after-sales-care",
+      intent: "order_support",
+      topic: "delivery",
+      subject: "order",
+      scenario: "actual",
+      confidence: 0.96,
+      needsClarification: false,
+      asksDirectAnswer: true,
+      evidence: [message],
+      slots: {},
+      actions: [
+        {
+          type: "start_customer_care",
+          issue: "complaint",
+          confidence: 0.98,
+          evidence: [message],
+          source: "llm",
+        },
+        {
+          type: "handoff_to_human",
+          reason: "Cần kiểm tra khiếu nại và tình trạng đơn",
+          confidence: 0.97,
+          evidence: [message],
+          source: "llm",
+        },
+        {
+          type: "decline_purchase",
+          confidence: 0.96,
+          evidence: ["Hủy đi"],
+          source: "llm",
+        },
+        {
+          type: "answer_question",
+          topic: "effectiveness",
+          confidence: 0.95,
+          evidence: ["bết dính"],
+          source: "llm",
+        },
+      ],
+    },
+    { actionExecutionMode: "multi_action" },
+  );
+
+  assert.equal(result.state.careIssue, "complaint");
+  assert.equal(result.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(result.state.signal, "SC.Khiếu nại");
+  assert.equal(result.state.botPaused, true);
+  assert.equal(result.state.orderFlowStatus, "paused");
+  assert.equal(result.replies.length, 1);
+  assert.match(result.reply, /Stopirex rất xin lỗi.*chuyển CSKH kiểm tra gấp/isu);
+  assert.match(result.reply, /tin nhắn tự động.*tạm dừng/isu);
+  assert.doesNotMatch(result.reply, /1–2 ngày|2–3 ngày|3–5 ngày|không bết/iu);
+  assert.equal(result.state.decisionTrace?.selectedRoute, "start_care");
+});
+
 test("đánh giá tiêu cực xử lý nguyên nhân trước, không xin sửa đánh giá ngay", () => {
   const chat = new DemoChatService();
   const start = chat.chat("review", "Tôi đã đánh giá 1 sao vì trải nghiệm quá tệ");

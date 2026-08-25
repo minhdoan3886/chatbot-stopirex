@@ -45,6 +45,7 @@ import {
 } from "../services/orderTrackingNotification.js";
 import { MetaPageCredentialVault } from "../services/metaPageCredential.js";
 import { MetaPageManagementService } from "../services/metaPageManagement.js";
+import { MetaOAuthService } from "../services/metaOAuth.js";
 
 const env = loadEnv();
 const logger = new StructuredLogger();
@@ -76,6 +77,15 @@ const metaPages =
         graphVersion: env.metaGraphVersion,
         ...(env.metaPageId ? { environmentPageId: env.metaPageId } : {}),
         ...(env.metaPageAccessToken ? { environmentPageAccessToken: env.metaPageAccessToken } : {}),
+      })
+    : undefined;
+const metaOAuth =
+  env.metaAppId && env.metaAppSecret && env.metaOAuthRedirectUri
+    ? new MetaOAuthService({
+        appId: env.metaAppId,
+        appSecret: env.metaAppSecret,
+        graphVersion: env.metaGraphVersion,
+        redirectUri: env.metaOAuthRedirectUri,
       })
     : undefined;
 if (metaPages) {
@@ -217,6 +227,40 @@ const server = createServer(async (request, response) => {
     if (!isOperationsAuthorized(request)) return json(response, 401, { error: "unauthorized" });
     if (!metaPages) return json(response, 503, { error: "meta_page_management_not_configured" });
     return json(response, 200, await metaPages.list());
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/meta/oauth/start") {
+    if (!isOperationsAuthorized(request)) return unauthorized(response);
+    if (!metaOAuth || !metaPages) {
+      return json(response, 503, { error: "meta_oauth_not_configured" });
+    }
+    const flow = metaOAuth.begin();
+    response.writeHead(302, {
+      location: flow.authorizationUrl,
+      "set-cookie": oauthNonceCookie(flow.nonce, true),
+      "cache-control": "no-store",
+    });
+    return response.end();
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/meta/oauth/callback") {
+    if (!metaOAuth || !metaPages) return oauthResult(response, "not_configured");
+    const state = url.searchParams.get("state") ?? "";
+    const code = url.searchParams.get("code") ?? "";
+    const cookieNonce = readCookie(request.headers.cookie, "meta_oauth_nonce") ?? "";
+    try {
+      if (url.searchParams.has("error")) throw new Error("meta_oauth_denied");
+      metaOAuth.verifyState(state, cookieNonce);
+      const authorizedPages = await metaOAuth.authorizedPages(code);
+      if (authorizedPages.length === 0) throw new Error("meta_oauth_no_pages");
+      const connected = await metaPages.connectAuthorizedPages(authorizedPages);
+      logger.log("info", "meta_oauth_pages_connected", { traceId, pageCount: connected.length });
+      return oauthResult(response, "success", connected.length);
+    } catch (error) {
+      const oauthCode = safeOAuthErrorCode(error);
+      logger.log("warn", "meta_oauth_callback_failed", { traceId, code: oauthCode });
+      return oauthResult(response, oauthCode);
+    }
   }
 
   if (request.method === "POST" && url.pathname === "/api/meta/pages/connect") {
@@ -883,6 +927,62 @@ function json(response: import("node:http").ServerResponse, status: number, body
 function html(response: import("node:http").ServerResponse, status: number, body: string): void {
   response.writeHead(status, { "content-type": "text/html; charset=utf-8" });
   response.end(body);
+}
+
+function oauthNonceCookie(nonce: string, active: boolean): string {
+  return [
+    `meta_oauth_nonce=${active ? encodeURIComponent(nonce) : ""}`,
+    "Path=/api/meta/oauth",
+    "HttpOnly",
+    "Secure",
+    "SameSite=Lax",
+    active ? "Max-Age=600" : "Max-Age=0",
+  ].join("; ");
+}
+
+function readCookie(cookieHeader: string | undefined, name: string): string | undefined {
+  for (const part of (cookieHeader ?? "").split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function safeOAuthErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  const allowed = new Set([
+    "meta_oauth_denied",
+    "meta_oauth_state_invalid",
+    "meta_oauth_code_missing",
+    "meta_oauth_code_exchange_failed",
+    "meta_oauth_long_token_exchange_failed",
+    "meta_oauth_pages_fetch_failed",
+    "meta_oauth_no_pages",
+    "meta_oauth_page_token_mismatch",
+    "meta_tenant_not_configured",
+  ]);
+  return allowed.has(message) ? message.replace(/^meta_oauth_/u, "") : "connection_failed";
+}
+
+function oauthResult(
+  response: import("node:http").ServerResponse,
+  result: string,
+  count?: number,
+): void {
+  const location = new URL("https://local.invalid/pages");
+  location.searchParams.set("oauth", result);
+  if (typeof count === "number") location.searchParams.set("count", String(count));
+  response.writeHead(302, {
+    location: `${location.pathname}${location.search}`,
+    "set-cookie": oauthNonceCookie("", false),
+    "cache-control": "no-store",
+  });
+  response.end();
 }
 
 function isOperationsAuthorized(request: import("node:http").IncomingMessage): boolean {

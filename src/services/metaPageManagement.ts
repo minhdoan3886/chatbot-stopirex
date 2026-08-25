@@ -113,10 +113,38 @@ export class MetaPageManagementService {
     return page;
   }
 
+  async connectAuthorizedPages(
+    pages: Array<{ id: string; name: string; accessToken: string }>,
+  ): Promise<ManagedMetaPage[]> {
+    const connected: ManagedMetaPage[] = [];
+    for (const authorizedPage of pages) {
+      const profile = await this.readPageProfile(authorizedPage.accessToken);
+      if (profile.id !== authorizedPage.id) throw new Error("meta_oauth_page_token_mismatch");
+      await this.subscribePage(profile.id, authorizedPage.accessToken);
+      const tenantId = await this.options.store.defaultFacebookTenantId(this.options.environmentPageId);
+      if (!tenantId) throw new Error("meta_tenant_not_configured");
+      const id = await this.options.store.upsertFacebookPageConnection({
+        tenantId,
+        externalPageId: profile.id,
+        displayName: profile.name || authorizedPage.name,
+        encryptedAccessToken: this.options.vault.encrypt(authorizedPage.accessToken),
+      });
+      this.cache.delete(id);
+      const page = (await this.list()).find((item) => item.id === id);
+      if (!page) throw new Error("meta_page_connection_not_found_after_save");
+      connected.push(page);
+    }
+    return connected;
+  }
+
   async importEnvironmentCredential(): Promise<boolean> {
     const token = this.options.environmentPageAccessToken;
     const expectedPageId = this.options.environmentPageId;
     if (!token || !expectedPageId) return false;
+    const existing = (await this.options.store.listFacebookPages()).find(
+      (page) => page.externalPageId === expectedPageId,
+    );
+    if (existing?.credentialConfigured) return false;
     const profile = await this.readPageProfile(token);
     if (profile.id !== expectedPageId) throw new Error("environment_page_token_mismatch");
     return this.options.store.storeFacebookPageCredential({

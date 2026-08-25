@@ -128,3 +128,22 @@ test("public webhook bắt buộc dùng HTTPS", () => {
     /phải dùng HTTPS/u,
   );
 });
+
+test("OAuth redirect mặc định dùng cùng domain public webhook", () => {
+  const env = loadEnv({
+    NODE_ENV: "development",
+    META_PUBLIC_WEBHOOK_URL: "https://bot.example.com/webhooks/meta",
+  });
+  assert.equal(env.metaOAuthRedirectUri, "https://bot.example.com/api/meta/oauth/callback");
+});
+
+test("OAuth redirect tùy chỉnh bắt buộc dùng HTTPS", () => {
+  assert.throws(
+    () =>
+      loadEnv({
+        NODE_ENV: "development",
+        META_OAUTH_REDIRECT_URI: "http://bot.example.com/api/meta/oauth/callback",
+      }),
+    /META_OAUTH_REDIRECT_URI phải dùng HTTPS/u,
+  );
+});

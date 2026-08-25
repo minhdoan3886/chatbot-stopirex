@@ -27,6 +27,13 @@ META_PAGE_ACCESS_TOKEN="..."
   Stopirex → bấm **Tạo**. Token phải thuộc Page `108631178590851`.
 - Không gửi hai giá trị này qua chat, không chụp ảnh có token và không commit `.env`.
 
+Sau khi có domain HTTPS, nên liên kết Page tại `/pages` bằng nút **Đăng nhập bằng
+Facebook**. OAuth sẽ tự lấy Page Token, đăng ký webhook và mã hóa token trong cơ sở
+dữ liệu; không cần sao chép Page Token thủ công. Redirect URI mặc định là
+`https://TEN-MIEN-CONG-KHAI/api/meta/oauth/callback`, hoặc đặt riêng bằng
+`META_OAUTH_REDIRECT_URI`. URI này phải được thêm chính xác vào **Valid OAuth
+Redirect URIs** trong Facebook Login của ứng dụng Meta.
+
 ## 2. Chạy backend và worker
 
 Terminal 1:

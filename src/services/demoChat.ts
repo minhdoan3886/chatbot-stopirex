@@ -1773,7 +1773,12 @@ export class DemoChatService {
       }
       if (session.pipeline === "1.Phân loại") this.move(session, "classified");
       else if (session.pipeline === "0.Chưa tư vấn") session.pipeline = "2.Đang tư vấn";
-      const answer = audienceSafetyReply(text, semantic);
+      const confirmedChildAge = confirmedChildAgeFromSession(session);
+      const answer = audienceSafetyReply(
+        text,
+        semantic,
+        confirmedChildAge === undefined ? {} : { confirmedChildAge },
+      );
       recordKnowledge(session, answer.knowledgeEntityIds);
       if (answer.reply.includes("gửi thêm cách dùng")) {
         session.pendingAction = "send_usage_guidance";
@@ -4130,7 +4135,15 @@ function priceChangeReply(raw: string, semantic: SemanticUnderstanding): Grounde
   };
 }
 
-function audienceSafetyReply(text: string, semantic: SemanticUnderstanding): GroundedReply {
+type AudienceSafetyContext = {
+  confirmedChildAge?: number;
+};
+
+function audienceSafetyReply(
+  text: string,
+  semantic: SemanticUnderstanding,
+  context: AudienceSafetyContext = {},
+): GroundedReply {
   const asksBreastfeeding =
     semantic.topic === "breastfeeding" || /cho con bu|dang cho bu|me sua|me bim sua/.test(text);
   const asksPregnancy =
@@ -4150,8 +4163,18 @@ function audienceSafetyReply(text: string, semantic: SemanticUnderstanding): Gro
     isHypotheticalIrritationQuestion(text);
   const asksDarkening = /tham nach|sam nach|den nach|kho tham/.test(text);
   const asksGeneralAudience = /nhung doi tuong|doi tuong nao|ai (?:co the )?(?:dung|su dung) duoc/.test(text);
-  const mentionedAge = semantic.age ?? extractAgeMention(text);
+  const mentionedAge = semantic.age ?? extractAgeMention(text) ?? context.confirmedChildAge;
   const answers: GroundedReply[] = [];
+
+  if (
+    context.confirmedChildAge !== undefined &&
+    !asksChild &&
+    !asksPregnancy &&
+    !asksBreastfeeding &&
+    !asksGeneralAudience
+  ) {
+    return confirmedChildSafetyReply(context.confirmedChildAge);
+  }
 
   if (asksChild) {
     if (mentionedAge === undefined) {
@@ -4237,6 +4260,40 @@ function audienceSafetyReply(text: string, semantic: SemanticUnderstanding): Gro
     reply: "Dạ mình đang hỏi cho bé, phụ nữ mang thai/cho con bú hay người có da nhạy cảm ạ?",
     knowledgeEntityIds: [],
   };
+}
+
+function confirmedChildSafetyReply(age: number): GroundedReply {
+  if (age < 12) {
+    return {
+      reply: `Dạ bé ${age} tuổi chưa dùng được Stopirex ạ, vì sản phẩm không dùng cho trẻ dưới 12 tuổi.`,
+      knowledgeEntityIds: ["audience-child-under-12"],
+    };
+  }
+  return {
+    reply: `Dạ với bé ${age} tuổi, Stopirex có thể dùng theo đúng hướng dẫn ạ. Mẫu thử có mức kích ứng da “không đáng kể” theo ISO 10993-23:2021, nhưng đây không phải bảo đảm không kích ứng với mọi làn da.\n\nChỉ dùng khi da lành, sạch và khô hoàn toàn; nếu vùng nách đang đỏ, rát hoặc trầy thì chờ da ổn hẳn mới dùng ạ.`,
+    knowledgeEntityIds: [
+      "audience-child-12-plus",
+      "product-composition-tolerance-approved",
+      "lab-test-2025-skin-irritation",
+    ],
+  };
+}
+
+function confirmedChildAgeFromSession(session: DemoSession): number | undefined {
+  const age = session.customerProfile.age;
+  if (age === undefined) return undefined;
+  const recentCustomerText = normalize(
+    session.history
+      .filter((turn) => turn.role === "user")
+      .slice(-6)
+      .map((turn) => turn.text)
+      .join(" "),
+  );
+  const mentionsChild =
+    /\b(?:tre|te)\s*(?:em|e|nho)?\b|\bbe(?: trai| gai| nha|minh|\s*\d+\s*tuoi)?\b|\bcon (?:trai|gai)\b/.test(
+      recentCustomerText,
+    );
+  return mentionsChild ? age : undefined;
 }
 
 function knowledgeContent(id: string, fallback: string): string {

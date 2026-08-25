@@ -1391,6 +1391,42 @@ test("replay: ok sau lời mời hướng dẫn không quay lại câu hỏi kha
   assert.doesNotMatch(result.reply, /phòng lạnh|mã đơn/);
 });
 
+test("câu an toàn nối tiếp giữ ngữ cảnh bé 15 tuổi và không hỏi lại đối tượng", () => {
+  const chat = new DemoChatService();
+  const sessionId = "child-safety-followup-keeps-audience";
+  chat.chat(sessionId, "Chị mua cho con trai 15 tuổi, bé dùng được không?", {
+    slots: {},
+    intent: "safety",
+    topic: "child_age",
+    subject: "child",
+    age: 15,
+    confidence: 0.99,
+    needsClarification: false,
+    asksDirectAnswer: true,
+  });
+
+  const result = chat.chat(sessionId, "liệu có an toàn cho da ko e", {
+    slots: {},
+    intent: "safety",
+    topic: "irritation",
+    subject: "product",
+    scenario: "hypothetical",
+    confidence: 0.98,
+    needsClarification: false,
+    asksDirectAnswer: true,
+    knowledgeIds: [
+      "product-composition-tolerance-approved",
+      "authenticity-before-purchase",
+      "lab-test-2025-skin-irritation",
+    ],
+  });
+
+  assert.equal(result.state.customerProfile?.age, 15);
+  assert.match(result.reply, /bé 15 tuổi/iu);
+  assert.match(result.reply, /mức kích ứng da.*không đáng kể/isu);
+  assert.doesNotMatch(result.reply, /mình đang hỏi cho bé|phụ nữ mang thai|cho con bú/iu);
+});
+
 test("replay: gửi cho chị ưu tiên lời mời hướng dẫn gần nhất dù LLM bị state đơn cũ kéo lệch", () => {
   const chat = new DemoChatService();
   const sessionId = "replay-pending-guidance-stale-order";

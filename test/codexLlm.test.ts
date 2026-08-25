@@ -1145,6 +1145,28 @@ test("single-pass chặn câu xưng hô lặp khó hiểu", () => {
   assert.equal(composed.reason, "advisor_voice_guard");
 });
 
+test("single-pass không nối lại câu hỏi đối tượng khi lịch sử đã xác nhận bé 15 tuổi", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+    draftReply:
+      "Dạ mẫu thử Stopirex có mức kích ứng da không đáng kể. Khi nhận hàng, mình kiểm tra tem và thông tin người gửi giúp em nhé ạ.",
+    baseReply: "Dạ mình đang hỏi cho bé, phụ nữ mang thai/cho con bú hay người có da nhạy cảm ạ?",
+    state: {
+      ...state,
+      customerProfile: { age: 15 },
+      answeredTopics: ["child_age"],
+      recentTurns: [
+        { role: "user", text: "Chị mua cho con trai 15 tuổi" },
+        { role: "assistant", text: "Dạ bé 15 tuổi dùng được rồi ạ." },
+      ],
+    },
+  });
+
+  assert.equal(composed.status, "enhanced");
+  assert.doesNotMatch(composed.reply, /mình đang hỏi cho bé|phụ nữ mang thai|cho con bú/iu);
+});
+
 test("Tone guard chặn cách bác bỏ cộc lốc hoặc tranh cãi", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const composed = bridge.adoptInterpretedDraft({

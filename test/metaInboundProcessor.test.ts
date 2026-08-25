@@ -412,9 +412,12 @@ test("Meta brain khóa luồng khiếu nại khi LLM chỉ trả handoff after-s
   assert.equal(response.state.botPaused, true);
   assert.equal(response.state.orderFlowStatus, "paused");
   assert.equal(response.state.decisionTrace?.selectedRoute, "start_care");
-  assert.match(response.reply, /Stopirex rất xin lỗi.*chuyển CSKH kiểm tra gấp/isu);
-  assert.match(response.reply, /tin nhắn tự động.*tạm dừng/isu);
-  assert.doesNotMatch(response.reply, /chưa có đủ thông tin|1–2 ngày|không bết/iu);
+  assert.match(response.reply, /Stopirex rất xin lỗi.*chuyển bộ phận CSKH kiểm tra gấp/isu);
+  assert.match(response.reply, /phản hồi mình sớm nhất/iu);
+  assert.doesNotMatch(
+    response.reply,
+    /chưa có đủ thông tin|1–2 ngày|không bết|tin nhắn tự động|tạm dừng|automation|workflow|tag|mức khẩn/iu,
+  );
 });
 
 test("Meta brain không handoff câu địa phương hỏi cách dùng, bết và hoàn xèng", async () => {

@@ -252,7 +252,7 @@ export function startCareFlow(id: string, issue: IssueType, now = new Date(), in
     return immediateHandoff(
       careCase,
       "Khiếu nại khẩn - CSKH tiếp quản",
-      "Stopirex rất xin lỗi vì sự bất tiện này ạ. Em đã ghi nhận khiếu nại và chuyển CSKH kiểm tra gấp; các tin nhắn tự động sẽ được tạm dừng trong lúc xử lý.",
+      "Stopirex rất xin lỗi vì sự bất tiện này ạ. Em đã ghi nhận khiếu nại và chuyển bộ phận CSKH kiểm tra gấp. Bên em sẽ phản hồi mình sớm nhất ạ.",
       false,
     );
   }

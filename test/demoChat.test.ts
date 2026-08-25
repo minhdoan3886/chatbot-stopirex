@@ -2096,8 +2096,9 @@ test("khiếu nại kiểm tra đơn thắng tín hiệu 1 lọ và khóa bán h
   assert.equal(result.state.orderFlowStatus, "paused");
   assert.equal(result.state.selectedQuantity, undefined);
   assert.equal(result.replies.length, 1);
-  assert.match(result.reply, /Stopirex rất xin lỗi.*chuyển CSKH kiểm tra gấp/isu);
-  assert.match(result.reply, /tin nhắn tự động.*tạm dừng/isu);
+  assert.match(result.reply, /Stopirex rất xin lỗi.*chuyển bộ phận CSKH kiểm tra gấp/isu);
+  assert.match(result.reply, /phản hồi mình sớm nhất/iu);
+  assert.doesNotMatch(result.reply, /tin nhắn tự động|tạm dừng|automation|workflow|tag|mức khẩn/iu);
   assert.doesNotMatch(result.reply, /285\.000|30\.000|tên người nhận|địa chỉ|chốt đơn|lấy 1 lọ/iu);
   assert.ok(
     result.state.decisionTrace?.conflicts.some((conflict) => conflict.includes("Sự cố CSKH được ưu tiên")),
@@ -2160,8 +2161,9 @@ test("khiếu nại nhiều ý vẫn ưu tiên care route đã được LLM xác
   assert.equal(result.state.botPaused, true);
   assert.equal(result.state.orderFlowStatus, "paused");
   assert.equal(result.replies.length, 1);
-  assert.match(result.reply, /Stopirex rất xin lỗi.*chuyển CSKH kiểm tra gấp/isu);
-  assert.match(result.reply, /tin nhắn tự động.*tạm dừng/isu);
+  assert.match(result.reply, /Stopirex rất xin lỗi.*chuyển bộ phận CSKH kiểm tra gấp/isu);
+  assert.match(result.reply, /phản hồi mình sớm nhất/iu);
+  assert.doesNotMatch(result.reply, /tin nhắn tự động|tạm dừng|automation|workflow|tag|mức khẩn/iu);
   assert.doesNotMatch(result.reply, /1–2 ngày|2–3 ngày|3–5 ngày|không bết/iu);
   assert.equal(result.state.decisionTrace?.selectedRoute, "start_care");
 });

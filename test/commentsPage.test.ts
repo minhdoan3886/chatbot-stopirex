@@ -9,6 +9,10 @@ test("tab Bình luận theo dõi đủ public reply và private reply duy nhất
   assert.match(commentsPage, /\/api\/meta\/comments/u);
   assert.match(commentsPage, /Khiếu nại/u);
   assert.match(commentsPage, /Tin nhắn riêng duy nhất/u);
+  assert.match(commentsPage, /Ẩn comment/u);
+  assert.match(commentsPage, /Hiện lại/u);
+  assert.match(commentsPage, /không tự động che khiếu nại thật/iu);
+  assert.match(commentsPage, /\/api\/meta\/comments\/.*\/visibility/u);
 });
 
 test("tab Bình luận không nhúng token hoặc thông tin nội bộ", () => {

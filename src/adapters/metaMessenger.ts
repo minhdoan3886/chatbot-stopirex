@@ -81,6 +81,22 @@ export class GraphMetaMessenger implements MetaMessenger {
       : { ok: false, retryable: false, code: "invalid_response", message: "Meta không trả comment id" };
   }
 
+  async setCommentHidden(input: { commentId: string; hidden: boolean }): Promise<ProviderResult<void>> {
+    const result = await this.requestEndpoint(encodeURIComponent(input.commentId), {
+      is_hidden: input.hidden,
+    });
+    if (!result.ok) return result;
+    const payload = result.value as { success?: boolean };
+    return payload.success === true
+      ? { ok: true, value: undefined }
+      : {
+          ok: false,
+          retryable: false,
+          code: "invalid_response",
+          message: "Meta không xác nhận trạng thái ẩn",
+        };
+  }
+
   private async send(body: unknown): Promise<ProviderResult<{ messageId: string }>> {
     const result = await this.request(body);
     if (!result.ok) return result;

@@ -312,9 +312,7 @@ export class MetaInboundProcessor {
       outbound: {
         idempotencyKey: turnIdempotencyKey,
         recipientId: first.senderId,
-        texts: commentPlan
-          ? [commentPlan.publicReply, commentPlan.privateReply]
-          : result.replies.slice(0, 2),
+        texts: commentPlan ? [commentPlan.publicReply, commentPlan.privateReply] : result.replies.slice(0, 2),
       },
     });
     if (commentPlan && first.commentId && committed.outbound) {
@@ -325,6 +323,8 @@ export class MetaInboundProcessor {
         ...(result.state.lastIntent ? { intent: result.state.lastIntent } : {}),
         category: commentPlan.category,
         priority: commentPlan.priority,
+        moderationRecommendation: commentPlan.moderationRecommendation,
+        ...(commentPlan.moderationReason ? { moderationReason: commentPlan.moderationReason } : {}),
         publicReplyText: commentPlan.publicReply,
         privateReplyText: commentPlan.privateReply,
       });

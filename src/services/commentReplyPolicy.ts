@@ -1,10 +1,13 @@
 import type { CustomerIntent } from "../domain/consultation.js";
 
 export type CommentCategory = "price" | "consultation" | "complaint" | "positive" | "other";
+export type CommentModerationRecommendation = "keep" | "review" | "hide";
 
 export type CommentReplyPlan = {
   category: CommentCategory;
   priority: "normal" | "urgent";
+  moderationRecommendation: CommentModerationRecommendation;
+  moderationReason?: string;
   publicReply: string;
   privateReply: string;
 };
@@ -43,10 +46,12 @@ export function composeCommentReplyPlan(input: {
   humanCareRequired?: boolean;
 }): CommentReplyPlan {
   const category = commentCategory(input);
+  const moderation = suggestCommentModeration(input.commentText, category);
   if (category === "complaint") {
     return {
       category,
       priority: "urgent",
+      ...moderation,
       publicReply:
         "Stopirex rất tiếc vì trải nghiệm chưa trọn vẹn của mình ạ. Shop xin phép nhắn riêng để kiểm tra và hỗ trợ mình kỹ hơn nhé.",
       privateReply:
@@ -57,6 +62,7 @@ export function composeCommentReplyPlan(input: {
     return {
       category,
       priority: "normal",
+      ...moderation,
       publicReply: "Stopirex cảm ơn mình đã tin tưởng và chia sẻ trải nghiệm ạ 💙",
       privateReply:
         "Stopirex cảm ơn mình rất nhiều ạ 💙 Nếu cần hướng dẫn dùng phù hợp với tình trạng thực tế, mình nhắn lại để shop hỗ trợ nhé.",
@@ -68,6 +74,7 @@ export function composeCommentReplyPlan(input: {
     return {
       category,
       priority: "normal",
+      ...moderation,
       publicReply:
         "Dạ shop đã nhận yêu cầu của mình ạ. Shop gửi giá và ưu đãi chi tiết qua tin nhắn riêng, mình kiểm tra cả mục Tin nhắn chờ giúp shop nhé 😊",
       privateReply,
@@ -77,6 +84,7 @@ export function composeCommentReplyPlan(input: {
     return {
       category,
       priority: "normal",
+      ...moderation,
       publicReply:
         "Dạ shop đã nhận câu hỏi của mình ạ. Shop gửi phần tư vấn phù hợp qua tin nhắn riêng, mình kiểm tra giúp shop nhé 😊",
       privateReply,
@@ -85,9 +93,60 @@ export function composeCommentReplyPlan(input: {
   return {
     category,
     priority: "normal",
+    ...moderation,
     publicReply:
       "Dạ shop đã nhận bình luận của mình ạ. Shop gửi thông tin hỗ trợ qua tin nhắn riêng, mình kiểm tra giúp shop nhé 😊",
     privateReply,
+  };
+}
+
+/**
+ * A narrow, non-authoritative moderation hint for the operator UI. It never
+ * hides a comment automatically and never treats a genuine complaint as bad
+ * content. The LLM-owned category remains authoritative for the conversation.
+ */
+function suggestCommentModeration(
+  commentText: string,
+  category: CommentCategory,
+): Pick<CommentReplyPlan, "moderationRecommendation" | "moderationReason"> {
+  const normalized = commentText
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/gu, "")
+    .toLowerCase();
+  const containsPublicPii =
+    /(?:^|\D)(?:\+?84|0)(?:[ .-]?\d){9}(?:\D|$)/u.test(commentText) ||
+    /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/iu.test(commentText);
+  if (containsPublicPii) {
+    return {
+      moderationRecommendation: "hide",
+      moderationReason: "Có thể chứa SĐT hoặc email công khai; nên ẩn để bảo vệ khách.",
+    };
+  }
+  const abusive = /\b(?:d[mđ]m|dit me|con cho|suc vat|do khon|mat day|ngu vl|cut di|chet di)\b/u.test(
+    normalized,
+  );
+  const spam =
+    /(?:https?:\/\/|www\.)\S+/iu.test(commentText) &&
+    /\b(?:inbox|kiem tien|dau tu|vay|telegram|zalo|khuyen mai|giam gia|mua ngay)\b/u.test(normalized);
+  if (abusive || spam) {
+    return {
+      moderationRecommendation: "hide",
+      moderationReason: abusive
+        ? "Có dấu hiệu xúc phạm/quấy rối; cần nhân viên kiểm tra trước khi ẩn."
+        : "Có dấu hiệu quảng cáo hoặc liên kết spam; cần nhân viên kiểm tra trước khi ẩn.",
+    };
+  }
+  if (/(?:https?:\/\/|www\.)\S+/iu.test(commentText)) {
+    return {
+      moderationRecommendation: "review",
+      moderationReason: "Comment có liên kết; nên kiểm tra thủ công.",
+    };
+  }
+  return {
+    moderationRecommendation: "keep",
+    ...(category === "complaint"
+      ? { moderationReason: "Khiếu nại thật: giữ hiển thị, chuyển CSKH xử lý; không tự động ẩn." }
+      : {}),
   };
 }
 
@@ -102,7 +161,10 @@ function commentCategory(input: {
 
   // Regex is deliberately a fallback only for the two signals that are not
   // represented reliably by the current semantic intent vocabulary.
-  const normalized = input.commentText.normalize("NFD").replace(/[\u0300-\u036f]/gu, "").toLowerCase();
+  const normalized = input.commentText
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/gu, "")
+    .toLowerCase();
   if (/\b(cam on|rat tot|hieu qua|ung ho|hai long|yeu shop|tuyet voi)\b/u.test(normalized)) {
     return "positive";
   }

@@ -28,8 +28,28 @@ test("Meta gửi private reply và public reply từ comment qua đúng Graph en
   assert.equal(publicReply.ok, true);
   assert.match(calls[0]?.url ?? "", /\/v25\.0\/comment_1\/private_replies\?/u);
   assert.match(calls[1]?.url ?? "", /\/v25\.0\/comment_1\/comments\?/u);
-  assert.deepEqual(calls.map((call) => call.body), [
-    { message: "Em đã nhắn tin tư vấn mình ạ." },
-    { message: "Mình kiểm tra Messenger giúp shop nhé." },
-  ]);
+  assert.deepEqual(
+    calls.map((call) => call.body),
+    [{ message: "Em đã nhắn tin tư vấn mình ạ." }, { message: "Mình kiểm tra Messenger giúp shop nhé." }],
+  );
+});
+
+test("Meta ẩn và hiện lại comment bằng is_hidden", async () => {
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const messenger = new GraphMetaMessenger({
+    pageAccessToken: "page-token",
+    graphVersion: "v25.0",
+    fetcher: async (input, init) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+      return Response.json({ success: true });
+    },
+  });
+
+  assert.equal((await messenger.setCommentHidden({ commentId: "comment_1", hidden: true })).ok, true);
+  assert.equal((await messenger.setCommentHidden({ commentId: "comment_1", hidden: false })).ok, true);
+  assert.match(calls[0]?.url ?? "", /\/v25\.0\/comment_1\?/u);
+  assert.deepEqual(
+    calls.map((call) => call.body),
+    [{ is_hidden: true }, { is_hidden: false }],
+  );
 });

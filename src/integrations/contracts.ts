@@ -43,9 +43,7 @@ export interface ShippingAdapter {
     orderId: string;
     draft: Required<OrderDraft>;
   }): Promise<ProviderResult<ShipmentTracking>>;
-  getTracking(
-    trackingNumber: string,
-  ): Promise<ProviderResult<ShipmentTracking>>;
+  getTracking(trackingNumber: string): Promise<ProviderResult<ShipmentTracking>>;
 }
 
 export interface OmicallAdapter {
@@ -80,6 +78,7 @@ export interface MetaMessenger {
     text: string;
     idempotencyKey: string;
   }): Promise<ProviderResult<{ messageId: string }>>;
+  setCommentHidden?(input: { commentId: string; hidden: boolean }): Promise<ProviderResult<void>>;
   sendTyping(recipientId: string): Promise<ProviderResult<void>>;
 }
 

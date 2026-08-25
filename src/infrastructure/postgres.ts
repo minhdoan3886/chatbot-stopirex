@@ -34,6 +34,11 @@ export type MetaCommentWorkflowRecord = {
   intent?: string;
   category: "price" | "consultation" | "complaint" | "positive" | "other";
   priority: "normal" | "urgent";
+  moderationRecommendation: "keep" | "review" | "hide";
+  moderationReason?: string;
+  isHidden: boolean;
+  hiddenAt?: string;
+  moderationUpdatedAt?: string;
   status: "received" | "processing" | "replied" | "partial" | "failed" | "paused";
   publicReplyText?: string;
   privateReplyText?: string;
@@ -802,6 +807,8 @@ export class PostgresStore {
     intent?: string;
     category: "price" | "consultation" | "complaint" | "positive" | "other";
     priority: "normal" | "urgent";
+    moderationRecommendation: "keep" | "review" | "hide";
+    moderationReason?: string;
     publicReplyText: string;
     privateReplyText: string;
   }): Promise<boolean> {
@@ -810,8 +817,10 @@ export class PostgresStore {
           SET intent = $4,
               category = $5,
               priority = $6,
-              public_reply_text = $7,
-              private_reply_text = $8,
+              moderation_recommendation = $7,
+              moderation_reason = $8,
+              public_reply_text = $9,
+              private_reply_text = $10,
               status = CASE WHEN status = 'replied' THEN status ELSE 'processing' END,
               error_code = NULL,
               updated_at = now()
@@ -824,6 +833,8 @@ export class PostgresStore {
         input.intent ?? null,
         input.category,
         input.priority,
+        input.moderationRecommendation,
+        input.moderationReason ?? null,
         input.publicReplyText,
         input.privateReplyText,
       ],
@@ -889,6 +900,11 @@ export class PostgresStore {
               c.intent,
               c.category,
               c.priority,
+              c.moderation_recommendation,
+              c.moderation_reason,
+              c.is_hidden,
+              c.hidden_at,
+              c.moderation_updated_at,
               c.status,
               c.public_reply_text,
               c.private_reply_text,
@@ -914,6 +930,14 @@ export class PostgresStore {
       ...(row.intent ? { intent: String(row.intent) } : {}),
       category: row.category as MetaCommentWorkflowRecord["category"],
       priority: row.priority as MetaCommentWorkflowRecord["priority"],
+      moderationRecommendation:
+        row.moderation_recommendation as MetaCommentWorkflowRecord["moderationRecommendation"],
+      ...(row.moderation_reason ? { moderationReason: String(row.moderation_reason) } : {}),
+      isHidden: Boolean(row.is_hidden),
+      ...(row.hidden_at ? { hiddenAt: new Date(row.hidden_at).toISOString() } : {}),
+      ...(row.moderation_updated_at
+        ? { moderationUpdatedAt: new Date(row.moderation_updated_at).toISOString() }
+        : {}),
       status: row.status as MetaCommentWorkflowRecord["status"],
       ...(row.public_reply_text ? { publicReplyText: String(row.public_reply_text) } : {}),
       ...(row.private_reply_text ? { privateReplyText: String(row.private_reply_text) } : {}),
@@ -923,6 +947,46 @@ export class PostgresStore {
       receivedAt: new Date(row.received_at).toISOString(),
       updatedAt: new Date(row.updated_at).toISOString(),
     }));
+  }
+
+  async findMetaCommentWorkflowById(id: string): Promise<
+    | {
+        id: string;
+        pageId: string;
+        externalCommentId: string;
+        isHidden: boolean;
+      }
+    | undefined
+  > {
+    const result = await this.pool.query(
+      `SELECT id::text, page_id::text, external_comment_id, is_hidden
+         FROM meta_comment_workflows
+        WHERE id = $1::uuid`,
+      [id],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          id: String(row.id),
+          pageId: String(row.page_id),
+          externalCommentId: String(row.external_comment_id),
+          isHidden: Boolean(row.is_hidden),
+        }
+      : undefined;
+  }
+
+  async markMetaCommentVisibility(input: { id: string; hidden: boolean }): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE meta_comment_workflows
+          SET is_hidden = $2,
+              hidden_at = CASE WHEN $2 THEN now() ELSE NULL END,
+              moderation_updated_at = now(),
+              updated_at = now()
+        WHERE id = $1::uuid
+      RETURNING id`,
+      [input.id, input.hidden],
+    );
+    return result.rowCount === 1;
   }
 
   async registerFacebookPage(input: { tenantId: TenantId; externalPageId: string }): Promise<string> {

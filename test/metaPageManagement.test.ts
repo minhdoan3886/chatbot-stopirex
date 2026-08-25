@@ -121,3 +121,34 @@ test("router từ chối gửi khi Page đã tắt bot", async () => {
   });
   await assert.rejects(() => service.messengerForInternalPage("page-internal"), /meta_page_bot_disabled/u);
 });
+
+test("quản trị comment vẫn dùng được khi bot Page đang tắt", async () => {
+  const encrypted = new MetaPageCredentialVault("test-encryption-key").encrypt("page-token");
+  const service = new MetaPageManagementService({
+    store: {
+      async listFacebookPages() {
+        return [];
+      },
+      async defaultFacebookTenantId() {
+        return undefined;
+      },
+      async upsertFacebookPageConnection() {
+        return "unused";
+      },
+      async setFacebookPageBotEnabled() {
+        return false;
+      },
+      async facebookPageCredential() {
+        return { externalPageId: "page-1", encryptedAccessToken: encrypted, botEnabled: false };
+      },
+      async storeFacebookPageCredential() {
+        return false;
+      },
+    },
+    vault: new MetaPageCredentialVault("test-encryption-key"),
+    graphVersion: "v26.0",
+  });
+
+  const messenger = await service.messengerForManagement("page-internal");
+  assert.equal(typeof messenger.setCommentHidden, "function");
+});

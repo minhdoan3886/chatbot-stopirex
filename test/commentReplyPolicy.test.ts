@@ -25,9 +25,33 @@ test("comment khiếu nại chỉ xoa dịu và xin dữ liệu xử lý, không
 
   assert.equal(plan.category, "complaint");
   assert.equal(plan.priority, "urgent");
+  assert.equal(plan.moderationRecommendation, "keep");
+  assert.match(plan.moderationReason ?? "", /không tự động ẩn/iu);
   assert.match(plan.publicReply, /rất tiếc|trải nghiệm/iu);
   assert.match(plan.privateReply, /mã đơn|SĐT/iu);
   assert.doesNotMatch(`${plan.publicReply} ${plan.privateReply}`, /combo|lấy \d+ lọ|chốt đơn/iu);
+});
+
+test("gợi ý ẩn comment có PII nhưng không tự động thay đổi phản hồi", () => {
+  const plan = composeCommentReplyPlan({
+    commentText: "shop gọi mình số 0983425566 nhé",
+    intent: "consultation",
+    groundedReplies: ["Dạ shop đã ghi nhận ạ."],
+  });
+
+  assert.equal(plan.moderationRecommendation, "hide");
+  assert.match(plan.moderationReason ?? "", /bảo vệ khách/iu);
+  assert.equal(plan.category, "consultation");
+});
+
+test("liên kết chưa rõ chỉ cần xem xét, không tự động gợi ý ẩn", () => {
+  const plan = composeCommentReplyPlan({
+    commentText: "shop xem giúp link https://example.com/anh-san-pham",
+    intent: "authenticity_question",
+    groundedReplies: ["Dạ shop kiểm tra giúp mình ạ."],
+  });
+
+  assert.equal(plan.moderationRecommendation, "review");
 });
 
 test("comment tích cực được cảm ơn ngắn gọn và không ép mua", () => {

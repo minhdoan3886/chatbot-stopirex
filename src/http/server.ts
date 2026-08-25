@@ -151,6 +151,68 @@ const server = createServer(async (request, response) => {
     return json(response, 200, await postgres.listMetaCommentWorkflows(limit));
   }
 
+  const commentVisibilityMatch = url.pathname.match(/^\/api\/meta\/comments\/([a-f0-9-]{36})\/visibility$/u);
+  if (request.method === "POST" && commentVisibilityMatch) {
+    if (!isOperationsAuthorized(request)) return json(response, 401, { error: "unauthorized" });
+    if (!postgres || !metaPages) {
+      return json(response, 503, { error: "meta_comment_management_not_configured" });
+    }
+    if (!env.metaLiveSendEnabled) {
+      return json(response, 503, { error: "meta_live_send_disabled" });
+    }
+    let body: { hidden?: unknown };
+    try {
+      body = JSON.parse((await readBody(request, 2_000)).toString("utf8")) as typeof body;
+    } catch {
+      return json(response, 400, { error: "invalid_json" });
+    }
+    if (typeof body.hidden !== "boolean") {
+      return json(response, 400, { error: "hidden_boolean_required" });
+    }
+    const workflow = await postgres.findMetaCommentWorkflowById(commentVisibilityMatch[1]!);
+    if (!workflow) return json(response, 404, { error: "comment_workflow_not_found" });
+    if (workflow.isHidden === body.hidden) {
+      return json(response, 200, { ok: true, hidden: body.hidden, unchanged: true });
+    }
+    try {
+      const messenger = await metaPages.messengerForManagement(workflow.pageId);
+      if (!messenger.setCommentHidden) {
+        return json(response, 501, { error: "meta_comment_visibility_not_supported" });
+      }
+      const changed = await messenger.setCommentHidden({
+        commentId: workflow.externalCommentId,
+        hidden: body.hidden,
+      });
+      if (!changed.ok) {
+        logger.log("warn", "meta_comment_visibility_failed", {
+          traceId,
+          workflowId: workflow.id,
+          hidden: body.hidden,
+          code: changed.code,
+        });
+        return json(response, changed.retryable ? 503 : 502, {
+          error: "meta_comment_visibility_failed",
+          code: changed.code,
+        });
+      }
+      await postgres.markMetaCommentVisibility({ id: workflow.id, hidden: body.hidden });
+      logger.log("info", "meta_comment_visibility_changed", {
+        traceId,
+        workflowId: workflow.id,
+        hidden: body.hidden,
+      });
+      return json(response, 200, { ok: true, hidden: body.hidden });
+    } catch (error) {
+      logger.log("warn", "meta_comment_visibility_failed", {
+        traceId,
+        workflowId: workflow.id,
+        hidden: body.hidden,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+      return json(response, 503, { error: "meta_comment_visibility_unavailable" });
+    }
+  }
+
   if (request.method === "GET" && url.pathname === "/api/meta/pages") {
     if (!isOperationsAuthorized(request)) return json(response, 401, { error: "unauthorized" });
     if (!metaPages) return json(response, 503, { error: "meta_page_management_not_configured" });

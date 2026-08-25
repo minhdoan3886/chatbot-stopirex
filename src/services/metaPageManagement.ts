@@ -131,8 +131,17 @@ export class MetaPageManagementService {
   }
 
   async messengerForInternalPage(pageId: string): Promise<MetaMessenger> {
+    return this.messengerForPage(pageId, true);
+  }
+
+  async messengerForManagement(pageId: string): Promise<MetaMessenger> {
+    return this.messengerForPage(pageId, false);
+  }
+
+  private async messengerForPage(pageId: string, requireBotEnabled: boolean): Promise<MetaMessenger> {
     const page = await this.options.store.facebookPageCredential(pageId);
-    if (!page || !page.botEnabled) throw new Error("meta_page_bot_disabled");
+    if (!page) throw new Error("meta_page_not_found");
+    if (requireBotEnabled && !page.botEnabled) throw new Error("meta_page_bot_disabled");
     const token = page.encryptedAccessToken
       ? this.options.vault.decrypt(page.encryptedAccessToken)
       : page.externalPageId === this.options.environmentPageId

@@ -56,6 +56,7 @@ export type MetaInboundStore = Pick<
   | "prepareMetaCommentReplies"
   | "markMetaCommentPartSent"
   | "markMetaCommentIssue"
+  | "markMetaCommentVisibilityByExternal"
 >;
 
 export class MetaInboundProcessor {
@@ -328,6 +329,39 @@ export class MetaInboundProcessor {
         publicReplyText: commentPlan.publicReply,
         privateReplyText: commentPlan.privateReply,
       });
+      if (commentPlan.autoHide) {
+        const hidden = messenger.setCommentHidden
+          ? await messenger.setCommentHidden({ commentId: first.commentId, hidden: true })
+          : {
+              ok: false as const,
+              retryable: false,
+              code: "meta_comment_visibility_not_supported",
+              message: "Meta messenger không hỗ trợ ẩn comment",
+            };
+        if (hidden.ok) {
+          await this.options.store.markMetaCommentVisibilityByExternal({
+            tenantId: first.tenantId,
+            pageId: first.pageId,
+            externalCommentId: first.commentId,
+            hidden: true,
+          });
+          this.options.logger.log("info", "meta_comment_pii_auto_hidden", {
+            traceId: first.traceId,
+            tenantId: first.tenantId,
+            pageId: first.pageId,
+            externalCommentId: first.commentId,
+          });
+        } else {
+          this.options.logger.log("warn", "meta_comment_pii_auto_hide_failed", {
+            traceId: first.traceId,
+            tenantId: first.tenantId,
+            pageId: first.pageId,
+            externalCommentId: first.commentId,
+            code: hidden.code,
+            retryable: hidden.retryable,
+          });
+        }
+      }
     }
     await this.pushCreatedOrder({
       sessionId,

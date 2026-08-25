@@ -40,6 +40,7 @@ test("gợi ý ẩn comment có PII nhưng không tự động thay đổi phả
   });
 
   assert.equal(plan.moderationRecommendation, "hide");
+  assert.equal(plan.autoHide, true);
   assert.match(plan.moderationReason ?? "", /bảo vệ khách/iu);
   assert.equal(plan.category, "consultation");
 });
@@ -52,6 +53,7 @@ test("liên kết chưa rõ chỉ cần xem xét, không tự động gợi ý �
   });
 
   assert.equal(plan.moderationRecommendation, "review");
+  assert.equal(plan.autoHide, false);
 });
 
 test("comment tích cực được cảm ơn ngắn gọn và không ép mua", () => {

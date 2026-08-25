@@ -989,6 +989,25 @@ export class PostgresStore {
     return result.rowCount === 1;
   }
 
+  async markMetaCommentVisibilityByExternal(input: {
+    tenantId: TenantId;
+    pageId: string;
+    externalCommentId: string;
+    hidden: boolean;
+  }): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE meta_comment_workflows
+          SET is_hidden = $4,
+              hidden_at = CASE WHEN $4 THEN now() ELSE NULL END,
+              moderation_updated_at = now(),
+              updated_at = now()
+        WHERE tenant_id = $1 AND page_id = $2::uuid AND external_comment_id = $3
+      RETURNING id`,
+      [input.tenantId, input.pageId, input.externalCommentId, input.hidden],
+    );
+    return result.rowCount === 1;
+  }
+
   async registerFacebookPage(input: { tenantId: TenantId; externalPageId: string }): Promise<string> {
     return this.withTenant(input.tenantId, async (client) => {
       const result = await client.query(

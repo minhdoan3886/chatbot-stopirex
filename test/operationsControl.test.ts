@@ -55,6 +55,7 @@ test("nút vận hành restart gateway và worker rồi kiểm tra các kết n�
               {
                 id: "app-id",
                 subscribed_fields: [
+                  "feed",
                   "messages",
                   "messaging_postbacks",
                   "message_deliveries",
@@ -199,6 +200,7 @@ test("Public Webhook mất kết nối được tạo tunnel mới và cập nh�
             {
               id: "app-id",
               subscribed_fields: [
+                "feed",
                 "messages",
                 "messaging_postbacks",
                 "message_deliveries",

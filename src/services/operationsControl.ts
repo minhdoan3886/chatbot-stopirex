@@ -37,6 +37,7 @@ type PageSubscriptionHealth = {
 };
 
 const requiredMetaWebhookFields = [
+  "feed",
   "messages",
   "messaging_postbacks",
   "message_deliveries",
@@ -350,7 +351,7 @@ export class OperationsControlService {
       }
       if (!verified.found) throw new Error("Meta nhận lệnh subscribe nhưng chưa trả về app trên Page");
       if (!verified.hasAllRequiredFields) {
-        throw new Error("Meta chưa đăng ký đủ message_echoes để phát hiện nhân viên tiếp quản");
+        throw new Error("Meta chưa đăng ký đủ feed và các trường Messenger bắt buộc");
       }
     }
 
@@ -358,7 +359,7 @@ export class OperationsControlService {
       status: "healthy",
       pageId,
       appId,
-      detail: "Page đã subscribe app nhận messages",
+      detail: "Page đã subscribe app nhận feed và messages",
     });
   }
 

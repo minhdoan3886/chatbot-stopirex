@@ -33,6 +33,7 @@ function fixture(options: {
   const privateCommentReplies: string[] = [];
   const publicCommentReplies: string[] = [];
   const commentDispatchOrder: string[] = [];
+  const commentVisibilityChanges: Array<{ commentId: string; hidden: boolean }> = [];
   const commentWorkflowUpdates: Array<Record<string, unknown>> = [];
   const processed: string[] = [];
   const runtimeUpdates: Array<Record<string, unknown>> = [];
@@ -122,6 +123,10 @@ function fixture(options: {
       commentWorkflowUpdates.push({ action: "issue", ...input });
       return true;
     },
+    async markMetaCommentVisibilityByExternal(input) {
+      commentWorkflowUpdates.push({ action: "visibility", ...input });
+      return true;
+    },
   };
   const messenger: MetaMessenger = {
     async sendTyping() {
@@ -170,6 +175,10 @@ function fixture(options: {
       commentDispatchOrder.push("public");
       publicCommentReplies.push(input.text);
       return { ok: true, value: { messageId: `public-comment-${publicCommentReplies.length}` } };
+    },
+    async setCommentHidden(input) {
+      commentVisibilityChanges.push(input);
+      return { ok: true, value: undefined };
     },
   };
   const chat = new DemoChatService();
@@ -220,6 +229,7 @@ function fixture(options: {
     privateCommentReplies,
     publicCommentReplies,
     commentDispatchOrder,
+    commentVisibilityChanges,
     commentWorkflowUpdates,
     resolvedPages,
     setNewerInbound(value: boolean) {
@@ -324,6 +334,49 @@ test("Meta comment trả lời công khai trước rồi gửi đúng một priv
     ["public", "private"],
   );
   assert.equal(context.followupSchedules.length, 0);
+});
+
+test("Meta tự ẩn comment có SĐT công khai kể cả khi là khiếu nại thật", async () => {
+  const context = fixture({ live: true });
+  await context.processor.processBatch([
+    job({
+      eventId: "comment-pii-1",
+      kind: "comment",
+      commentId: "comment-pii-1",
+      text: "Đơn bị hủy, shop kiểm tra gấp giúp mình qua số 0983425566",
+    }),
+  ]);
+
+  assert.deepEqual(context.commentVisibilityChanges, [
+    { commentId: "comment-pii-1", hidden: true },
+  ]);
+  assert.ok(
+    context.commentWorkflowUpdates.some(
+      (item) => item.action === "visibility" && item.hidden === true,
+    ),
+  );
+  assert.ok(
+    context.commentWorkflowUpdates.some(
+      (item) =>
+        item.action === "prepared" &&
+        item.category === "complaint" &&
+        item.moderationRecommendation === "hide",
+    ),
+  );
+});
+
+test("Meta không tự ẩn khiếu nại thật nếu comment không có PII", async () => {
+  const context = fixture({ live: true });
+  await context.processor.processBatch([
+    job({
+      eventId: "comment-complaint-1",
+      kind: "comment",
+      commentId: "comment-complaint-1",
+      text: "Đơn của mình bị hủy, shop kiểm tra gấp giúp",
+    }),
+  ]);
+
+  assert.deepEqual(context.commentVisibilityChanges, []);
 });
 
 test("retry private comment reply không gửi lại public reply và không tạo private reply thứ hai", async () => {

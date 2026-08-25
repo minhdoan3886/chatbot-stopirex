@@ -8,6 +8,7 @@ export type CommentReplyPlan = {
   priority: "normal" | "urgent";
   moderationRecommendation: CommentModerationRecommendation;
   moderationReason?: string;
+  autoHide: boolean;
   publicReply: string;
   privateReply: string;
 };
@@ -108,7 +109,7 @@ export function composeCommentReplyPlan(input: {
 function suggestCommentModeration(
   commentText: string,
   category: CommentCategory,
-): Pick<CommentReplyPlan, "moderationRecommendation" | "moderationReason"> {
+): Pick<CommentReplyPlan, "moderationRecommendation" | "moderationReason" | "autoHide"> {
   const normalized = commentText
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/gu, "")
@@ -120,6 +121,7 @@ function suggestCommentModeration(
     return {
       moderationRecommendation: "hide",
       moderationReason: "Có thể chứa SĐT hoặc email công khai; nên ẩn để bảo vệ khách.",
+      autoHide: true,
     };
   }
   const abusive = /\b(?:d[mđ]m|dit me|con cho|suc vat|do khon|mat day|ngu vl|cut di|chet di)\b/u.test(
@@ -131,6 +133,7 @@ function suggestCommentModeration(
   if (abusive || spam) {
     return {
       moderationRecommendation: "hide",
+      autoHide: false,
       moderationReason: abusive
         ? "Có dấu hiệu xúc phạm/quấy rối; cần nhân viên kiểm tra trước khi ẩn."
         : "Có dấu hiệu quảng cáo hoặc liên kết spam; cần nhân viên kiểm tra trước khi ẩn.",
@@ -140,10 +143,12 @@ function suggestCommentModeration(
     return {
       moderationRecommendation: "review",
       moderationReason: "Comment có liên kết; nên kiểm tra thủ công.",
+      autoHide: false,
     };
   }
   return {
     moderationRecommendation: "keep",
+    autoHide: false,
     ...(category === "complaint"
       ? { moderationReason: "Khiếu nại thật: giữ hiển thị, chuyển CSKH xử lý; không tự động ẩn." }
       : {}),

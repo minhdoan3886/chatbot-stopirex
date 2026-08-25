@@ -35,6 +35,11 @@ import { buildProductInformationSnapshot } from "../services/productInformation.
 import { operationsPage } from "./operationsPage.js";
 import { productPage } from "./productPage.js";
 import { ordersPage } from "./ordersPage.js";
+import {
+  dataDeletionPage,
+  privacyPolicyPage,
+  termsOfServicePage,
+} from "./publicPolicyPages.js";
 import { OrderInboxService } from "../services/orderInbox.js";
 import { GraphMetaMessenger } from "../adapters/metaMessenger.js";
 import {
@@ -85,6 +90,18 @@ const server = createServer(async (request, response) => {
       return response.end();
     }
     return html(response, 200, demoPage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/privacy-policy") {
+    return html(response, 200, privacyPolicyPage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/terms") {
+    return html(response, 200, termsOfServicePage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/data-deletion") {
+    return html(response, 200, dataDeletionPage);
   }
 
   if (request.method === "GET" && url.pathname === "/operations") {

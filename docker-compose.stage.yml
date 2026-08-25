@@ -5,6 +5,8 @@ services:
     build: .
     expose:
       - "8080"
+    ports:
+      - "127.0.0.1:${STAGE_HOST_PORT:-18080}:8080"
     environment: &stage_app_environment
       NODE_ENV: production
       PORT: 8080

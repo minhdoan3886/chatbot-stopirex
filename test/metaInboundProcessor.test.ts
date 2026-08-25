@@ -371,6 +371,52 @@ test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge th
   assert.doesNotMatch(response.reply, /chuyển bộ phận|chưa có đủ thông tin/iu);
 });
 
+test("Meta brain khóa luồng khiếu nại khi LLM chỉ trả handoff after-sales", async () => {
+  const chat = new DemoChatService();
+  const message = "Giao lâu thế? Hủy đi, bôi bị bết dính ở vùng nách, làm ăn lôm côm!";
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        summary: "Khách muốn hủy và phản ánh đơn giao lâu, sản phẩm bị bết dính",
+        skill: "after-sales-care",
+        topic: "delivery",
+        subject: "order",
+        scenario: "actual",
+        asksDirectAnswer: true,
+        confidence: 0.97,
+        needsClarification: false,
+        evidence: [message],
+        actions: [
+          {
+            type: "handoff_to_human",
+            confidence: 0.96,
+            evidence: ["Hủy đi", "bôi bị bết dính ở vùng nách"],
+            reason: "Khách muốn hủy và phản ánh bôi bị bết dính cần kiểm tra",
+          },
+        ],
+        knowledgeQueries: ["bôi bị bết dính nách", "giao hàng lâu"],
+        unsupportedQuestions: [],
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId: "production-complaint-handoff-only",
+    text: message,
+  });
+
+  assert.equal(response.state.careIssue, "complaint");
+  assert.equal(response.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(response.state.signal, "SC.Khiếu nại");
+  assert.equal(response.state.botPaused, true);
+  assert.equal(response.state.orderFlowStatus, "paused");
+  assert.equal(response.state.decisionTrace?.selectedRoute, "start_care");
+  assert.match(response.reply, /Stopirex rất xin lỗi.*chuyển CSKH kiểm tra gấp/isu);
+  assert.match(response.reply, /tin nhắn tự động.*tạm dừng/isu);
+  assert.doesNotMatch(response.reply, /chưa có đủ thông tin|1–2 ngày|không bết/iu);
+});
+
 test("Meta brain không handoff câu địa phương hỏi cách dùng, bết và hoàn xèng", async () => {
   const chat = new DemoChatService();
   const llm = new CodexLlmBridge({

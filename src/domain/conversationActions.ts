@@ -129,17 +129,27 @@ export function reconcileConversationActions(input: {
   }
 
   if (input.optOut) candidates.push(baseAction("stop_bot", "guardrail", [raw]));
+  const semanticHandoffCareIssue = inferCareIssueFromSemanticHandoff(input.semantic, candidates, raw);
+  const reconciledCareIssue = input.detectedCareIssue ?? semanticHandoffCareIssue;
   const currentCareScope =
-    input.detectedCareIssue === "irritation"
+    reconciledCareIssue === "irritation"
       ? input.careScenario === "actual" && input.semantic.subject !== "product"
       : input.careScenario !== "hypothetical" && input.careScenario !== "past";
-  if (input.detectedCareIssue && currentCareScope) {
+  if (reconciledCareIssue && currentCareScope) {
+    const llmHandoff = candidates.find(
+      (action): action is Extract<ConversationAction, { type: "handoff_to_human" }> =>
+        action.type === "handoff_to_human" && action.source === "llm",
+    );
     candidates.push({
-      ...baseAction("start_customer_care", "guardrail", [raw]),
-      issue: input.detectedCareIssue,
+      ...baseAction(
+        "start_customer_care",
+        input.detectedCareIssue ? "guardrail" : "state",
+        input.detectedCareIssue ? [raw] : (llmHandoff?.evidence ?? [raw]),
+      ),
+      issue: reconciledCareIssue,
     });
     if (
-      input.detectedCareIssue === "irritation" &&
+      reconciledCareIssue === "irritation" &&
       !candidates.some((action) => action.type === "answer_question")
     ) {
       candidates.push({
@@ -436,6 +446,42 @@ function isRecurrenceStatisticMechanismQuestion(text: string): boolean {
 
 function handoffText(action: Extract<ConversationAction, { type: "handoff_to_human" }>): string {
   return normalize(`${action.reason ?? ""} ${action.evidence.join(" ")}`);
+}
+
+/**
+ * Complete the workflow action when the LLM has already made a grounded,
+ * high-confidence after-sales handoff but omitted `start_customer_care`.
+ * This consumes the model's structured decision; it does not re-interpret the
+ * customer's slang with a growing keyword dictionary.
+ */
+function inferCareIssueFromSemanticHandoff(
+  semantic: SemanticUnderstanding,
+  actions: readonly ConversationAction[],
+  raw: string,
+): IssueType | undefined {
+  const handoff = actions.find(
+    (action): action is Extract<ConversationAction, { type: "handoff_to_human" }> =>
+      action.type === "handoff_to_human" &&
+      action.source === "llm" &&
+      action.confidence >= 0.85 &&
+      hasGroundedEvidence(action, raw),
+  );
+  const inAfterSalesScope =
+    semantic.skill === "after-sales-care" &&
+    semantic.scenario === "actual" &&
+    (semantic.confidence ?? 0) >= 0.8 &&
+    (semantic.subject === "order" ||
+      semantic.topic === "order" ||
+      semantic.topic === "delivery" ||
+      semantic.intent === "order_support");
+  if (!handoff || !inAfterSalesScope) return undefined;
+
+  const modelExplanation = handoffText(handoff);
+  if (/khieu nai|phan anh|buc xuc|khong hai long|complaint/.test(modelExplanation)) {
+    return "complaint";
+  }
+  if (semantic.topic === "delivery" || semantic.topic === "order") return "delivery";
+  return undefined;
 }
 
 function handoffMentionsPhysicalReturn(

@@ -467,6 +467,38 @@ test("phần chưa có nguồn tự tạo handoff nhưng vẫn giữ action tr�
   assert.equal(plan.accepted.some((action) => action.type === "handoff_to_human"), true);
 });
 
+test("handoff after-sales có căn cứ được hoàn tất thành action khiếu nại", () => {
+  const message = "Giao lâu thế? Hủy đi, bôi bị bết dính ở vùng nách, làm ăn lôm côm!";
+  const plan = reconcileConversationActions({
+    customerMessage: message,
+    semantic: semantic({
+      skill: "after-sales-care",
+      topic: "delivery",
+      subject: "order",
+      scenario: "actual",
+      asksDirectAnswer: true,
+      actions: [
+        {
+          type: "handoff_to_human",
+          confidence: 0.96,
+          evidence: ["Hủy đi", "bôi bị bết dính ở vùng nách"],
+          source: "llm",
+          reason: "Khách muốn hủy và phản ánh bôi bị bết dính cần kiểm tra",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: false,
+  });
+
+  assert.equal(plan.careIssue, "complaint");
+  assert.equal(
+    plan.accepted.find((action) => action.type === "start_customer_care")?.source,
+    "state",
+  );
+  assert.equal(plan.primaryIntent, "order_support");
+});
+
 test("update_order chỉ giữ trường LLM trích đúng nguyên văn và loại SĐT thiếu số", () => {
   const plan = reconcileConversationActions({
     customerMessage: "ntt15 82 Nguyễn Tuân Hà Nội 022299933 Luffi",

@@ -238,6 +238,22 @@ export class MetaChatBrain {
       }
     }
     if (fastTransition) return base;
+    if (
+      base.state.decisionTrace?.selectedRoute === "start_care" ||
+      base.state.decisionTrace?.selectedRoute === "active_care"
+    ) {
+      // A reconciled CSKH transition is already the complete, safe response.
+      // Composition and question-coverage recovery must not replace the
+      // acknowledgement with a generic knowledge/handoff fallback.
+      this.logger?.log("debug", "llm_composition", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        status: "skipped",
+        reason: "customer_care_route_locked",
+        selectedRoute: base.state.decisionTrace.selectedRoute,
+        selectedCareIssue: base.state.decisionTrace.selectedCareIssue,
+      });
+      return base;
+    }
     const composed = this.llm.adoptInterpretedDraft({
       customerMessage: input.text,
       ...(interpreted.draftReply ? { draftReply: interpreted.draftReply } : {}),

@@ -430,6 +430,30 @@ test("prompt compact ưu tiên lời mời hướng dẫn gần nhất hơn stat
   assert.match(prompt, /cấm order_support\/continue_order_collection/u);
 });
 
+test("prompt compact giữ bé là đối tượng nhưng không kéo câu hỏi mới về child_age", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+      state: {
+        ...state,
+        customerProfile: { age: 15 },
+        answeredTopics: ["child_age"],
+        recentTurns: [
+          { role: "user", text: "Chị mua cho con trai 15 tuổi, bé dùng được không?" },
+          { role: "assistant", text: "Dạ bé 15 tuổi dùng được rồi ạ." },
+        ],
+      },
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /topic\/intent\/actions phải theo câu hỏi MỚI/u);
+  assert.match(prompt, /answer_question\(irritation\) \+ answer_question\(comparison\)/u);
+  assert.match(prompt, /Cấm topic child_age/u);
+  assert.match(prompt, /cấm lặp 'bé N tuổi dùng được'/u);
+});
+
 test("ép OpenAI nhưng thiếu key thì bridge không tự báo sẵn sàng", () => {
   const bridge = CodexLlmBridge.fromEnvironment({
     LLM_PROVIDER: "openai",

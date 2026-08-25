@@ -4149,6 +4149,10 @@ function audienceSafetyReply(
   const asksPregnancy =
     semantic.topic === "pregnancy" ||
     /me bau|ba bau|pa pau|ba pau|dang bau|phu nu bau|mang thai|bau bi|co bau/.test(text);
+  const currentMessageMentionsChild =
+    /\b(?:tre|te)\s*(?:em|e|nho)?\b|\bbe(?: trai| gai| nha|minh|\s*\d+\s*tuoi)?\b|\bcon (?:trai|gai)\b/.test(
+      text,
+    );
   const asksChild =
     !asksBreastfeeding &&
     !asksPregnancy &&
@@ -4168,7 +4172,7 @@ function audienceSafetyReply(
 
   if (
     context.confirmedChildAge !== undefined &&
-    !asksChild &&
+    !currentMessageMentionsChild &&
     !asksPregnancy &&
     !asksBreastfeeding &&
     !asksGeneralAudience

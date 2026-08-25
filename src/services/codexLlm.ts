@@ -1245,7 +1245,7 @@ function buildInterpretPrompt(input: {
     "Không được tự phê duyệt giảm giá, freeship, hoàn tiền, đổi trả hoặc tạo đơn. Chỉ phân loại đúng ý định để Action Executor xử lý.",
     "Số lượng 1–5 lọ là mức hệ thống có thể xử lý; nếu khách yêu cầu từ 6 lọ trở lên, tạo handoff_to_human và không tiếp tục thu thông tin đơn.",
     "Ưu tiên ý khách đang muốn nói ở lượt hiện tại và dùng lịch sử để hiểu tiếng địa phương, từ viết tắt, sai chính tả hoặc nói tiếp ý trước. Không đặt needsClarification chỉ vì cách viết không chuẩn nếu toàn câu vẫn chỉ có một cách hiểu hợp lý.",
-    "Giữ chủ thể đã xác nhận qua các lượt nối tiếp: nếu HISTORY cho biết khách đang hỏi cho con/bé và đã có tuổi, các câu sau như 'an toàn cho da không', 'hàng giả nhiều lắm' vẫn thuộc ngữ cảnh của bé. Trả lời thẳng bằng KNOWLEDGE, needsClarification=false và không hỏi lại bé/mang thai/cho con bú/da nhạy cảm trừ khi MESSAGE nêu một chủ thể mới hoặc có mâu thuẫn thật sự.",
+    "Giữ đối tượng sử dụng đã xác nhận qua các lượt nối tiếp: nếu HISTORY cho biết khách đang hỏi cho con/bé và đã có tuổi, các câu sau như 'an toàn cho da không', 'hàng giả nhiều lắm' vẫn áp dụng cho bé. Nhưng topic/intent/actions phải theo câu hỏi MỚI; không đổi topic thành child_age và không lặp lại kết luận độ tuổi nếu MESSAGE không hỏi lại tuổi hoặc khả năng trẻ được dùng. Trả lời thẳng bằng KNOWLEDGE, needsClarification=false và không hỏi lại bé/mang thai/cho con bú/da nhạy cảm trừ khi MESSAGE nêu đối tượng mới hoặc có mâu thuẫn thật sự.",
     "Bất biến số lượng: nếu khách đang chốt/mua và toàn câu thể hiện rõ một số lượng 1–5, kể cả số viết bằng chữ, lỗi gõ gần nghĩa hoặc dùng từ chỉ sản phẩm như chai/lọ, bắt buộc tạo đủ select_quantity với số chuẩn và continue_order_collection. evidence phải chép nguyên văn cả cụm mua + số lượng từ tin khách; không được chỉ tạo continue_order_collection.",
     "Bất biến mâu thuẫn mua: nếu cùng một MESSAGE vừa có mệnh đề chốt/mua kèm số lượng vừa có mệnh đề từ chối/không lấy, không tự coi vế cuối là quyết định cuối. Bắt buộc xuất cả select_quantity, continue_order_collection và decline_purchase với evidence riêng, đồng thời needsClarification=true để hệ thống chỉ hỏi lại quyết định cuối.",
     "Bước hiện tại chỉ là thông tin tham khảo. Không ép tin nhắn vào bước, form hoặc câu hỏi bot vừa hỏi.",
@@ -1375,7 +1375,7 @@ function buildCompactInterpretPrompt(input: {
     "Cụm 'mua/1 chai mà không đỡ có được hoàn tiền không' là câu hỏi điều kiện chính sách, không phải quyết định mua. Tạo answer_question(topic order), không tạo select_quantity hoặc continue_order_collection. Câu đa ý có cách dùng + bết dính + hoàn tiền phải có answer_question usage cho từng ý dùng/bết và answer_question order cho hoàn tiền.",
     "MESSAGE nhiều dòng là các tin liên tiếp: xử lý từng dòng như một ý độc lập rồi hợp nhất. Câu hỏi/xác nhận kiểu hội thoại không có dấu '?' (ví dụ '1 ngày chỉ lăn 1 lần ạ') vẫn phải có answer_question phù hợp.",
     "Ưu tiên hội thoại nối tiếp: nếu STATE.pendingAction khác null và MESSAGE là lời đồng ý/yêu cầu thực hiện đề nghị ở lượt bot gần nhất, phải xử lý pendingAction đó trước mọi selectedQuantity, orderMissing, pipeline hoặc trạng thái đơn cũ. Ví dụ pendingAction=send_usage_guidance và khách nói 'gửi cho chị' thì bắt buộc dùng usage_guidance + replyTo offer_usage_guidance + affirmation=true + needsClarification=false; cấm order_support và cấm tiếp tục thu đơn.",
-    "Giữ chủ thể đã xác nhận qua HISTORY + STATE.customerProfile: nếu khách đã nói đang hỏi cho con/bé và đã có tuổi, các câu nối tiếp về an toàn da, cách dùng hoặc hàng giả vẫn thuộc ngữ cảnh của bé. Trả lời theo KNOWLEDGE, needsClarification=false; cấm hỏi lại bé/mang thai/cho con bú/da nhạy cảm nếu MESSAGE không nêu chủ thể mới hay mâu thuẫn thật.",
+    "Giữ đối tượng sử dụng đã xác nhận qua HISTORY + STATE.customerProfile: nếu khách đã nói đang hỏi cho con/bé và đã có tuổi, câu nối tiếp vẫn áp dụng cho bé nhưng topic/intent/actions phải theo câu hỏi MỚI. Cấm đổi topic thành child_age hoặc lặp 'bé N tuổi dùng được' nếu MESSAGE không hỏi lại tuổi/khả năng trẻ được dùng. Trả lời theo KNOWLEDGE, needsClarification=false; cấm hỏi lại bé/mang thai/cho con bú/da nhạy cảm nếu MESSAGE không nêu đối tượng mới hay mâu thuẫn thật.",
     "Mỗi ý có nghĩa phải thành một action kèm confidence 0..1 và evidence trích ngắn từ chính tin khách. Không suy đoán slot. Nếu có nhiều cách hiểu hợp lý, needsClarification=true và chỉ hỏi đúng phần chưa rõ.",
     "Ưu tiên action: an toàn/chuyển người → answer_question → record_fact → select_quantity/update_order → continue_order_collection. Không tự tạo đơn, giảm giá, freeship, hoàn tiền hoặc handoff nếu chưa có căn cứ.",
     "Bất biến số lượng: nếu khách đang chốt/mua và toàn câu thể hiện rõ một số lượng 1–5, kể cả số viết bằng chữ, lỗi gõ gần nghĩa hoặc dùng từ chỉ sản phẩm như chai/lọ, bắt buộc tạo đủ select_quantity với số chuẩn và continue_order_collection. evidence phải chép nguyên văn cả cụm mua + số lượng từ MESSAGE; không được chỉ tạo continue_order_collection.",
@@ -1441,6 +1441,19 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
   if (state.pendingAction === "send_usage_guidance") {
     add(
       "STATE đang chờ send_usage_guidance và bot vừa đề nghị gửi hướng dẫn: 'gửi cho chị/em/mình', 'gửi đi', 'ok', 'được' → usage_guidance + replyTo offer_usage_guidance + affirmation=true + needsClarification=false; pendingAction gần nhất thắng selectedQuantity và state đơn cũ, cấm order_support/continue_order_collection.",
+    );
+  }
+
+  const historyKeepsChildAudience =
+    state.customerProfile?.age !== undefined &&
+    state.recentTurns.some((turn) =>
+      /\b(?:con trai|con gai|tre em|be)\b/.test(
+        turn.text.toLocaleLowerCase("vi-VN").normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/gu, "d"),
+      ),
+    );
+  if (historyKeepsChildAudience && /an toan|kich ung|nhay cam/.test(text) && /hang gia|fake/.test(text)) {
+    add(
+      "HISTORY đã xác nhận hỏi cho bé và có tuổi; MESSAGE 'an toàn cho da không\\nhàng giả nhiều lắm' → intent safety, topic irritation, subject child, actions gồm answer_question(irritation) + answer_question(comparison), dùng nguồn an toàn da và authenticity; trả đủ hai ý, needsClarification=false. Cấm topic child_age, cấm lặp 'bé N tuổi dùng được', cấm hỏi lại đối tượng.",
     );
   }
 

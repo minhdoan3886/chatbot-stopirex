@@ -34,9 +34,11 @@ export type MetaInboundJob = {
   externalPageId: string;
   eventId: string;
   senderId: string;
-  kind: "text" | "image" | "postback" | "delivery" | "read";
+  kind: "text" | "image" | "postback" | "delivery" | "read" | "comment";
   text?: string;
   attachmentUrl?: string;
+  commentId?: string;
+  postId?: string;
   timestamp: string;
   payload: unknown;
   attempt: number;
@@ -87,14 +89,23 @@ export class MetaInboundProcessor {
     ) {
       throw new Error("meta_batch_scope_mismatch");
     }
+    const isCommentTurn = jobs.every((job) => job.kind === "comment");
+    if (jobs.some((job) => (job.kind === "comment") !== isCommentTurn)) {
+      throw new Error("meta_batch_channel_mismatch");
+    }
+    const externalCustomerId = isCommentTurn ? `comment:${first.senderId}` : first.senderId;
     const conversation = await this.options.store.ensureMessengerConversation({
       tenantId: first.tenantId,
       pageId: first.pageId,
-      externalCustomerId: first.senderId,
+      externalCustomerId,
     });
-    const sessionId = `${first.pageId}:${first.senderId}`;
+    const sessionId = `${first.pageId}:${externalCustomerId}`;
     const contentJobs = jobs.filter(
-      (job) => job.kind === "text" || job.kind === "image" || job.kind === "postback",
+      (job) =>
+        job.kind === "text" ||
+        job.kind === "image" ||
+        job.kind === "postback" ||
+        job.kind === "comment",
     );
     const turnIdempotencyKey = `${first.eventId}:reply:turn`;
     for (const job of contentJobs) {
@@ -104,7 +115,10 @@ export class MetaInboundProcessor {
         conversationId: conversation.conversationId,
         externalMessageId: job.eventId,
         direction: "inbound",
-        kind: job.kind as "text" | "image" | "postback",
+        kind:
+          job.kind === "comment"
+            ? "text"
+            : (job.kind as "text" | "image" | "postback"),
         ...(job.text ? { text: job.text } : {}),
         payload: job.payload,
       });
@@ -163,7 +177,7 @@ export class MetaInboundProcessor {
         suppressed = dispatched.suppressed;
         lastMessageId = dispatched.lastMessageId ?? lastMessageId;
       }
-      if (lastMessageId && isFollowupEligiblePipeline(conversation.pipelineTag)) {
+      if (!isCommentTurn && lastMessageId && isFollowupEligiblePipeline(conversation.pipelineTag)) {
         await this.scheduleFollowup({
           tenantId: first.tenantId,
           pageId: first.pageId,
@@ -227,7 +241,9 @@ export class MetaInboundProcessor {
       return { status: "ignored", replyCount: 0 };
     }
 
-    void this.options.messenger.sendTyping(first.senderId).catch(() => undefined);
+    if (!isCommentTurn) {
+      void this.options.messenger.sendTyping(first.senderId).catch(() => undefined);
+    }
     const result = await this.options.brain.reply({
       sessionId,
       text,
@@ -240,7 +256,7 @@ export class MetaInboundProcessor {
     const hasNewerInbound = await this.options.store.hasNewerInboundContent({
       tenantId: first.tenantId,
       pageId: first.pageId,
-      externalCustomerId: first.senderId,
+      externalCustomerId,
       currentEventIds: contentJobs.map((job) => job.eventId),
     });
     if (hasNewerInbound) {
@@ -267,7 +283,12 @@ export class MetaInboundProcessor {
       outbound: {
         idempotencyKey: turnIdempotencyKey,
         recipientId: first.senderId,
-        texts: result.replies.slice(0, 2),
+        texts: isCommentTurn
+          ? [
+              result.replies.slice(0, 2).join("\n\n"),
+              "Dạ shop đã nhắn tin tư vấn riêng cho mình rồi ạ. Mình kiểm tra Messenger giúp shop nhé 😊",
+            ]
+          : result.replies.slice(0, 2),
       },
     });
     await this.pushCreatedOrder({
@@ -292,6 +313,7 @@ export class MetaInboundProcessor {
       });
     }
     if (
+      !isCommentTurn &&
       dispatched.lastMessageId &&
       isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)
     ) {
@@ -378,11 +400,19 @@ export class MetaInboundProcessor {
         break;
       }
       const text = plan.texts[index]!;
-      const outbound = await this.options.messenger.sendText({
-        recipientId: plan.recipientId,
-        text,
-        idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
-      });
+      const outbound =
+        job.kind === "comment"
+          ? await this.sendCommentOutbound({
+              job,
+              text,
+              index,
+              idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
+            })
+          : await this.options.messenger.sendText({
+              recipientId: plan.recipientId,
+              text,
+              idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
+            });
       if (!outbound.ok) {
         const error = new Error(outbound.message);
         error.name = outbound.retryable ? "RetryableMetaSendError" : "MetaSendError";
@@ -400,6 +430,7 @@ export class MetaInboundProcessor {
           sourceEventIds: plan.sourceEventIds,
           part: index + 1,
           totalParts: plan.texts.length,
+          channel: job.kind === "comment" ? (index === 0 ? "comment_private_reply" : "comment_public_reply") : "messenger",
         },
       });
       sentThisAttempt += 1;
@@ -416,6 +447,34 @@ export class MetaInboundProcessor {
       suppressed,
       ...(lastMessageId ? { lastMessageId } : {}),
     };
+  }
+
+  private async sendCommentOutbound(input: {
+    job: MetaInboundJob;
+    text: string;
+    index: number;
+    idempotencyKey: string;
+  }): Promise<{ ok: true; value: { messageId: string } } | { ok: false; retryable: boolean; code: string; message: string }> {
+    if (!input.job.commentId) {
+      return { ok: false, retryable: false, code: "missing_comment_id", message: "Thiếu comment_id" };
+    }
+    const sender =
+      input.index === 0
+        ? this.options.messenger.sendPrivateCommentReply
+        : this.options.messenger.sendPublicCommentReply;
+    if (!sender) {
+      return {
+        ok: false,
+        retryable: false,
+        code: "comment_reply_not_supported",
+        message: "Meta adapter chưa hỗ trợ trả lời bình luận",
+      };
+    }
+    return sender.call(this.options.messenger, {
+      commentId: input.job.commentId,
+      text: input.text,
+      idempotencyKey: input.idempotencyKey,
+    });
   }
 
   private async scheduleFollowup(

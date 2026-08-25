@@ -273,7 +273,7 @@ function parseQueueMessage(
     typeof value.eventId !== "string" ||
     typeof value.senderId !== "string" ||
     typeof value.kind !== "string" ||
-    !["text", "image", "postback", "delivery", "read"].includes(value.kind) ||
+    !["text", "image", "postback", "delivery", "read", "comment"].includes(value.kind) ||
     typeof value.timestamp !== "string"
   ) {
     return undefined;
@@ -291,6 +291,8 @@ function parseQueueMessage(
     attempt: typeof value.attempt === "number" && Number.isInteger(value.attempt) ? value.attempt : 0,
     ...(typeof value.text === "string" ? { text: value.text } : {}),
     ...(typeof value.attachmentUrl === "string" ? { attachmentUrl: value.attachmentUrl } : {}),
+    ...(typeof value.commentId === "string" ? { commentId: value.commentId } : {}),
+    ...(typeof value.postId === "string" ? { postId: value.postId } : {}),
   };
   return { id: message.id, payload: parsed };
 }
@@ -300,7 +302,7 @@ function groupByConversation(
 ): Array<Array<RedisQueueMessage<MetaInboundJob>>> {
   const grouped = new Map<string, Array<RedisQueueMessage<MetaInboundJob>>>();
   for (const message of messages) {
-    const key = `${message.payload.tenantId}:${message.payload.pageId}:${message.payload.senderId}`;
+    const key = `${message.payload.tenantId}:${message.payload.pageId}:${message.payload.senderId}:${message.payload.kind === "comment" ? "comment" : "messenger"}`;
     const batch = grouped.get(key) ?? [];
     batch.push(message);
     grouped.set(key, batch);
@@ -372,11 +374,16 @@ async function collectConversationBurst(
 }
 
 function conversationKey(job: MetaInboundJob): string {
-  return `${job.tenantId}:${job.pageId}:${job.senderId}`;
+  return `${job.tenantId}:${job.pageId}:${job.senderId}:${job.kind === "comment" ? "comment" : "messenger"}`;
 }
 
 function isCustomerContent(job: MetaInboundJob): boolean {
-  return job.kind === "text" || job.kind === "image" || job.kind === "postback";
+  return (
+    job.kind === "text" ||
+    job.kind === "image" ||
+    job.kind === "postback" ||
+    job.kind === "comment"
+  );
 }
 
 async function retryOrAcknowledge(

@@ -4,12 +4,14 @@ export type MetaInbound = {
   recipientId?: string;
   eventId: string;
   timestamp: Date;
-  kind: "text" | "image" | "postback" | "delivery" | "read";
+  kind: "text" | "image" | "postback" | "delivery" | "read" | "comment";
   text?: string;
   attachmentUrl?: string;
   isEcho: boolean;
   appId?: string;
   metadata?: string;
+  commentId?: string;
+  postId?: string;
   payload: unknown;
 };
 
@@ -26,9 +28,9 @@ export function parseMetaWebhook(payload: unknown): MetaInbound[] {
   const events: MetaInbound[] = [];
   for (const entry of root.entry) {
     if (!entry || typeof entry !== "object") continue;
-    const page = entry as { id?: unknown; messaging?: unknown[] };
-    if (typeof page.id !== "string" || !Array.isArray(page.messaging)) continue;
-    for (const item of page.messaging) {
+    const page = entry as { id?: unknown; messaging?: unknown[]; changes?: unknown[]; time?: unknown };
+    if (typeof page.id !== "string") continue;
+    for (const item of Array.isArray(page.messaging) ? page.messaging : []) {
       if (!item || typeof item !== "object") continue;
       const event = item as Record<string, unknown>;
       const sender = event.sender as { id?: unknown } | undefined;
@@ -91,6 +93,44 @@ export function parseMetaWebhook(payload: unknown): MetaInbound[] {
           ? { appId: String(message.app_id) }
           : {}),
         ...(typeof message?.metadata === "string" ? { metadata: message.metadata } : {}),
+        payload: item,
+      });
+    }
+    for (const item of Array.isArray(page.changes) ? page.changes : []) {
+      if (!item || typeof item !== "object") continue;
+      const change = item as { field?: unknown; value?: unknown };
+      if (change.field !== "feed" || !change.value || typeof change.value !== "object") continue;
+      const value = change.value as {
+        item?: unknown;
+        verb?: unknown;
+        from?: { id?: unknown };
+        comment_id?: unknown;
+        post_id?: unknown;
+        message?: unknown;
+        created_time?: unknown;
+      };
+      if (
+        value.item !== "comment" ||
+        value.verb !== "add" ||
+        typeof value.from?.id !== "string" ||
+        value.from.id === page.id ||
+        typeof value.comment_id !== "string" ||
+        typeof value.message !== "string" ||
+        !value.message.trim()
+      ) {
+        continue;
+      }
+      const createdAt = Number(value.created_time ?? page.time ?? Date.now());
+      events.push({
+        pageId: page.id,
+        senderId: value.from.id,
+        eventId: value.comment_id,
+        timestamp: new Date(createdAt < 10_000_000_000 ? createdAt * 1_000 : createdAt),
+        kind: "comment",
+        text: value.message.trim(),
+        isEcho: false,
+        commentId: value.comment_id,
+        ...(typeof value.post_id === "string" ? { postId: value.post_id } : {}),
         payload: item,
       });
     }

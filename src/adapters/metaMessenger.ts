@@ -50,6 +50,37 @@ export class GraphMetaMessenger implements MetaMessenger {
     return result.ok ? { ok: true, value: undefined } : result;
   }
 
+  async sendPrivateCommentReply(input: {
+    commentId: string;
+    text: string;
+    idempotencyKey: string;
+  }): Promise<ProviderResult<{ messageId: string }>> {
+    const result = await this.requestEndpoint(`${encodeURIComponent(input.commentId)}/private_replies`, {
+      message: input.text,
+    });
+    if (!result.ok) return result;
+    const payload = result.value as { id?: string; message_id?: string };
+    const messageId = payload.message_id ?? payload.id;
+    return messageId
+      ? { ok: true, value: { messageId } }
+      : { ok: false, retryable: false, code: "invalid_response", message: "Meta không trả message_id" };
+  }
+
+  async sendPublicCommentReply(input: {
+    commentId: string;
+    text: string;
+    idempotencyKey: string;
+  }): Promise<ProviderResult<{ messageId: string }>> {
+    const result = await this.requestEndpoint(`${encodeURIComponent(input.commentId)}/comments`, {
+      message: input.text,
+    });
+    if (!result.ok) return result;
+    const payload = result.value as { id?: string };
+    return payload.id
+      ? { ok: true, value: { messageId: payload.id } }
+      : { ok: false, retryable: false, code: "invalid_response", message: "Meta không trả comment id" };
+  }
+
   private async send(body: unknown): Promise<ProviderResult<{ messageId: string }>> {
     const result = await this.request(body);
     if (!result.ok) return result;
@@ -60,9 +91,13 @@ export class GraphMetaMessenger implements MetaMessenger {
   }
 
   private async request(body: unknown): Promise<ProviderResult<unknown>> {
+    return this.requestEndpoint("me/messages", body);
+  }
+
+  private async requestEndpoint(path: string, body: unknown): Promise<ProviderResult<unknown>> {
     try {
       const response = await (this.config.fetcher ?? fetch)(
-        `https://graph.facebook.com/${this.config.graphVersion}/me/messages?access_token=${encodeURIComponent(this.config.pageAccessToken)}`,
+        `https://graph.facebook.com/${this.config.graphVersion}/${path}?access_token=${encodeURIComponent(this.config.pageAccessToken)}`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },

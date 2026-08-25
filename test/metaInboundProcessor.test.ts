@@ -29,6 +29,8 @@ function fixture(options: {
   dispatchCurrent?: boolean;
 }) {
   const sent: string[] = [];
+  const privateCommentReplies: string[] = [];
+  const publicCommentReplies: string[] = [];
   const processed: string[] = [];
   const runtimeUpdates: Array<Record<string, unknown>> = [];
   const outbox = new Map<
@@ -121,6 +123,14 @@ function fixture(options: {
     async sendImage() {
       return { ok: true, value: { messageId: "image-1" } };
     },
+    async sendPrivateCommentReply(input) {
+      privateCommentReplies.push(input.text);
+      return { ok: true, value: { messageId: `private-comment-${privateCommentReplies.length}` } };
+    },
+    async sendPublicCommentReply(input) {
+      publicCommentReplies.push(input.text);
+      return { ok: true, value: { messageId: `public-comment-${publicCommentReplies.length}` } };
+    },
   };
   const chat = new DemoChatService();
   const brain = new MetaChatBrain(chat, new CodexLlmBridge({ enabled: false }));
@@ -159,6 +169,8 @@ function fixture(options: {
     followupSchedules,
     followupCancellations,
     inboxPushes,
+    privateCommentReplies,
+    publicCommentReplies,
     setNewerInbound(value: boolean) {
       newerInbound = value;
     },
@@ -221,6 +233,27 @@ test("Meta inbound dùng brain để trả lời và lưu state khi đã bật g
   assert.equal(context.runtimeUpdates.length, 1);
   assert.deepEqual(context.processed, ["message-1"]);
   assert.equal(context.sent.length, 2);
+});
+
+test("Meta comment dùng LLM trả lời riêng rồi mới xác nhận công khai", async () => {
+  const context = fixture({ live: true });
+  const result = await context.processor.processBatch([
+    job({
+      eventId: "comment-1",
+      kind: "comment",
+      commentId: "comment-1",
+      text: "Giá combo 2 lọ bao nhiêu?",
+    }),
+  ]);
+
+  assert.deepEqual(result, { status: "replied", replyCount: 2 });
+  assert.equal(context.sent.length, 0);
+  assert.equal(context.privateCommentReplies.length, 1);
+  assert.match(context.privateCommentReplies[0] ?? "", /510\.000đ/u);
+  assert.deepEqual(context.publicCommentReplies, [
+    "Dạ shop đã nhắn tin tư vấn riêng cho mình rồi ạ. Mình kiểm tra Messenger giúp shop nhé 😊",
+  ]);
+  assert.equal(context.followupSchedules.length, 0);
 });
 
 test("nhân viên tiếp quản trong lúc LLM xử lý thì chặn outbound bot đã chuẩn bị", async () => {

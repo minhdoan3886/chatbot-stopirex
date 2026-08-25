@@ -684,6 +684,8 @@ const server = createServer(async (request, response) => {
             kind: event.kind,
             ...(event.text ? { text: event.text } : {}),
             ...(event.attachmentUrl ? { attachmentUrl: event.attachmentUrl } : {}),
+            ...(event.commentId ? { commentId: event.commentId } : {}),
+            ...(event.postId ? { postId: event.postId } : {}),
             timestamp: event.timestamp.toISOString(),
             payload: event.payload,
             attempt: 0,

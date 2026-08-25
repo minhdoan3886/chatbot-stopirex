@@ -4810,7 +4810,9 @@ function multiActionAnswer(
   if (returnsPolicyQuestion) answers.push(returnsPolicyReply(text));
   if (uniqueTopics.includes("comparison")) {
     answers.push(
-      "Dạ lăn thông thường thường dùng hằng ngày để khử hoặc che mùi; Stopirex hỗ trợ kiểm soát tiết mồ hôi, dùng buổi tối và không dùng hương thơm để che mùi ạ.",
+      /hang gia|nghi gia|chinh hang|hang that|fake|nguon goc/.test(text)
+        ? "Dạ sản phẩm Stopirex bên em cung cấp là hàng chính hãng. Khi nhận hàng, mình đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi; nếu không khớp, mình có quyền từ chối nhận và liên hệ bên em kiểm tra ạ."
+        : "Dạ lăn thông thường thường dùng hằng ngày để khử hoặc che mùi; Stopirex hỗ trợ kiểm soát tiết mồ hôi, dùng buổi tối và không dùng hương thơm để che mùi ạ.",
     );
   }
   if (uniqueTopics.includes("price") || uniqueTopics.includes("shipping")) {

@@ -1427,6 +1427,63 @@ test("câu an toàn nối tiếp giữ ngữ cảnh bé 15 tuổi và không h�
   assert.doesNotMatch(result.reply, /mình đang hỏi cho bé|phụ nữ mang thai|cho con bú/iu);
 });
 
+test("câu nối tiếp hỏi an toàn và hàng giả trả đủ hai ý, không bị guard tuổi lấn quyền", () => {
+  const chat = new DemoChatService();
+  const sessionId = "child-safety-authenticity-followup";
+  chat.chat(sessionId, "Chị mua cho con trai 15 tuổi, bé dùng được không?", {
+    slots: {},
+    intent: "safety",
+    topic: "child_age",
+    subject: "child",
+    age: 15,
+    confidence: 0.99,
+    needsClarification: false,
+    asksDirectAnswer: true,
+  });
+
+  const result = chat.chat(
+    sessionId,
+    "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+    {
+      slots: {},
+      intent: "safety",
+      topic: "irritation",
+      subject: "child",
+      scenario: "hypothetical",
+      confidence: 0.99,
+      needsClarification: false,
+      asksDirectAnswer: true,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "irritation",
+          confidence: 0.99,
+          evidence: ["an toàn cho da"],
+          source: "llm",
+        },
+        {
+          type: "answer_question",
+          topic: "comparison",
+          confidence: 0.99,
+          evidence: ["hàng giả nhiều lắm"],
+          source: "llm",
+        },
+      ],
+      knowledgeIds: [
+        "product-composition-tolerance-approved",
+        "lab-test-2025-skin-irritation",
+        "authenticity-before-purchase",
+      ],
+    },
+    { actionExecutionMode: "multi_action" },
+  );
+
+  assert.match(result.reply, /rát|ngứa|đỏ/iu);
+  assert.match(result.reply, /hàng chính hãng/iu);
+  assert.match(result.reply, /bao bì|tem/iu);
+  assert.doesNotMatch(result.reply, /bé 15 tuổi dùng được|mình đang hỏi cho bé|chuyển bộ phận/iu);
+});
+
 test("replay: gửi cho chị ưu tiên lời mời hướng dẫn gần nhất dù LLM bị state đơn cũ kéo lệch", () => {
   const chat = new DemoChatService();
   const sessionId = "replay-pending-guidance-stale-order";

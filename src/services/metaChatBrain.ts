@@ -674,7 +674,9 @@ function replyCoversSemanticTopic(topic: SemanticTopic, reply: string): boolean 
     case "delivery":
       return /\b(?:giao|ship|van chuyen|mien phi giao|sai gon|tp hcm|thanh pho ho chi minh)\b/u.test(text);
     case "comparison":
-      return /\b(?:khac|giong|so voi|lan thuong|khu mui|ngan tiet)\b/u.test(text);
+      return /\b(?:khac|giong|so voi|lan thuong|khu mui|ngan tiet|chinh hang|hang that|hang gia|bao bi|tem|nguoi gui)\b/u.test(
+        text,
+      );
     case "effectiveness":
     case "sweat":
       return /\b(?:mo hoi|kho thoang|ngan tiet|hieu qua|tham|o ao|bet)\b/u.test(text);

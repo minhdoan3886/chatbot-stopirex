@@ -405,11 +405,25 @@ const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
   duration: ["dung duoc bao lau", "dung may thang", "thoi gian su dung"],
   sweat: ["mo hoi", "uot ao", "uot sung", "tiet mo hoi", "kho thoang"],
   odor: ["mui", "hoi nach", "khu mui", "mui co the"],
-  irritation: ["rat", "ngua", "viem", "kich ung", "cham chich", "do da"],
+  irritation: [
+    "rat",
+    "ngua",
+    "viem",
+    "kich ung",
+    "cham chich",
+    "do da",
+    "an toàn cho da",
+    "an toan cho da",
+    "độ an toàn da",
+    "do an toan da",
+  ],
   damaged: ["vo", "hong", "be", "ro ri", "mop", "do san pham"],
   returns: ["doi tra", "tra hang", "hoan tien", "hoan xeng", "tra tien", "bao hanh"],
   ineffective: ["khong do", "k do", "khong khoi", "k khoi", "khong hieu qua", "khong cai thien"],
-  authenticity: ["hang gia", "chinh hang", "hang that", "fake", "nguon goc"],
+  // Keep the accented alias as well: normalizeSearchText deliberately rewrites
+  // Vietnamese "giả" to "counterfeit" before stripping accents so it cannot
+  // be confused with "giá". The unaccented alias still covers customer typing.
+  authenticity: ["hàng giả", "hang gia", "chinh hang", "hang that", "fake", "nguon goc"],
   exercise: ["tap gym", "da bong", "the thao", "van dong", "ra mo hoi"],
   permanent: ["dut diem", "tam thoi", "dung ca doi", "ngung boi", "ra lai"],
   laboratory_chemistry: ["paraben", "kim loai nang", "asen", "thuy ngan", "hydroquinone"],

@@ -952,6 +952,74 @@ test("Meta brain dùng câu LLM grounded cho cách hỏi bôi mấy tháng là c
   assert.doesNotMatch(response.reply, /sau cạo|wax|tạm ngưng/iu);
 });
 
+test("Meta brain giữ quyền LLM cho câu nối tiếp an toàn và hàng giả", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "meta-child-safety-authenticity";
+  chat.chat(sessionId, "Chị mua cho con trai 15 tuổi, bé dùng được không?", {
+    slots: {},
+    intent: "safety",
+    topic: "child_age",
+    subject: "child",
+    age: 15,
+    confidence: 0.99,
+    needsClarification: false,
+    asksDirectAnswer: true,
+  });
+  let prompt = "";
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (value) => {
+      prompt = value;
+      return JSON.stringify({
+        intent: "safety",
+        topic: "irritation",
+        subject: "child",
+        scenario: "hypothetical",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        needsClarification: false,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "irritation",
+            confidence: 0.99,
+            evidence: ["an toàn cho da"],
+          },
+          {
+            type: "answer_question",
+            topic: "comparison",
+            confidence: 0.99,
+            evidence: ["hàng giả nhiều lắm"],
+          },
+        ],
+        knowledgeIds: [
+          "product-composition-tolerance-approved",
+          "lab-test-2025-skin-irritation",
+          "authenticity-before-purchase",
+        ],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.99,
+        draftReply:
+          "Dạ mẫu thử Stopirex có mức kích ứng da không đáng kể; mình chỉ dùng trên da lành, sạch và khô ạ. Sản phẩm bên em cung cấp là hàng chính hãng; khi nhận mình đối chiếu bao bì, tem và thông tin người gửi giúp em nhé.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId,
+    text: "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+  });
+
+  assert.match(prompt, /product-composition-tolerance-approved/u);
+  assert.match(prompt, /authenticity-before-purchase/u);
+  assert.match(response.reply, /mức kích ứng da không đáng kể/iu);
+  assert.match(response.reply, /hàng chính hãng/iu);
+  assert.doesNotMatch(response.reply, /bé 15 tuổi dùng được|mình đang hỏi cho bé|chuyển bộ phận liên quan/iu);
+  assert.equal(response.state.botPaused, false);
+});
+
 test("Question Coverage Gate chặn thu đơn khi LLM timeout làm mất câu hỏi", async () => {
   const chat = new DemoChatService();
   let llmCalls = 0;

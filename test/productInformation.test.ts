@@ -224,6 +224,26 @@ test("retrieval ưu tiên đúng knowledge hẹp và không để hướng dẫn
   assert.deepEqual(topIds("cách dùng như nào"), ["usage-general"]);
   assert.equal(topIds("bị ngứa đỏ sau khi dùng")[0], "care-suspected-allergic-reaction");
 
+  const skinSafetyAndAuthenticity = retrieveKnowledgeMatches({
+    tenantId: currentTenant,
+    query: "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+    entities,
+    limit: 6,
+  });
+  assert.ok(
+    skinSafetyAndAuthenticity.some(
+      (item) =>
+        item.matchedConcepts.includes("irritation") &&
+        ["product-composition-tolerance-approved", "lab-test-2025-skin-irritation"].includes(item.entity.id),
+    ),
+  );
+  assert.ok(
+    skinSafetyAndAuthenticity.some(
+      (item) =>
+        item.entity.id === "authenticity-before-purchase" && item.matchedConcepts.includes("authenticity"),
+    ),
+  );
+
   const dialectCompound = retrieveKnowledgeMatches({
     tenantId: currentTenant,
     query:

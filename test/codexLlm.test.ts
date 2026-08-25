@@ -818,6 +818,65 @@ test("single-pass không được xin dữ liệu đơn khi action plan đang pa
   assert.doesNotMatch(result.reply, /tên người nhận|SĐT|địa chỉ/iu);
 });
 
+test("action grounding cho phép hướng dẫn liên hệ có điều kiện, không hiểu nhầm là đã handoff", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const draftReply =
+    "Dạ em xin thông tin chính xác đến mình ạ: Stopirex có Alcohol dùng làm dung môi trong ngưỡng an toàn của công thức, và mẫu thử ghi mức kích ứng da là ‘không đáng kể’. Khi nhận hàng, mình đối chiếu bao bì, tem và đúng tên sản phẩm; nếu không khớp thì từ chối nhận và báo em chuyển bộ phận liên quan kiểm tra ạ.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+    draftReply,
+    baseReply:
+      "Dạ với bé 15 tuổi, Stopirex có thể dùng theo đúng hướng dẫn ạ. Mẫu thử có mức kích ứng da không đáng kể.",
+    actions: [
+      {
+        type: "answer_question",
+        topic: "irritation",
+        confidence: 0.97,
+        evidence: ["an toàn cho da"],
+        source: "llm",
+      },
+      {
+        type: "answer_question",
+        topic: "comparison",
+        confidence: 0.92,
+        evidence: ["hàng giả nhiều lắm"],
+        source: "llm",
+      },
+    ],
+    state: {
+      ...state,
+      customerProfile: { age: 15 },
+      answeredTopics: ["child_age"],
+      recentTurns: [
+        { role: "user", text: "Chị mua cho con trai 15 tuổi" },
+        { role: "assistant", text: "Dạ bé 15 tuổi dùng được rồi ạ." },
+      ],
+    },
+    knowledge: [
+      {
+        id: "product-composition-tolerance-approved",
+        title: "Thành phần và độ dịu nhẹ đã được duyệt",
+        content:
+          "Stopirex có Alcohol dùng làm dung môi trong ngưỡng an toàn của công thức. Mẫu thử có mức kích ứng da không đáng kể.",
+      },
+      {
+        id: "authenticity-before-purchase",
+        title: "Xác nhận sản phẩm chính hãng trước khi mua",
+        content:
+          "Sản phẩm Stopirex bên em cung cấp là hàng chính hãng. Khi nhận hàng, khách đối chiếu bao bì, tem và đúng tên sản phẩm; nếu không khớp, khách có quyền từ chối nhận và liên hệ bên em kiểm tra.",
+      },
+    ],
+    knowledgeIds: ["product-composition-tolerance-approved", "authenticity-before-purchase"],
+    unsupportedQuestions: [],
+    groundingConfidence: 0.98,
+    knowledgeGroundingRequired: true,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft");
+  assert.match(result.reply, /báo em chuyển bộ phận liên quan kiểm tra/iu);
+});
+
 test("single-pass chỉ nhận câu trả lời có knowledge id thật đã được truy xuất", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const common = {

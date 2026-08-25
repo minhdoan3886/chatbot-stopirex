@@ -2173,8 +2173,17 @@ function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string
   if (/(?:đã |em )?(?:tạo đơn|lên đơn).*(?:thành công|xong|rồi)/iu.test(normalized) && !state.orderId) {
     throw actionGroundingError("Câu trả lời nói đã tạo đơn nhưng chưa có orderId");
   }
+  const claimsHumanHandoff =
+    /(?:đã |em |bên em )?(?:chuyển|gửi).*(?:nhân viên|chuyên viên|bộ phận liên quan|cskh|sale)/iu.test(
+      normalized,
+    );
+  const conditionalHandoffInstruction =
+    /(?:nếu|khi)[^.!?\n]{0,160}(?:báo|nhắn|liên hệ)[^.!?\n]{0,60}(?:em|bên em)\s+(?:sẽ\s+)?(?:chuyển|gửi)[^.!?\n]{0,100}(?:nhân viên|chuyên viên|bộ phận liên quan|cskh|sale)/iu.test(
+      normalized,
+    );
   if (
-    /(?:đã |em )?(?:chuyển|gửi).*(?:nhân viên|chuyên viên|bộ phận liên quan|cskh|sale)/iu.test(normalized) &&
+    claimsHumanHandoff &&
+    !conditionalHandoffInstruction &&
     state.pipeline !== "C3.Chờ CSKH" &&
     !state.handoffReason
   ) {

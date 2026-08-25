@@ -42,8 +42,9 @@ push đầu tiên không restart resource hiện hữu.
 
 Stack chỉ publish API lên loopback của host tại
 `127.0.0.1:${STAGE_HOST_PORT:-18080}`. Khi cổng 80/443 công khai không khả dụng,
-có thể nối riêng staging qua Tailscale Funnel cổng `8443` tới loopback này; không
-thay Funnel hoặc route `443` đang phục vụ product.
+có thể nối riêng staging qua một cổng Tailscale Funnel chưa dùng, ví dụ `10000`,
+tới loopback này. Phải kiểm tra `tailscale funnel status` trước và không thay các
+Funnel hoặc route đang phục vụ product.
 
 Sau khi deploy, chạy trong container `api` của resource staging:
 

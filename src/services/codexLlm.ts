@@ -1368,6 +1368,7 @@ function buildCompactInterpretPrompt(input: {
     "Hiểu tiếng địa phương và viết tắt theo toàn câu: 'xài tnao' là hỏi cách dùng, 'bết k' là hỏi cảm giác sau khi bôi, 'k đỡ/k khỏi' là chưa hiệu quả, 'hoàn xèng' là hoàn tiền. Nếu KNOWLEDGE có câu trả lời thì phải trả lời, không handoff.",
     "Cụm 'mua/1 chai mà không đỡ có được hoàn tiền không' là câu hỏi điều kiện chính sách, không phải quyết định mua. Tạo answer_question(topic order), không tạo select_quantity hoặc continue_order_collection. Câu đa ý có cách dùng + bết dính + hoàn tiền phải có answer_question usage cho từng ý dùng/bết và answer_question order cho hoàn tiền.",
     "MESSAGE nhiều dòng là các tin liên tiếp: xử lý từng dòng như một ý độc lập rồi hợp nhất. Câu hỏi/xác nhận kiểu hội thoại không có dấu '?' (ví dụ '1 ngày chỉ lăn 1 lần ạ') vẫn phải có answer_question phù hợp.",
+    "Ưu tiên hội thoại nối tiếp: nếu STATE.pendingAction khác null và MESSAGE là lời đồng ý/yêu cầu thực hiện đề nghị ở lượt bot gần nhất, phải xử lý pendingAction đó trước mọi selectedQuantity, orderMissing, pipeline hoặc trạng thái đơn cũ. Ví dụ pendingAction=send_usage_guidance và khách nói 'gửi cho chị' thì bắt buộc dùng usage_guidance + replyTo offer_usage_guidance + affirmation=true + needsClarification=false; cấm order_support và cấm tiếp tục thu đơn.",
     "Mỗi ý có nghĩa phải thành một action kèm confidence 0..1 và evidence trích ngắn từ chính tin khách. Không suy đoán slot. Nếu có nhiều cách hiểu hợp lý, needsClarification=true và chỉ hỏi đúng phần chưa rõ.",
     "Ưu tiên action: an toàn/chuyển người → answer_question → record_fact → select_quantity/update_order → continue_order_collection. Không tự tạo đơn, giảm giá, freeship, hoàn tiền hoặc handoff nếu chưa có căn cứ.",
     "Bất biến số lượng: nếu khách đang chốt/mua và toàn câu thể hiện rõ một số lượng 1–5, kể cả số viết bằng chữ, lỗi gõ gần nghĩa hoặc dùng từ chỉ sản phẩm như chai/lọ, bắt buộc tạo đủ select_quantity với số chuẩn và continue_order_collection. evidence phải chép nguyên văn cả cụm mua + số lượng từ MESSAGE; không được chỉ tạo continue_order_collection.",
@@ -1429,6 +1430,12 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
     .trim();
   const examples = new Set<string>();
   const add = (...items: string[]) => items.forEach((item) => examples.add(item));
+
+  if (state.pendingAction === "send_usage_guidance") {
+    add(
+      "STATE đang chờ send_usage_guidance và bot vừa đề nghị gửi hướng dẫn: 'gửi cho chị/em/mình', 'gửi đi', 'ok', 'được' → usage_guidance + replyTo offer_usage_guidance + affirmation=true + needsClarification=false; pendingAction gần nhất thắng selectedQuantity và state đơn cũ, cấm order_support/continue_order_collection.",
+    );
+  }
 
   if (/\b(?:ai|bot|chatgpt|prompt|api key)\b/.test(text)) {
     add("'em là AI à?' → bot_identity; chỉ trả lời danh tính, không kéo về form cũ.");

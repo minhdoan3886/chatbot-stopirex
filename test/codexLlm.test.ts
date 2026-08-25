@@ -402,6 +402,34 @@ test("prompt compact không cho model tự nuốt một vế mua hoặc từ ch�
   assert.match(prompt, /không tự chọn vế cuối/u);
 });
 
+test("prompt compact ưu tiên lời mời hướng dẫn gần nhất hơn state đơn cũ", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "gửi cho chị",
+      state: {
+        ...state,
+        selectedQuantity: 1,
+        pendingAction: "send_usage_guidance",
+        pipeline: "5.Chờ TT KH",
+        recentTurns: [
+          { role: "user", text: "Con trai chị 15 tuổi dùng được không?" },
+          {
+            role: "assistant",
+            text: "Nếu mình cần, em gửi thêm cách dùng phù hợp để bé sử dụng đúng ngay từ đầu nhé ạ.",
+          },
+        ],
+      },
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /pendingAction gần nhất thắng selectedQuantity và state đơn cũ/u);
+  assert.match(prompt, /usage_guidance \+ replyTo offer_usage_guidance/u);
+  assert.match(prompt, /affirmation=true \+ needsClarification=false/u);
+  assert.match(prompt, /cấm order_support\/continue_order_collection/u);
+});
+
 test("ép OpenAI nhưng thiếu key thì bridge không tự báo sẵn sàng", () => {
   const bridge = CodexLlmBridge.fromEnvironment({
     LLM_PROVIDER: "openai",

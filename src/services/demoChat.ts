@@ -4322,7 +4322,7 @@ function isKnowledgeFullyCoveredQuestion(text: string, semantic: SemanticUnderst
 }
 
 function isAffirmativeFollowup(text: string): boolean {
-  return /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:di|minh|em|chi|anh)|huong dan (?:di|minh|em)|vang|uh|u)(?: a| nhe)?$/.test(
+  return /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:(?:cho )?(?:minh|em|chi|anh|c|a)|di)|huong dan (?:di|minh|em)|vang|uh|u)(?: a| nhe)?$/.test(
     text,
   );
 }

@@ -1391,6 +1391,68 @@ test("replay: ok sau lời mời hướng dẫn không quay lại câu hỏi kha
   assert.doesNotMatch(result.reply, /phòng lạnh|mã đơn/);
 });
 
+test("replay: gửi cho chị ưu tiên lời mời hướng dẫn gần nhất dù LLM bị state đơn cũ kéo lệch", () => {
+  const chat = new DemoChatService();
+  const sessionId = "replay-pending-guidance-stale-order";
+  chat.chat(sessionId, "cho chị 1 lọ", {
+    slots: {},
+    intent: "buying",
+    confidence: 0.99,
+    needsClarification: false,
+    actions: [
+      {
+        type: "select_quantity",
+        quantity: 1,
+        confidence: 0.99,
+        evidence: ["cho chị 1 lọ"],
+        source: "llm",
+      },
+      {
+        type: "continue_order_collection",
+        confidence: 0.98,
+        evidence: ["cho chị 1 lọ"],
+        source: "llm",
+      },
+    ],
+  });
+  const child = chat.chat(sessionId, "Con trai chị 15 tuổi dùng được không?", {
+    slots: {},
+    intent: "safety",
+    topic: "child_age",
+    subject: "child",
+    age: 15,
+    asksDirectAnswer: true,
+    confidence: 0.99,
+    needsClarification: false,
+  });
+  assert.equal(child.state.pendingAction, "send_usage_guidance");
+
+  const result = chat.chat(sessionId, "gửi cho chị", {
+    slots: {},
+    intent: "order_support",
+    topic: "order",
+    replyTo: "confirm_order",
+    confidence: 0.93,
+    needsClarification: true,
+    actions: [
+      {
+        type: "continue_order_collection",
+        confidence: 0.93,
+        evidence: ["gửi cho chị"],
+        source: "llm",
+      },
+    ],
+  });
+
+  assert.equal(result.state.decisionTrace?.pendingActionBefore, "send_usage_guidance");
+  assert.equal(result.state.decisionTrace?.selectedRoute, "pending_action");
+  assert.equal(result.state.lastIntent, "usage_guidance");
+  assert.deepEqual(result.state.decisionTrace?.knowledgeEntityIds, ["usage-child-12-plus"]);
+  assert.match(result.reply, /buổi tối/iu);
+  assert.match(result.reply, /2–3 lần\/tuần/iu);
+  assert.doesNotMatch(result.reply, /ngồi điều hòa|tên người nhận|SĐT|địa chỉ/iu);
+});
+
 test("replay: freeship vẫn là mặc cả khi LLM trả ý tư vấn chung", () => {
   const chat = new DemoChatService();
   const result = chat.chat("replay-freeship", "freeship k e", {

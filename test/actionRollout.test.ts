@@ -29,7 +29,7 @@ test("shadow luôn giữ legacy, canary phân bổ ổn định theo phiên", ()
   );
 });
 
-test("comparison phát hiện legacy bỏ mất hành động mua trong câu đa ý", () => {
+test("comparison xác nhận hai biến thể cùng giữ hành động mua và candidate trả đủ đa ý", () => {
   const legacyChat = new DemoChatService();
   const candidateChat = new DemoChatService();
   const semantic = {
@@ -53,8 +53,9 @@ test("comparison phát hiện legacy bỏ mất hành động mua trong câu đa
     candidate,
   });
 
-  assert.equal(result.intentMismatch, true);
-  assert.equal(result.pipelineMismatch, true);
+  assert.equal(result.intentMismatch, false);
+  assert.equal(result.pipelineMismatch, false);
+  assert.equal(result.replyMismatch, true);
   assert.equal(result.candidateHasMultipleActions, true);
 });
 
@@ -81,4 +82,3 @@ test("quality gate chỉ pass khi đủ mẫu và các tỷ lệ dưới ngưỡ
     "collecting",
   );
 });
-

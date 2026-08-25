@@ -3105,7 +3105,7 @@ function detectDirectIntent(text: string): CustomerIntent | undefined {
     return "usage_time";
   }
   if (
-    /da nhay cam|\b(?:tre|te)\s*(?:em|e|nho)?\b|\bbe(?: trai| gai| nha|minh| bao nhieu tuoi|\s*\d+\s*tuoi)\b|duoi 12|12 tuoi|me bau|ba bau|pa pau|ba pau|mang thai|cho con bu|doi tuong.*(?:dung|su dung)|ai.*dung duoc|an toan.*khong/.test(
+    /da nhay cam|\b(?:tre|te)\s*(?:em|e|nho)?\b|\bbe(?: trai| gai| nha|minh| bao nhieu tuoi|\s*\d+\s*tuoi)\b|duoi 12|12 tuoi|me bau|ba bau|pa pau|ba pau|mang thai|cho con bu|doi tuong.*(?:dung|su dung)|ai.*dung duoc|\ban toan\b.{0,40}\b(?:khong|ko|k)\b/.test(
       text,
     )
   ) {

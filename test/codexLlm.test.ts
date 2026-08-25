@@ -212,6 +212,22 @@ test("parser giữ nguồn knowledge, phần chưa hỗ trợ và độ tin cậ
   assert.equal(parsed.groundingConfidence, 0.91);
 });
 
+test("parser giữ truy vấn Knowledge do LLM chuẩn hóa và loại PII", () => {
+  const parsed = parseSemanticUnderstanding(
+    JSON.stringify({
+      knowledgeQueries: [
+        "an toàn cho da nhạy cảm 0983425566",
+        "kiểm tra hàng chính hãng",
+      ],
+    }),
+  );
+
+  assert.deepEqual(parsed.knowledgeQueries, [
+    "an toàn cho da nhạy cảm",
+    "kiểm tra hàng chính hãng",
+  ]);
+});
+
 test("cấu hình auto ưu tiên OpenAI API khi có key", () => {
   const bridge = CodexLlmBridge.fromEnvironment({
     LLM_PROVIDER: "auto",
@@ -877,6 +893,37 @@ test("action grounding cho phép hướng dẫn liên hệ có điều kiện, k
   assert.match(result.reply, /báo em chuyển bộ phận liên quan kiểm tra/iu);
 });
 
+test("action grounding không để câu điều kiện khác che tuyên bố đã handoff sai state", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const baseReply = "Dạ em tư vấn cho mình ạ.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "Tư vấn giúp mình",
+    draftReply:
+      "Dạ em đã chuyển bộ phận CSKH kiểm tra rồi ạ. Nếu hàng không khớp, mình báo em để em chuyển bộ phận liên quan kiểm tra nhé.",
+    baseReply,
+    state,
+  });
+
+  assert.equal(result.status, "fallback");
+  assert.equal(result.reason, "action_grounding_guard");
+  assert.equal(result.reply, baseReply);
+});
+
+test("direction guard chặn LLM thay câu hỏi tình trạng bằng câu chốt số lượng", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const baseReply = "Dạ em hiểu ạ. Tình trạng của mình có kèm mùi khó chịu không ạ?";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "Mình bị mồ hôi nhiều",
+    draftReply: "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Mình chọn 1 lọ hay combo 2 lọ ạ?",
+    baseReply,
+    state,
+  });
+
+  assert.equal(result.status, "fallback");
+  assert.equal(result.reason, "direction_guard");
+  assert.equal(result.reply, baseReply);
+});
+
 test("single-pass chỉ nhận câu trả lời có knowledge id thật đã được truy xuất", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const common = {
@@ -1434,13 +1481,13 @@ test("Codex viết lại toàn bộ gói mở đầu nhưng không được làm
   assert.doesNotMatch(prompt, /Minh|Mai Lan/);
 });
 
-test("Codex bridge không nhận SĐT hoặc dữ liệu đơn", async () => {
+test("Codex bridge vẫn đọc toàn bộ tin chứa SĐT để không bỏ sót câu hỏi đi kèm", async () => {
   let called = false;
   const bridge = new CodexLlmBridge({
     enabled: true,
     runner: async () => {
       called = true;
-      return "Không được gọi";
+      return "Dạ em đã ghi nhận thông tin mình gửi ạ.";
     },
   });
   const result = await bridge.enhance({
@@ -1448,9 +1495,8 @@ test("Codex bridge không nhận SĐT hoặc dữ liệu đơn", async () => {
     baseReply: "Dạ em đã ghi nhận ạ.",
     state,
   });
-  assert.equal(result.status, "skipped");
-  assert.equal(result.reason, "phone_detected");
-  assert.equal(called, false);
+  assert.equal(result.status, "enhanced");
+  assert.equal(called, true);
 });
 
 test("Codex vẫn là bộ não đọc ngữ cảnh trong flow CSKH", async () => {

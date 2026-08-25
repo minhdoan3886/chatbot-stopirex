@@ -83,7 +83,10 @@ export class MetaChatBrain {
       ...(input.orderConfirmationMode ? { orderConfirmationMode: input.orderConfirmationMode } : {}),
     };
     const before = this.chat.peek(input.sessionId);
-    const fastTransition = !this.llm.enabled || isFastTransition(input.text, before);
+    // Every customer message goes through semantic interpretation when the LLM
+    // is available. Order data is still validated mechanically by DemoChat,
+    // but it must not hide product questions carried in the same message.
+    const fastTransition = !this.llm.enabled;
     let interpreted: SemanticUnderstanding = { slots: {} };
     let knowledge: ApprovedKnowledgeContext[] = [];
     let interpretationStatus: "not_run" | "interpreted" | "fallback" | "skipped" | "unavailable" = "not_run";
@@ -91,7 +94,7 @@ export class MetaChatBrain {
     if (!fastTransition) {
       let matches = retrieveKnowledgeMatches({
         tenantId: liveKnowledgeTenant,
-        query: contextualKnowledgeQuery(input.text, before),
+        query: knowledgeSafeQuery(contextualKnowledgeQuery(input.text, before)),
         entities: liveKnowledge,
         // Compound customer messages need breadth. The retriever keeps a leader
         // for every detected concept, while the LLM remains the semantic owner.
@@ -104,8 +107,9 @@ export class MetaChatBrain {
         knowledge,
       });
       let knowledgeRetry = false;
-      if (needsKnowledgeRetry(rawLlmResult)) {
-        const expandedMatches = semanticKnowledgeQueries(rawLlmResult).flatMap((query) =>
+      const semanticQueries = semanticKnowledgeQueries(rawLlmResult);
+      if (semanticQueries.length > 0 && needsSemanticKnowledgeExpansion(rawLlmResult)) {
+        const expandedMatches = semanticQueries.flatMap((query) =>
           retrieveKnowledgeMatches({
             tenantId: liveKnowledgeTenant,
             query,
@@ -114,7 +118,9 @@ export class MetaChatBrain {
           }),
         );
         const mergedMatches = mergeKnowledgeMatches(matches, expandedMatches, 8);
-        if (mergedMatches.length > matches.length) {
+        const previousIds = matches.map((match) => match.entity.id).join("|");
+        const mergedIds = mergedMatches.map((match) => match.entity.id).join("|");
+        if (mergedIds !== previousIds) {
           matches = mergedMatches;
           knowledge = knowledgeContexts(matches);
           rawLlmResult = await this.llm.interpret({
@@ -177,6 +183,7 @@ export class MetaChatBrain {
         unsupportedQuestionCount: llmResult.unsupportedQuestions?.length ?? 0,
         groundingConfidence: llmResult.groundingConfidence,
         knowledgeRetry,
+        semanticKnowledgeQueryCount: semanticQueries.length,
       });
     }
     const liveVariant = selectActionExecutionMode({
@@ -384,7 +391,7 @@ export class MetaChatBrain {
         ]),
       ];
     }
-    const governed = governCustomerResponse({
+    let governed = governCustomerResponse({
       replies: [composed.reply],
       answeredTopics: base.state.answeredTopics,
       previouslyAskedTopics: base.state.askedTopics,
@@ -397,6 +404,36 @@ export class MetaChatBrain {
         requiredAnswerTopics(input.text).length >= 2 ||
         semanticAnswerTopics(interpreted, input.text).length >= 3,
     });
+    const governedCoverage = assessQuestionCoverage({
+      customerMessage: input.text,
+      interpretationStatus,
+      interpreted,
+      compositionStatus: composed.status,
+      base,
+      orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
+      candidateReply: governed.replies.join("\n\n"),
+    });
+    if (!governedCoverage.complete && governed.truncated) {
+      // Never trade correctness for the character budget. If compaction drops
+      // a customer topic, retain the full answer and only merge bubbles.
+      const untruncated = governCustomerResponse({
+        replies: [composed.reply],
+        answeredTopics: base.state.answeredTopics,
+        previouslyAskedTopics: base.state.askedTopics,
+        maxBubbles: 2,
+        preserveFullText: true,
+      });
+      const untruncatedCoverage = assessQuestionCoverage({
+        customerMessage: input.text,
+        interpretationStatus,
+        interpreted,
+        compositionStatus: composed.status,
+        base,
+        orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
+        candidateReply: untruncated.replies.join("\n\n"),
+      });
+      if (untruncatedCoverage.complete) governed = untruncated;
+    }
     if (governed.replies.length === 0) return base;
     try {
       assertReplyMatchesConversationState({
@@ -511,9 +548,8 @@ type QuestionCoverageAssessment = {
 };
 
 export function extractCustomerQuestionClauses(value: string): string[] {
-  const parts = value.split(/[?？]+/u);
-  if (parts.length <= 1) return [];
-  return parts
+  const explicit = value
+    .split(/[?？]+/u)
     .slice(0, -1)
     .map((part) => {
       const sentences = part
@@ -522,8 +558,31 @@ export function extractCustomerQuestionClauses(value: string): string[] {
         .filter(Boolean);
       return sentences.at(-1) ?? "";
     })
-    .filter(Boolean)
-    .slice(0, 6);
+    .filter(Boolean);
+  const implicit = value
+    .split(/(?:\r?\n|(?<=[.!;])\s+)/u)
+    .map((part) => part.trim())
+    .filter((part) => part && !/[?？]/u.test(part) && looksLikeImplicitQuestionOrConcern(part));
+  return [...new Set([...explicit, ...implicit])].slice(0, 6);
+}
+
+function looksLikeImplicitQuestionOrConcern(value: string): boolean {
+  const text = value
+    .toLocaleLowerCase("vi-VN")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/gu, "d")
+    .replace(/[^a-z0-9]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!text || /(?<!\d)0\d{9}(?!\d)/u.test(value)) return false;
+  return (
+    /\b(?:bao nhieu|the nao|lam sao|tai sao|vi sao|co duoc|duoc khong|dc k|co bi|co gay|co lam|co an toan|xai sao|dung sao|gia sao|ship sao)\b/.test(
+      text,
+    ) ||
+    /\b(?:khong|ko|khum|k)\s*(?:a|ạ)?$/.test(text) ||
+    /\b(?:hang gia|fake|lo hang gia|so hang gia|da nhay cam|lo kich ung|so kich ung)\b/.test(text)
+  );
 }
 
 function assessQuestionCoverage(input: {
@@ -885,17 +944,6 @@ function knowledgeContexts(matches: readonly KnowledgeMatch[]): ApprovedKnowledg
   }));
 }
 
-function needsKnowledgeRetry(semantic: SemanticUnderstanding): boolean {
-  return Boolean(
-    semantic.unsupportedQuestions?.length ||
-    semantic.actions?.some(
-      (action) =>
-        action.type === "handoff_to_human" &&
-        /knowledge|du lieu|dữ liệu|chua co|chưa có/iu.test(action.reason ?? ""),
-    ),
-  );
-}
-
 function semanticKnowledgeQueries(semantic: SemanticUnderstanding): string[] {
   const topics = new Set([
     semantic.topic,
@@ -903,7 +951,10 @@ function semanticKnowledgeQueries(semantic: SemanticUnderstanding): string[] {
       .filter((action) => action.type === "answer_question")
       .map((action) => action.topic),
   ]);
-  const queries = new Set<string>(semantic.unsupportedQuestions ?? []);
+  const queries = new Set<string>([
+    ...(semantic.knowledgeQueries ?? []),
+    ...(semantic.unsupportedQuestions ?? []),
+  ]);
   if (
     ["price_change", "price_request", "promotion_inquiry", "price_objection", "negotiation"].includes(
       semantic.intent ?? "",
@@ -926,6 +977,26 @@ function semanticKnowledgeQueries(semantic: SemanticUnderstanding): string[] {
     queries.add("da nhạy cảm kích ứng ngứa rát dùng Stopirex");
   }
   return [...queries].filter(Boolean).slice(0, 6);
+}
+
+function needsSemanticKnowledgeExpansion(semantic: SemanticUnderstanding): boolean {
+  return Boolean(
+    semantic.knowledgeQueries?.length ||
+    semantic.unsupportedQuestions?.length ||
+    semantic.actions?.some(
+      (action) =>
+        action.type === "handoff_to_human" &&
+        /knowledge|du lieu|dữ liệu|chua co|chưa có/iu.test(action.reason ?? ""),
+    ),
+  );
+}
+
+function knowledgeSafeQuery(value: string): string {
+  return value
+    .replace(/(?<!\d)0\d{9}(?!\d)/gu, " ")
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function mergeKnowledgeMatches(

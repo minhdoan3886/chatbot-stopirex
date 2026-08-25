@@ -47,7 +47,8 @@ test("response consistency chấp nhận khi reply và state cùng số lượng
 });
 
 test("response consistency chặn cách nói em ghi 1 lọ khi state chưa lưu", () => {
-  const { quantity: _quantity, ...actionPlanWithoutQuantity } = trace.actionPlan;
+  const { quantity, ...actionPlanWithoutQuantity } = trace.actionPlan;
+  void quantity;
   assert.throws(
     () =>
       assertReplyMatchesConversationState({

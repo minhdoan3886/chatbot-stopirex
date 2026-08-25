@@ -10,6 +10,7 @@
     "actions",
     "uncertainties",
     "knowledgeIds",
+    "knowledgeQueries",
     "unsupportedQuestions",
     "groundingConfidence",
     "draftReply",
@@ -164,6 +165,11 @@
     "knowledgeIds": {
       "type": "array",
       "maxItems": 8,
+      "items": { "type": "string" }
+    },
+    "knowledgeQueries": {
+      "type": "array",
+      "maxItems": 6,
       "items": { "type": "string" }
     },
     "unsupportedQuestions": {

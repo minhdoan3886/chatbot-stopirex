@@ -697,6 +697,124 @@ test("câu hỏi đang bầu trong lúc thu đơn vẫn dùng câu Knowledge c�
   );
 });
 
+test("Meta brain vẫn cho toàn bộ tin chứa SĐT và địa chỉ qua LLM rồi mới lưu đơn", async () => {
+  const chat = new DemoChatService();
+  let prompt = "";
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (value) => {
+      prompt = value;
+      return JSON.stringify({
+        intent: "buying",
+        topic: "sensitive_skin",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "sensitive_skin",
+            confidence: 0.99,
+            evidence: ["da nhạy cảm dùng có an toàn không"],
+          },
+          { type: "select_quantity", quantity: 1, confidence: 0.99, evidence: ["Cho chị 1 lọ"] },
+          {
+            type: "update_order",
+            fields: {
+              phone: "0983425566",
+              legacyAddress: "82 Nguyễn Tuân Hà Nội",
+            },
+            confidence: 0.99,
+            evidence: ["82 Nguyễn Tuân Hà Nội, SĐT 0983425566"],
+          },
+          { type: "continue_order_collection", confidence: 0.99, evidence: ["Cho chị 1 lọ"] },
+        ],
+        knowledgeIds: ["audience-sensitive-skin"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Dạ da nhạy cảm có thể dùng Stopirex đúng hướng dẫn trên da lành, sạch và khô hoàn toàn ạ. Mình nên thử trước trên vùng nhỏ và tạm ngưng nếu da khó chịu.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const message =
+    "Cho chị 1 lọ giao về 82 Nguyễn Tuân Hà Nội, SĐT 0983425566; da nhạy cảm dùng có an toàn không?";
+
+  const response = await brain.reply({ sessionId: "pii-compound-through-llm", text: message });
+
+  assert.match(prompt, /0983425566/u);
+  assert.match(prompt, /da nhạy cảm dùng có an toàn không/iu);
+  assert.equal(response.state.selectedQuantity, 1);
+  assert.equal(response.state.orderDraft?.phone, "0983425566");
+  assert.match(response.reply, /da nhạy cảm/iu);
+  assert.doesNotMatch(response.reply, /chưa hiểu|chưa nghe rõ/iu);
+});
+
+test("LLM chuẩn hóa tiếng tự nhiên thành truy vấn Knowledge rồi hệ thống truy xuất lại", async () => {
+  const chat = new DemoChatService();
+  const prompts: string[] = [];
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      prompts.push(prompt);
+      if (prompts.length === 1) {
+        return JSON.stringify({
+          intent: "safety",
+          topic: "child_age",
+          asksDirectAnswer: true,
+          confidence: 0.98,
+          actions: [
+            {
+              type: "answer_question",
+              topic: "child_age",
+              confidence: 0.98,
+              evidence: ["bé 15 tuổi dùng được không"],
+            },
+          ],
+          knowledgeIds: [],
+          knowledgeQueries: ["trẻ từ đủ 12 tuổi sử dụng Stopirex"],
+          unsupportedQuestions: ["độ tuổi sử dụng"],
+          groundingConfidence: 0.2,
+          draftReply: "Dạ em cần kiểm tra lại độ tuổi sử dụng ạ.",
+          slots: {},
+        });
+      }
+      return JSON.stringify({
+        intent: "safety",
+        topic: "child_age",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "child_age",
+            confidence: 0.99,
+            evidence: ["bé 15 tuổi dùng được không"],
+          },
+        ],
+        knowledgeIds: ["audience-child-12-plus"],
+        knowledgeQueries: ["trẻ từ đủ 12 tuổi sử dụng Stopirex"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.99,
+        draftReply: "Dạ bé 15 tuổi có thể sử dụng Stopirex theo đúng hướng dẫn ạ.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "semantic-knowledge-query-child",
+    text: "bé 15 tuổi dùng được không",
+  });
+
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1] ?? "", /audience-child-12-plus/u);
+  assert.match(response.reply, /15 tuổi có thể sử dụng/iu);
+  assert.doesNotMatch(response.reply, /hoàn tiền|đổi trả|cần kiểm tra lại/iu);
+});
+
 test("outbox tiếp tục gửi kế hoạch đã commit khi Meta lỗi tạm thời, không chạy brain lần hai", async () => {
   const context = fixture({ live: true, failFirstSend: true });
   await assert.rejects(
@@ -1000,7 +1118,7 @@ test("Meta brain giữ quyền LLM cho câu nối tiếp an toàn và hàng gi�
         unsupportedQuestions: [],
         groundingConfidence: 0.99,
         draftReply:
-          "Dạ mẫu thử Stopirex có mức kích ứng da không đáng kể; mình chỉ dùng trên da lành, sạch và khô ạ. Sản phẩm bên em cung cấp là hàng chính hãng; khi nhận mình đối chiếu bao bì, tem và thông tin người gửi giúp em nhé.",
+          "Dạ về an toàn, Stopirex có Alcohol làm dung môi trong ngưỡng an toàn của công thức và mẫu thử ghi mức kích ứng da không đáng kể; với da nhạy cảm mình nên thử trên vùng nhỏ, dùng trên da lành, sạch, khô hoàn toàn, chỉ lăn một lớp mỏng vào buổi tối, không dùng khi da trầy, đỏ, rát hoặc ngay sau cạo, nhổ, wax ạ. Về hàng chính hãng, sản phẩm bên em cung cấp là hàng chính hãng; khi nhận mình đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi giúp em nhé.",
         slots: {},
       });
     },
@@ -1016,6 +1134,7 @@ test("Meta brain giữ quyền LLM cho câu nối tiếp an toàn và hàng gi�
   assert.match(prompt, /authenticity-before-purchase/u);
   assert.match(response.reply, /mức kích ứng da không đáng kể/iu);
   assert.match(response.reply, /hàng chính hãng/iu);
+  assert.ok(response.reply.length > 360);
   assert.doesNotMatch(response.reply, /bé 15 tuổi dùng được|mình đang hỏi cho bé|chuyển bộ phận liên quan/iu);
   assert.equal(response.state.botPaused, false);
 });

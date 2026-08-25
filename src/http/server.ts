@@ -12,19 +12,6 @@ import {
 } from "../services/metaChatBrain.js";
 import {
   DemoChatService,
-  isCompoundOrderUpdateQuestion,
-  isDomesticDeliveryEtaQuestion,
-  isExpressDeliveryQuestion,
-  isInternalSystemProbe,
-  isInternationalShippingQuestion,
-  isLikelyAdministrativeFragment,
-  isOutOfScopeAssistantProbe,
-  isOrderCaptureMessage,
-  isOfflineStoreQuestion,
-  isPriceAndShippingPolicyQuestion,
-  isWholesaleDealerInquiry,
-  isPriceConcern,
-  isQuantityShippingPolicyQuestion,
   type DemoChatResponse,
   type DemoChatState,
 } from "../services/demoChat.js";
@@ -337,68 +324,6 @@ const server = createServer(async (request, response) => {
       const includeSources = body.includeSources === true;
       if (codexLlm.enabled) {
         const stateBefore = demoChat.peek(sessionId);
-        if (isDeterministicFastPath(body.text, stateBefore)) {
-          let result = demoChat.chat(sessionId, body.text, {}, context);
-          let quality = result.state.activeSkill
-            ? evaluateConversationQuality({
-                customerMessage: body.text,
-                baseReply: result.reply,
-                replies: result.replies,
-                skill: result.state.activeSkill,
-                ...(result.state.lastIntent ? { intent: result.state.lastIntent } : {}),
-              })
-            : undefined;
-          const blockedReasons = quality && !quality.passed ? [...quality.hardFailReasons] : [];
-          if (blockedReasons.length > 0) {
-            const blockedReplies = qualityGateFallbackReplies(result.state);
-            const blockedState = demoChat.replaceLatestAssistantTurnsAndPauseForCoverage(
-              result.sessionId,
-              result.replies,
-              blockedReplies,
-              `Quality Gate chặn phản hồi: ${blockedReasons.join(", ")}`,
-            );
-            result = {
-              ...result,
-              reply: blockedReplies.join("\n\n"),
-              replies: blockedReplies,
-              state: blockedState,
-            };
-            quality = evaluateConversationQuality({
-              customerMessage: body.text,
-              baseReply: result.reply,
-              replies: result.replies,
-              skill: "knowledge-handoff",
-              intent: "knowledge_unknown",
-            });
-          }
-          result = withTestKnowledgeSources(result, includeSources);
-          return json(response, 200, {
-            ...result,
-            ...(quality ? { quality } : {}),
-            ...(blockedReasons.length > 0 ? { qualityGate: { blocked: true, reasons: blockedReasons } } : {}),
-            llm: {
-              provider: codexLlm.provider,
-              status: "skipped",
-              model: codexLlm.model,
-              latencyMs: 0,
-              interpretation: {
-                status: "skipped",
-                latencyMs: 0,
-                reason: "deterministic_transition",
-              },
-              composition: {
-                status: "skipped",
-                latencyMs: 0,
-                reason: "deterministic_transition",
-              },
-              skill: {
-                ...(result.state.activeSkill ? { selected: result.state.activeSkill } : {}),
-                ...(result.state.skillReason ? { reason: result.state.skillReason } : {}),
-                llmCalls: 0,
-              },
-            },
-          });
-        }
         const retrievedKnowledge = retrieveApprovedKnowledge(
           contextualKnowledgeQuery(body.text, stateBefore),
         );
@@ -1017,75 +942,6 @@ function withTestKnowledgeSources(result: DemoChatResponse, enabled: boolean): D
   const last = replies.at(-1) ?? result.reply;
   replies[replies.length - 1] = `${last}\n\n${sourceLine}`;
   return { ...result, replies, reply: replies.join("\n\n") };
-}
-
-function isDeterministicFastPath(customerMessage: string, state: DemoChatState): boolean {
-  const text = customerMessage
-    .toLocaleLowerCase("vi-VN")
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/đ/g, "d")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (
-    isInternalSystemProbe(customerMessage) ||
-    isInternationalShippingQuestion(customerMessage) ||
-    isOutOfScopeAssistantProbe(customerMessage) ||
-    isWholesaleDealerInquiry(customerMessage) ||
-    isExpressDeliveryQuestion(customerMessage) ||
-    isOfflineStoreQuestion(customerMessage) ||
-    isDomesticDeliveryEtaQuestion(customerMessage) ||
-    isPriceAndShippingPolicyQuestion(customerMessage) ||
-    isQuantityShippingPolicyQuestion(customerMessage) ||
-    isOrderCaptureMessage(customerMessage) ||
-    (Boolean(state.selectedQuantity) && isCompoundOrderUpdateQuestion(customerMessage)) ||
-    isPriceConcern(text)
-  ) {
-    return true;
-  }
-  if (
-    state.pendingAction === "send_authenticity_legal_summary" &&
-    /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:di|minh|em|chi|anh)|vang|uh|u)(?: a| nhe)?$/.test(text)
-  ) {
-    return true;
-  }
-  if (
-    state.pendingAction === "choose_quantity" &&
-    /^(?:1|2|1 lo|2 lo|mot lo|hai lo|combo)(?: a| nhe| nha)?$/.test(text)
-  ) {
-    return true;
-  }
-  if (
-    state.pendingAction === "confirm_order" &&
-    /^(?:dung|dung roi|dong y|toi dong y|xac nhan dong y)$/.test(text)
-  ) {
-    return true;
-  }
-  if (
-    state.selectedQuantity &&
-    state.orderMissing.length > 0 &&
-    !/[?？]/u.test(customerMessage) &&
-    (/(?<!\d)0\d{9}(?!\d)/u.test(customerMessage) ||
-      isLikelyAdministrativeFragment(customerMessage) ||
-      /\b(?:ten nguoi nhan|sdt|so dien thoai|dia chi|phuong|xa|thi tran|quan|huyen|tinh|thanh pho)\b/.test(
-        text,
-      ))
-  ) {
-    return true;
-  }
-  if (
-    state.pipeline === "6.Đã tạo đơn" &&
-    /^(?:dung|dung roi|dong y|ok|okay|cam on|thanks)(?: a| nhe| nha)?$/.test(text)
-  ) {
-    return true;
-  }
-  if (/^(?:gia|bao gia|xin gia|gia bao nhieu|bao nhieu tien)(?: a| nhe| nha)?[?？]?$/.test(text)) {
-    return true;
-  }
-  if (/^(?:stop|huy dang ky|khong nhan nua|dung nhan)$/.test(text)) {
-    return true;
-  }
-  return false;
 }
 
 function classifyDemoChatFailure(error: unknown): {

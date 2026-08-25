@@ -23,6 +23,27 @@ export type ConversationOutboundPlan = {
   lastMessageId?: string;
 };
 
+export type MetaCommentWorkflowRecord = {
+  id: string;
+  pageId: string;
+  pageName: string;
+  externalCommentId: string;
+  externalPostId?: string;
+  externalCustomerId: string;
+  commentText: string;
+  intent?: string;
+  category: "price" | "consultation" | "complaint" | "positive" | "other";
+  priority: "normal" | "urgent";
+  status: "received" | "processing" | "replied" | "partial" | "failed" | "paused";
+  publicReplyText?: string;
+  privateReplyText?: string;
+  publicSentAt?: string;
+  privateSentAt?: string;
+  errorCode?: string;
+  receivedAt: string;
+  updatedAt: string;
+};
+
 export type ActionRolloutSnapshot = {
   sampleSize24h: number;
   multiActionLive24h: number;
@@ -738,6 +759,170 @@ export class PostgresStore {
       [input.externalPageId, input.displayName, input.encryptedAccessToken],
     );
     return result.rowCount === 1;
+  }
+
+  async upsertMetaCommentReceived(input: {
+    tenantId: TenantId;
+    pageId: string;
+    conversationId: string;
+    externalCommentId: string;
+    externalPostId?: string;
+    externalCustomerId: string;
+    commentText: string;
+  }): Promise<string> {
+    const result = await this.pool.query(
+      `INSERT INTO meta_comment_workflows (
+         tenant_id, page_id, conversation_id, external_comment_id, external_post_id,
+         external_customer_id, comment_text, status, updated_at
+       ) VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, 'received', now())
+       ON CONFLICT (page_id, external_comment_id)
+       DO UPDATE SET
+         conversation_id = COALESCE(meta_comment_workflows.conversation_id, EXCLUDED.conversation_id),
+         external_post_id = COALESCE(EXCLUDED.external_post_id, meta_comment_workflows.external_post_id),
+         comment_text = EXCLUDED.comment_text,
+         updated_at = now()
+       RETURNING id::text`,
+      [
+        input.tenantId,
+        input.pageId,
+        input.conversationId,
+        input.externalCommentId,
+        input.externalPostId ?? null,
+        input.externalCustomerId,
+        input.commentText,
+      ],
+    );
+    return String(result.rows[0].id);
+  }
+
+  async prepareMetaCommentReplies(input: {
+    tenantId: TenantId;
+    pageId: string;
+    externalCommentId: string;
+    intent?: string;
+    category: "price" | "consultation" | "complaint" | "positive" | "other";
+    priority: "normal" | "urgent";
+    publicReplyText: string;
+    privateReplyText: string;
+  }): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE meta_comment_workflows
+          SET intent = $4,
+              category = $5,
+              priority = $6,
+              public_reply_text = $7,
+              private_reply_text = $8,
+              status = CASE WHEN status = 'replied' THEN status ELSE 'processing' END,
+              error_code = NULL,
+              updated_at = now()
+        WHERE tenant_id = $1 AND page_id = $2::uuid AND external_comment_id = $3
+      RETURNING id`,
+      [
+        input.tenantId,
+        input.pageId,
+        input.externalCommentId,
+        input.intent ?? null,
+        input.category,
+        input.priority,
+        input.publicReplyText,
+        input.privateReplyText,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  async markMetaCommentPartSent(input: {
+    tenantId: TenantId;
+    pageId: string;
+    externalCommentId: string;
+    part: "public" | "private";
+    messageId: string;
+  }): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE meta_comment_workflows
+          SET public_message_id = CASE WHEN $4 = 'public' THEN $5 ELSE public_message_id END,
+              private_message_id = CASE WHEN $4 = 'private' THEN $5 ELSE private_message_id END,
+              public_sent_at = CASE WHEN $4 = 'public' THEN now() ELSE public_sent_at END,
+              private_sent_at = CASE WHEN $4 = 'private' THEN now() ELSE private_sent_at END,
+              status = CASE
+                WHEN (CASE WHEN $4 = 'public' THEN $5 ELSE public_message_id END) IS NOT NULL
+                 AND (CASE WHEN $4 = 'private' THEN $5 ELSE private_message_id END) IS NOT NULL
+                  THEN 'replied'
+                ELSE 'partial'
+              END,
+              error_code = NULL,
+              updated_at = now()
+        WHERE tenant_id = $1 AND page_id = $2::uuid AND external_comment_id = $3
+      RETURNING id`,
+      [input.tenantId, input.pageId, input.externalCommentId, input.part, input.messageId],
+    );
+    return result.rowCount === 1;
+  }
+
+  async markMetaCommentIssue(input: {
+    tenantId: TenantId;
+    pageId: string;
+    externalCommentId: string;
+    status: "failed" | "paused";
+    errorCode?: string;
+  }): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE meta_comment_workflows
+          SET status = $4, error_code = $5, updated_at = now()
+        WHERE tenant_id = $1 AND page_id = $2::uuid AND external_comment_id = $3
+      RETURNING id`,
+      [input.tenantId, input.pageId, input.externalCommentId, input.status, input.errorCode ?? null],
+    );
+    return result.rowCount === 1;
+  }
+
+  async listMetaCommentWorkflows(limit = 100): Promise<MetaCommentWorkflowRecord[]> {
+    const safeLimit = Math.max(1, Math.min(250, Math.trunc(limit)));
+    const result = await this.pool.query(
+      `SELECT c.id::text,
+              c.page_id::text,
+              COALESCE(p.display_name, 'Facebook Page ' || right(p.external_page_id, 6)) AS page_name,
+              c.external_comment_id,
+              c.external_post_id,
+              c.external_customer_id,
+              c.comment_text,
+              c.intent,
+              c.category,
+              c.priority,
+              c.status,
+              c.public_reply_text,
+              c.private_reply_text,
+              c.public_sent_at,
+              c.private_sent_at,
+              c.error_code,
+              c.received_at,
+              c.updated_at
+         FROM meta_comment_workflows c
+         JOIN pages p ON p.id = c.page_id
+        ORDER BY c.received_at DESC
+        LIMIT $1`,
+      [safeLimit],
+    );
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      pageId: String(row.page_id),
+      pageName: String(row.page_name),
+      externalCommentId: String(row.external_comment_id),
+      ...(row.external_post_id ? { externalPostId: String(row.external_post_id) } : {}),
+      externalCustomerId: String(row.external_customer_id),
+      commentText: String(row.comment_text),
+      ...(row.intent ? { intent: String(row.intent) } : {}),
+      category: row.category as MetaCommentWorkflowRecord["category"],
+      priority: row.priority as MetaCommentWorkflowRecord["priority"],
+      status: row.status as MetaCommentWorkflowRecord["status"],
+      ...(row.public_reply_text ? { publicReplyText: String(row.public_reply_text) } : {}),
+      ...(row.private_reply_text ? { privateReplyText: String(row.private_reply_text) } : {}),
+      ...(row.public_sent_at ? { publicSentAt: new Date(row.public_sent_at).toISOString() } : {}),
+      ...(row.private_sent_at ? { privateSentAt: new Date(row.private_sent_at).toISOString() } : {}),
+      ...(row.error_code ? { errorCode: String(row.error_code) } : {}),
+      receivedAt: new Date(row.received_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }));
   }
 
   async registerFacebookPage(input: { tenantId: TenantId; externalPageId: string }): Promise<string> {

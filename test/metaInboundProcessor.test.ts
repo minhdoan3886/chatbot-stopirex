@@ -32,6 +32,8 @@ function fixture(options: {
   const sent: string[] = [];
   const privateCommentReplies: string[] = [];
   const publicCommentReplies: string[] = [];
+  const commentDispatchOrder: string[] = [];
+  const commentWorkflowUpdates: Array<Record<string, unknown>> = [];
   const processed: string[] = [];
   const runtimeUpdates: Array<Record<string, unknown>> = [];
   const outbox = new Map<
@@ -104,6 +106,22 @@ function fixture(options: {
     async markInboundProcessed(input) {
       processed.push(input.externalEventId);
     },
+    async upsertMetaCommentReceived(input) {
+      commentWorkflowUpdates.push({ action: "received", ...input });
+      return "comment-workflow-1";
+    },
+    async prepareMetaCommentReplies(input) {
+      commentWorkflowUpdates.push({ action: "prepared", ...input });
+      return true;
+    },
+    async markMetaCommentPartSent(input) {
+      commentWorkflowUpdates.push({ action: "sent", ...input });
+      return true;
+    },
+    async markMetaCommentIssue(input) {
+      commentWorkflowUpdates.push({ action: "issue", ...input });
+      return true;
+    },
   };
   const messenger: MetaMessenger = {
     async sendTyping() {
@@ -126,10 +144,30 @@ function fixture(options: {
       return { ok: true, value: { messageId: "image-1" } };
     },
     async sendPrivateCommentReply(input) {
+      sendAttempts += 1;
+      if ((options.failFirstSend && sendAttempts === 1) || options.failSendAttempt === sendAttempts) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "temporary_failure",
+          message: "temporary failure",
+        };
+      }
+      commentDispatchOrder.push("private");
       privateCommentReplies.push(input.text);
       return { ok: true, value: { messageId: `private-comment-${privateCommentReplies.length}` } };
     },
     async sendPublicCommentReply(input) {
+      sendAttempts += 1;
+      if ((options.failFirstSend && sendAttempts === 1) || options.failSendAttempt === sendAttempts) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "temporary_failure",
+          message: "temporary failure",
+        };
+      }
+      commentDispatchOrder.push("public");
       publicCommentReplies.push(input.text);
       return { ok: true, value: { messageId: `public-comment-${publicCommentReplies.length}` } };
     },
@@ -181,6 +219,8 @@ function fixture(options: {
     inboxPushes,
     privateCommentReplies,
     publicCommentReplies,
+    commentDispatchOrder,
+    commentWorkflowUpdates,
     resolvedPages,
     setNewerInbound(value: boolean) {
       newerInbound = value;
@@ -253,7 +293,7 @@ test("Meta inbound dùng brain để trả lời và lưu state khi đã bật g
   assert.equal(context.sent.length, 2);
 });
 
-test("Meta comment dùng LLM trả lời riêng rồi mới xác nhận công khai", async () => {
+test("Meta comment trả lời công khai trước rồi gửi đúng một private reply cô đọng", async () => {
   const context = fixture({ live: true });
   const result = await context.processor.processBatch([
     job({
@@ -266,12 +306,44 @@ test("Meta comment dùng LLM trả lời riêng rồi mới xác nhận công kh
 
   assert.deepEqual(result, { status: "replied", replyCount: 2 });
   assert.equal(context.sent.length, 0);
+  assert.deepEqual(context.commentDispatchOrder, ["public", "private"]);
   assert.equal(context.privateCommentReplies.length, 1);
   assert.match(context.privateCommentReplies[0] ?? "", /510\.000đ/u);
-  assert.deepEqual(context.publicCommentReplies, [
-    "Dạ shop đã nhắn tin tư vấn riêng cho mình rồi ạ. Mình kiểm tra Messenger giúp shop nhé 😊",
-  ]);
+  assert.equal(context.publicCommentReplies.length, 1);
+  assert.doesNotMatch(context.publicCommentReplies[0] ?? "", /\d{3}[.]?\d{3}\s*đ/iu);
+  assert.match(context.publicCommentReplies[0] ?? "", /tin nhắn riêng/iu);
+  assert.ok(
+    context.commentWorkflowUpdates.some(
+      (item) => item.action === "prepared" && item.category === "price" && item.priority === "normal",
+    ),
+  );
+  assert.deepEqual(
+    context.commentWorkflowUpdates
+      .filter((item) => item.action === "sent")
+      .map((item) => item.part),
+    ["public", "private"],
+  );
   assert.equal(context.followupSchedules.length, 0);
+});
+
+test("retry private comment reply không gửi lại public reply và không tạo private reply thứ hai", async () => {
+  const context = fixture({ live: true, failSendAttempt: 2 });
+  const input = job({
+    eventId: "comment-retry-1",
+    kind: "comment",
+    commentId: "comment-retry-1",
+    text: "xin giá combo 2 lọ",
+  });
+
+  await assert.rejects(() => context.processor.processBatch([input]), /temporary failure/u);
+  assert.equal(context.publicCommentReplies.length, 1);
+  assert.equal(context.privateCommentReplies.length, 0);
+
+  const retried = await context.processor.processBatch([input]);
+  assert.equal(retried.status, "replied");
+  assert.equal(context.publicCommentReplies.length, 1);
+  assert.equal(context.privateCommentReplies.length, 1);
+  assert.deepEqual(context.commentDispatchOrder, ["public", "private"]);
 });
 
 test("nhân viên tiếp quản trong lúc LLM xử lý thì chặn outbound bot đã chuẩn bị", async () => {

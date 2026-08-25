@@ -293,7 +293,7 @@ function groupByConversation(
 ): Array<Array<RedisQueueMessage<MetaInboundJob>>> {
   const grouped = new Map<string, Array<RedisQueueMessage<MetaInboundJob>>>();
   for (const message of messages) {
-    const key = `${message.payload.tenantId}:${message.payload.pageId}:${message.payload.senderId}:${message.payload.kind === "comment" ? "comment" : "messenger"}`;
+    const key = conversationKey(message.payload);
     const batch = grouped.get(key) ?? [];
     batch.push(message);
     grouped.set(key, batch);
@@ -310,6 +310,10 @@ async function collectConversationBurst(
   }
   const first = initialBatch[0];
   if (!first) return initialBatch;
+  // A Page comment is a standalone public interaction. Never debounce two
+  // comments from the same person into one reply or consume the one private
+  // reply allowance for the wrong comment.
+  if (first.payload.kind === "comment") return initialBatch;
   const targetKey = conversationKey(first.payload);
   const batch = [...initialBatch];
   const seenIds = new Set(batch.map((message) => message.id));
@@ -357,7 +361,7 @@ async function collectConversationBurst(
 }
 
 function conversationKey(job: MetaInboundJob): string {
-  return `${job.tenantId}:${job.pageId}:${job.senderId}:${job.kind === "comment" ? "comment" : "messenger"}`;
+  return `${job.tenantId}:${job.pageId}:${job.senderId}:${job.kind === "comment" ? `comment:${job.eventId}` : "messenger"}`;
 }
 
 function isCustomerContent(job: MetaInboundJob): boolean {

@@ -13,6 +13,7 @@ import type { StructuredLogger } from "./logger.js";
 import type { FollowupCycleSchedule } from "./followupRepository.js";
 import type { OrderDraft } from "../domain/orders.js";
 import type { PushOrderInboxInput } from "./orderInbox.js";
+import { composeCommentReplyPlan } from "./commentReplyPolicy.js";
 
 export type FollowupCoordinator = {
   cancelConversation(input: { tenantId: string; conversationId: string; reason: string }): Promise<number>;
@@ -51,6 +52,10 @@ export type MetaInboundStore = Pick<
   | "markConversationTurnOutboundSent"
   | "markInboundProcessed"
   | "canDispatchConversationOutbound"
+  | "upsertMetaCommentReceived"
+  | "prepareMetaCommentReplies"
+  | "markMetaCommentPartSent"
+  | "markMetaCommentIssue"
 >;
 
 export class MetaInboundProcessor {
@@ -88,12 +93,26 @@ export class MetaInboundProcessor {
     if (jobs.some((job) => (job.kind === "comment") !== isCommentTurn)) {
       throw new Error("meta_batch_channel_mismatch");
     }
-    const externalCustomerId = isCommentTurn ? `comment:${first.senderId}` : first.senderId;
+    // Keep the Page-scoped customer identity shared between comment and
+    // Messenger. The single private reply therefore opens the same care/sales
+    // context instead of creating an isolated comment-only conversation.
+    const externalCustomerId = first.senderId;
     const conversation = await this.options.store.ensureMessengerConversation({
       tenantId: first.tenantId,
       pageId: first.pageId,
       externalCustomerId,
     });
+    if (isCommentTurn && first.commentId && first.text) {
+      await this.options.store.upsertMetaCommentReceived({
+        tenantId: first.tenantId,
+        pageId: first.pageId,
+        conversationId: conversation.conversationId,
+        externalCommentId: first.commentId,
+        ...(first.postId ? { externalPostId: first.postId } : {}),
+        externalCustomerId: first.senderId,
+        commentText: first.text,
+      });
+    }
     const sessionId = `${first.pageId}:${externalCustomerId}`;
     const contentJobs = jobs.filter(
       (job) =>
@@ -140,6 +159,15 @@ export class MetaInboundProcessor {
       return { status: "ingested", replyCount: 0 };
     }
     if (conversation.humanStatus !== "bot") {
+      if (isCommentTurn && first.commentId) {
+        await this.options.store.markMetaCommentIssue({
+          tenantId: first.tenantId,
+          pageId: first.pageId,
+          externalCommentId: first.commentId,
+          status: "paused",
+          errorCode: "human_takeover_active",
+        });
+      }
       await this.markProcessed(jobs);
       return { status: "paused", replyCount: 0 };
     }
@@ -258,6 +286,17 @@ export class MetaInboundProcessor {
       });
       return { status: "superseded", replyCount: 0 };
     }
+    const commentPlan = isCommentTurn
+      ? composeCommentReplyPlan({
+          commentText: text,
+          ...(result.state.lastIntent ? { intent: result.state.lastIntent } : {}),
+          groundedReplies: result.replies.slice(0, 2),
+          humanCareRequired:
+            result.state.botPaused ||
+            result.state.decisionTrace?.selectedRoute === "start_care" ||
+            result.state.decisionTrace?.selectedRoute === "active_care",
+        })
+      : undefined;
     const committed = await this.options.store.commitConversationTurn({
       tenantId: first.tenantId,
       pageId: first.pageId,
@@ -273,14 +312,23 @@ export class MetaInboundProcessor {
       outbound: {
         idempotencyKey: turnIdempotencyKey,
         recipientId: first.senderId,
-        texts: isCommentTurn
-          ? [
-              result.replies.slice(0, 2).join("\n\n"),
-              "Dạ shop đã nhắn tin tư vấn riêng cho mình rồi ạ. Mình kiểm tra Messenger giúp shop nhé 😊",
-            ]
+        texts: commentPlan
+          ? [commentPlan.publicReply, commentPlan.privateReply]
           : result.replies.slice(0, 2),
       },
     });
+    if (commentPlan && first.commentId && committed.outbound) {
+      await this.options.store.prepareMetaCommentReplies({
+        tenantId: first.tenantId,
+        pageId: first.pageId,
+        externalCommentId: first.commentId,
+        ...(result.state.lastIntent ? { intent: result.state.lastIntent } : {}),
+        category: commentPlan.category,
+        priority: commentPlan.priority,
+        publicReplyText: commentPlan.publicReply,
+        privateReplyText: commentPlan.privateReply,
+      });
+    }
     await this.pushCreatedOrder({
       sessionId,
       state: result.state,
@@ -407,9 +455,29 @@ export class MetaInboundProcessor {
               idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
             });
       if (!outbound.ok) {
+        if (job.kind === "comment" && job.commentId) {
+          await this.options.store.markMetaCommentIssue({
+            tenantId: job.tenantId,
+            pageId: job.pageId,
+            externalCommentId: job.commentId,
+            status: "failed",
+            errorCode: outbound.code,
+          });
+        }
         const error = new Error(outbound.message);
         error.name = outbound.retryable ? "RetryableMetaSendError" : "MetaSendError";
         throw error;
+      }
+      // Meta only allows one private reply for a comment. Persist the outbox
+      // cursor immediately after Meta confirms delivery so an auxiliary audit
+      // write cannot make a retry send that private reply twice.
+      if (job.kind === "comment") {
+        await this.options.store.markConversationTurnOutboundSent({
+          tenantId: job.tenantId,
+          outboxId: plan.outboxId,
+          sentCount: index + 1,
+          messageId: outbound.value.messageId,
+        });
       }
       await this.options.store.persistConversationMessage({
         tenantId: job.tenantId,
@@ -426,18 +494,38 @@ export class MetaInboundProcessor {
           channel:
             job.kind === "comment"
               ? index === 0
-                ? "comment_private_reply"
-                : "comment_public_reply"
+                ? "comment_public_reply"
+                : "comment_private_reply"
               : "messenger",
         },
       });
+      if (job.kind === "comment" && job.commentId) {
+        await this.options.store.markMetaCommentPartSent({
+          tenantId: job.tenantId,
+          pageId: job.pageId,
+          externalCommentId: job.commentId,
+          part: index === 0 ? "public" : "private",
+          messageId: outbound.value.messageId,
+        });
+      }
       sentThisAttempt += 1;
       lastMessageId = outbound.value.messageId;
-      await this.options.store.markConversationTurnOutboundSent({
+      if (job.kind !== "comment") {
+        await this.options.store.markConversationTurnOutboundSent({
+          tenantId: job.tenantId,
+          outboxId: plan.outboxId,
+          sentCount: index + 1,
+          messageId: outbound.value.messageId,
+        });
+      }
+    }
+    if (suppressed && job.kind === "comment" && job.commentId) {
+      await this.options.store.markMetaCommentIssue({
         tenantId: job.tenantId,
-        outboxId: plan.outboxId,
-        sentCount: index + 1,
-        messageId: outbound.value.messageId,
+        pageId: job.pageId,
+        externalCommentId: job.commentId,
+        status: "paused",
+        errorCode: "human_takeover_during_dispatch",
       });
     }
     return {
@@ -461,7 +549,7 @@ export class MetaInboundProcessor {
       return { ok: false, retryable: false, code: "missing_comment_id", message: "Thiếu comment_id" };
     }
     const sender =
-      input.index === 0 ? input.messenger.sendPrivateCommentReply : input.messenger.sendPublicCommentReply;
+      input.index === 0 ? input.messenger.sendPublicCommentReply : input.messenger.sendPrivateCommentReply;
     if (!sender) {
       return {
         ok: false,

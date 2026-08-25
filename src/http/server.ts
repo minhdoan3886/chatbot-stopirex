@@ -32,6 +32,7 @@ import { operationsPage } from "./operationsPage.js";
 import { productPage } from "./productPage.js";
 import { ordersPage } from "./ordersPage.js";
 import { pagesPage } from "./pagesPage.js";
+import { commentsPage } from "./commentsPage.js";
 import { dataDeletionPage, privacyPolicyPage, termsOfServicePage } from "./publicPolicyPages.js";
 import { OrderInboxService } from "../services/orderInbox.js";
 import { GraphMetaMessenger } from "../adapters/metaMessenger.js";
@@ -135,6 +136,19 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname === "/pages") {
     if (!isOperationsAuthorized(request)) return unauthorized(response);
     return html(response, 200, pagesPage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/comments") {
+    if (!isOperationsAuthorized(request)) return unauthorized(response);
+    return html(response, 200, commentsPage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/meta/comments") {
+    if (!isOperationsAuthorized(request)) return json(response, 401, { error: "unauthorized" });
+    if (!postgres) return json(response, 503, { error: "database_not_configured" });
+    const requestedLimit = Number(url.searchParams.get("limit") ?? "100");
+    const limit = Number.isFinite(requestedLimit) ? requestedLimit : 100;
+    return json(response, 200, await postgres.listMetaCommentWorkflows(limit));
   }
 
   if (request.method === "GET" && url.pathname === "/api/meta/pages") {

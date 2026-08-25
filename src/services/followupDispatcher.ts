@@ -1,9 +1,6 @@
 import type { MetaMessenger } from "../integrations/contracts.js";
 import { followupMessage } from "../domain/sales.js";
-import type {
-  ClaimedFollowupJob,
-  PgFollowupRepository,
-} from "./followupRepository.js";
+import type { ClaimedFollowupJob, PgFollowupRepository } from "./followupRepository.js";
 import type { StructuredLogger } from "./logger.js";
 
 export type FollowupMode = "disabled" | "shadow" | "enabled";
@@ -24,11 +21,7 @@ export type FollowupEligibility =
         | "missing_customer_activity";
     };
 
-const ELIGIBLE_PIPELINES = new Set([
-  "3.Đã báo giá",
-  "4.XL băn khoăn",
-  "7.Chờ followup",
-]);
+const ELIGIBLE_PIPELINES = new Set(["3.Đã báo giá", "4.XL băn khoăn", "7.Chờ followup"]);
 
 export function evaluateFollowupEligibility(
   job: ClaimedFollowupJob,
@@ -61,6 +54,7 @@ export class FollowupDispatcher {
     private readonly options: {
       repository: PgFollowupRepository;
       messenger: MetaMessenger;
+      messengerForPage?: (pageId: string) => Promise<MetaMessenger>;
       logger: StructuredLogger;
       mode: FollowupMode;
       outboundWindowHours: number;
@@ -69,15 +63,11 @@ export class FollowupDispatcher {
     },
   ) {}
 
-  async process(job: ClaimedFollowupJob): Promise<
-    "sent" | "shadowed" | "cancelled" | "scheduled" | "failed" | "delivery_unknown"
-  > {
+  async process(
+    job: ClaimedFollowupJob,
+  ): Promise<"sent" | "shadowed" | "cancelled" | "scheduled" | "failed" | "delivery_unknown"> {
     const now = (this.options.now ?? (() => new Date()))();
-    const eligibility = evaluateFollowupEligibility(
-      job,
-      now,
-      this.options.outboundWindowHours,
-    );
+    const eligibility = evaluateFollowupEligibility(job, now, this.options.outboundWindowHours);
     if (!eligibility.eligible) {
       await this.options.repository.markCancelled(job.id, eligibility.reason);
       this.options.logger.log("info", "followup_cancelled", {
@@ -107,7 +97,10 @@ export class FollowupDispatcher {
       return "cancelled";
     }
     const text = followupMessage(job.stage);
-    const result = await this.options.messenger.sendText({
+    const messenger = this.options.messengerForPage
+      ? await this.options.messengerForPage(job.pageId)
+      : this.options.messenger;
+    const result = await messenger.sendText({
       recipientId: job.externalCustomerId,
       text,
       idempotencyKey: job.idempotencyKey,

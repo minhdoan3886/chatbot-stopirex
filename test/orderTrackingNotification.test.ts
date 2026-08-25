@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildOrderTrackingNotification,
+  metaPageIdFromOrderSession,
   metaRecipientIdFromOrderSession,
   normalizeTrackingNumber,
 } from "../src/services/orderTrackingNotification.js";
@@ -24,4 +25,12 @@ test("chỉ chấp nhận mã vận đơn có định dạng an toàn", () => {
 test("lấy đúng PSID Meta từ session của đơn", () => {
   assert.equal(metaRecipientIdFromOrderSession("108631178590851:123456789012345"), "123456789012345");
   assert.equal(metaRecipientIdFromOrderSession("session-khong-hop-le"), undefined);
+});
+
+test("lấy đúng Page nội bộ từ session của đơn", () => {
+  assert.equal(
+    metaPageIdFromOrderSession("00000000-0000-0000-0000-000000000011:123456789012345"),
+    "00000000-0000-0000-0000-000000000011",
+  );
+  assert.equal(metaPageIdFromOrderSession("page-1:123456"), undefined);
 });

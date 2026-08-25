@@ -10,11 +10,7 @@ import {
   reconcileKnowledgeBackedPopulationSafety,
   reconcilePendingConsultationAnswer,
 } from "../services/metaChatBrain.js";
-import {
-  DemoChatService,
-  type DemoChatResponse,
-  type DemoChatState,
-} from "../services/demoChat.js";
+import { DemoChatService, type DemoChatResponse, type DemoChatState } from "../services/demoChat.js";
 import {
   CodexLlmBridge,
   repairMissingKnowledgeCitations,
@@ -35,19 +31,19 @@ import { buildProductInformationSnapshot } from "../services/productInformation.
 import { operationsPage } from "./operationsPage.js";
 import { productPage } from "./productPage.js";
 import { ordersPage } from "./ordersPage.js";
-import {
-  dataDeletionPage,
-  privacyPolicyPage,
-  termsOfServicePage,
-} from "./publicPolicyPages.js";
+import { pagesPage } from "./pagesPage.js";
+import { dataDeletionPage, privacyPolicyPage, termsOfServicePage } from "./publicPolicyPages.js";
 import { OrderInboxService } from "../services/orderInbox.js";
 import { GraphMetaMessenger } from "../adapters/metaMessenger.js";
 import {
   buildOrderTrackingNotification,
   isOrderTrackingCarrier,
+  metaPageIdFromOrderSession,
   metaRecipientIdFromOrderSession,
   normalizeTrackingNumber,
 } from "../services/orderTrackingNotification.js";
+import { MetaPageCredentialVault } from "../services/metaPageCredential.js";
+import { MetaPageManagementService } from "../services/metaPageManagement.js";
 
 const env = loadEnv();
 const logger = new StructuredLogger();
@@ -71,6 +67,23 @@ const operationsControl = new OperationsControlService({
   ...(redis ? { redis } : {}),
 });
 const orderInbox = postgres ? new OrderInboxService(postgres.pool) : undefined;
+const metaPages =
+  postgres && env.encryptionKey
+    ? new MetaPageManagementService({
+        store: postgres,
+        vault: new MetaPageCredentialVault(env.encryptionKey),
+        graphVersion: env.metaGraphVersion,
+        ...(env.metaPageId ? { environmentPageId: env.metaPageId } : {}),
+        ...(env.metaPageAccessToken ? { environmentPageAccessToken: env.metaPageAccessToken } : {}),
+      })
+    : undefined;
+if (metaPages) {
+  await metaPages.importEnvironmentCredential().catch((error: unknown) => {
+    logger.log("warn", "meta_environment_page_credential_import_failed", {
+      reason: error instanceof Error ? error.message : "unknown_error",
+    });
+  });
+}
 const orderTrackingMessenger = env.metaPageAccessToken
   ? new GraphMetaMessenger({
       pageAccessToken: env.metaPageAccessToken,
@@ -119,6 +132,69 @@ const server = createServer(async (request, response) => {
     return html(response, 200, ordersPage);
   }
 
+  if (request.method === "GET" && url.pathname === "/pages") {
+    if (!isOperationsAuthorized(request)) return unauthorized(response);
+    return html(response, 200, pagesPage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/meta/pages") {
+    if (!isOperationsAuthorized(request)) return json(response, 401, { error: "unauthorized" });
+    if (!metaPages) return json(response, 503, { error: "meta_page_management_not_configured" });
+    return json(response, 200, await metaPages.list());
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/meta/pages/connect") {
+    if (!isOperationsAuthorized(request)) return json(response, 401, { error: "unauthorized" });
+    if (!metaPages) return json(response, 503, { error: "meta_page_management_not_configured" });
+    try {
+      const body = JSON.parse((await readBody(request, 32_000)).toString("utf8")) as {
+        pageAccessToken?: unknown;
+      };
+      if (typeof body.pageAccessToken !== "string" || !body.pageAccessToken.trim()) {
+        return json(response, 400, { error: "page_access_token_required" });
+      }
+      const page = await metaPages.connect(body.pageAccessToken.trim());
+      logger.log("info", "meta_page_connected", {
+        traceId,
+        externalPageId: page.externalPageId,
+        botEnabled: page.botEnabled,
+      });
+      return json(response, 200, page);
+    } catch (error) {
+      logger.log("warn", "meta_page_connect_failed", {
+        traceId,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+      return json(response, 400, {
+        error: error instanceof Error ? error.message : "meta_page_connect_failed",
+      });
+    }
+  }
+
+  const metaPageBotMatch = url.pathname.match(/^\/api\/meta\/pages\/([a-f0-9-]{36})\/bot$/u);
+  if (request.method === "POST" && metaPageBotMatch) {
+    if (!isOperationsAuthorized(request)) return json(response, 401, { error: "unauthorized" });
+    if (!metaPages) return json(response, 503, { error: "meta_page_management_not_configured" });
+    try {
+      const body = JSON.parse((await readBody(request, 2_000)).toString("utf8")) as {
+        enabled?: unknown;
+      };
+      if (typeof body.enabled !== "boolean") {
+        return json(response, 400, { error: "enabled_boolean_required" });
+      }
+      const updated = await metaPages.setBotEnabled(metaPageBotMatch[1]!, body.enabled);
+      if (!updated) return json(response, 409, { error: "page_not_found_or_token_missing" });
+      logger.log("info", "meta_page_bot_toggled", {
+        traceId,
+        pageId: metaPageBotMatch[1],
+        enabled: body.enabled,
+      });
+      return json(response, 200, { ok: true, enabled: body.enabled });
+    } catch {
+      return json(response, 400, { error: "invalid_json" });
+    }
+  }
+
   if (request.method === "GET" && url.pathname === "/api/orders") {
     if (!isOperationsAuthorized(request)) {
       return json(response, 401, { error: "unauthorized" });
@@ -145,7 +221,7 @@ const server = createServer(async (request, response) => {
     if (!orderInbox) {
       return json(response, 503, { error: "database_not_configured" });
     }
-    if (!orderTrackingMessenger || !env.metaLiveSendEnabled) {
+    if ((!orderTrackingMessenger && !metaPages) || !env.metaLiveSendEnabled) {
       return json(response, 503, { error: "meta_live_send_not_configured" });
     }
     let body: { carrier?: unknown; trackingNumber?: unknown };
@@ -184,7 +260,16 @@ const server = createServer(async (request, response) => {
         await orderInbox.markTrackingFailed(orderId, "invalid_meta_recipient");
         return json(response, 422, { error: "invalid_meta_recipient" });
       }
-      const sent = await orderTrackingMessenger.sendText({
+      const internalPageId = metaPageIdFromOrderSession(claimed.sessionId);
+      const trackingMessenger =
+        internalPageId && metaPages
+          ? await metaPages.messengerForInternalPage(internalPageId)
+          : orderTrackingMessenger;
+      if (!trackingMessenger) {
+        await orderInbox.markTrackingFailed(orderId, "meta_page_credential_missing");
+        return json(response, 503, { error: "meta_page_credential_missing" });
+      }
+      const sent = await trackingMessenger.sendText({
         recipientId,
         text: notification.text,
         idempotencyKey: `order-tracking:${orderId}`,

@@ -27,6 +27,7 @@ function fixture(options: {
   failSendAttempt?: number;
   followups?: boolean;
   dispatchCurrent?: boolean;
+  routeMessenger?: boolean;
 }) {
   const sent: string[] = [];
   const privateCommentReplies: string[] = [];
@@ -51,6 +52,7 @@ function fixture(options: {
   const inboxPushes: Array<Record<string, unknown>> = [];
   let newerInbound = options.newerInbound ?? false;
   let sendAttempts = 0;
+  const resolvedPages: string[] = [];
   const store: MetaInboundStore = {
     async ensureMessengerConversation() {
       return {
@@ -147,6 +149,14 @@ function fixture(options: {
   const processor = new MetaInboundProcessor({
     store,
     messenger,
+    ...(options.routeMessenger
+      ? {
+          messengerForPage: async (pageId: string) => {
+            resolvedPages.push(pageId);
+            return messenger;
+          },
+        }
+      : {}),
     chat,
     brain,
     logger: new StructuredLogger(() => undefined),
@@ -171,11 +181,19 @@ function fixture(options: {
     inboxPushes,
     privateCommentReplies,
     publicCommentReplies,
+    resolvedPages,
     setNewerInbound(value: boolean) {
       newerInbound = value;
     },
   };
 }
+
+test("Meta inbound chọn Messenger theo đúng Page nội bộ", async () => {
+  const item = fixture({ live: true, routeMessenger: true });
+  await item.processor.processBatch([job({ pageId: "page-route-5" })]);
+  assert.deepEqual(item.resolvedPages, ["page-route-5"]);
+  assert.ok(item.sent.length > 0);
+});
 
 function job(overrides: Partial<MetaInboundJob> = {}): MetaInboundJob {
   const output: MetaInboundJob = {

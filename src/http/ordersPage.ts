@@ -66,6 +66,7 @@ tbody tr:hover{background:#f8faff}
   <a class="tab" href="/operations">Tổng quan kết nối</a>
   <a class="tab active" href="/orders">Đơn hàng</a>
   <a class="tab" href="/product">Thông tin sản phẩm</a>
+  <a class="tab" href="/pages">Fanpage</a>
 </nav>
 
 <div id="error" class="error-banner"></div>

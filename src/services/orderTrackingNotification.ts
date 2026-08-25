@@ -43,3 +43,10 @@ export function metaRecipientIdFromOrderSession(sessionId: string): string | und
   const recipientId = sessionId.slice(separator + 1).trim();
   return /^[0-9]{4,80}$/u.test(recipientId) ? recipientId : undefined;
 }
+
+export function metaPageIdFromOrderSession(sessionId: string): string | undefined {
+  const separator = sessionId.indexOf(":");
+  if (separator < 1) return undefined;
+  const pageId = sessionId.slice(0, separator).trim();
+  return /^[a-f0-9-]{36}$/u.test(pageId) ? pageId : undefined;
+}

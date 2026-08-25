@@ -523,9 +523,7 @@ export class PostgresStore {
         ),
       ]);
 
-    const summaries = new Map(
-      summaryRows.rows.map((row) => [String(row.name), llmUsageTotals(row)]),
-    );
+    const summaries = new Map(summaryRows.rows.map((row) => [String(row.name), llmUsageTotals(row)]));
     return {
       summaries: {
         hours24: summaries.get("hours24") ?? emptyLlmUsageTotals(),
@@ -605,6 +603,141 @@ export class PostgresStore {
     );
     if (result.rowCount !== 1) return undefined;
     return { tenantId: result.rows[0].tenant_id as TenantId, pageId: result.rows[0].id as string };
+  }
+
+  async listFacebookPages(): Promise<
+    Array<{
+      id: string;
+      tenantId: string;
+      externalPageId: string;
+      displayName: string;
+      botEnabled: boolean;
+      credentialConfigured: boolean;
+      tokenUpdatedAt?: string;
+      updatedAt: string;
+    }>
+  > {
+    const result = await this.pool.query(
+      `SELECT id::text,
+              tenant_id::text,
+              external_page_id,
+              COALESCE(display_name, 'Facebook Page ' || right(external_page_id, 6)) AS display_name,
+              active,
+              access_token_encrypted IS NOT NULL AS credential_configured,
+              token_updated_at,
+              updated_at
+         FROM pages
+        WHERE channel = 'facebook'
+        ORDER BY active DESC, display_name ASC, external_page_id ASC`,
+    );
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      tenantId: String(row.tenant_id),
+      externalPageId: String(row.external_page_id),
+      displayName: String(row.display_name),
+      botEnabled: row.active === true,
+      credentialConfigured: row.credential_configured === true,
+      ...(row.token_updated_at ? { tokenUpdatedAt: new Date(row.token_updated_at).toISOString() } : {}),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }));
+  }
+
+  async defaultFacebookTenantId(preferredExternalPageId?: string): Promise<TenantId | undefined> {
+    if (preferredExternalPageId) {
+      const preferred = await this.pool.query(
+        `SELECT tenant_id::text
+           FROM pages
+          WHERE channel = 'facebook' AND external_page_id = $1
+          LIMIT 1`,
+        [preferredExternalPageId],
+      );
+      if (preferred.rowCount === 1) return preferred.rows[0].tenant_id as TenantId;
+    }
+    const result = await this.pool.query(
+      `SELECT id::text FROM tenants WHERE active = true ORDER BY created_at ASC LIMIT 1`,
+    );
+    return result.rowCount === 1 ? (result.rows[0].id as TenantId) : undefined;
+  }
+
+  async upsertFacebookPageConnection(input: {
+    tenantId: TenantId;
+    externalPageId: string;
+    displayName: string;
+    encryptedAccessToken: string;
+  }): Promise<string> {
+    return this.withTenant(input.tenantId, async (client) => {
+      const result = await client.query(
+        `INSERT INTO pages (
+           tenant_id, channel, external_page_id, display_name, active,
+           access_token_encrypted, token_updated_at, updated_at
+         )
+         VALUES ($1, 'facebook', $2, $3, false, $4, now(), now())
+         ON CONFLICT (channel, external_page_id)
+         DO UPDATE SET
+           display_name = EXCLUDED.display_name,
+           access_token_encrypted = EXCLUDED.access_token_encrypted,
+           token_updated_at = now(),
+           updated_at = now()
+         RETURNING id::text`,
+        [input.tenantId, input.externalPageId, input.displayName, input.encryptedAccessToken],
+      );
+      return String(result.rows[0].id);
+    });
+  }
+
+  async setFacebookPageBotEnabled(input: { pageId: string; enabled: boolean }): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE pages
+          SET active = $2, updated_at = now()
+        WHERE id = $1::uuid AND channel = 'facebook'
+          AND ($2 = false OR access_token_encrypted IS NOT NULL)
+      RETURNING id`,
+      [input.pageId, input.enabled],
+    );
+    return result.rowCount === 1;
+  }
+
+  async facebookPageCredential(pageId: string): Promise<
+    | {
+        externalPageId: string;
+        encryptedAccessToken?: string;
+        botEnabled: boolean;
+      }
+    | undefined
+  > {
+    const result = await this.pool.query(
+      `SELECT external_page_id, access_token_encrypted, active
+         FROM pages
+        WHERE id = $1::uuid AND channel = 'facebook'
+        LIMIT 1`,
+      [pageId],
+    );
+    if (result.rowCount !== 1) return undefined;
+    return {
+      externalPageId: String(result.rows[0].external_page_id),
+      ...(result.rows[0].access_token_encrypted
+        ? { encryptedAccessToken: String(result.rows[0].access_token_encrypted) }
+        : {}),
+      botEnabled: result.rows[0].active === true,
+    };
+  }
+
+  async storeFacebookPageCredential(input: {
+    externalPageId: string;
+    displayName: string;
+    encryptedAccessToken: string;
+  }): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE pages
+          SET display_name = $2,
+              access_token_encrypted = $3,
+              token_updated_at = now(),
+              updated_at = now()
+        WHERE channel = 'facebook' AND external_page_id = $1
+      RETURNING id`,
+      [input.externalPageId, input.displayName, input.encryptedAccessToken],
+    );
+    return result.rowCount === 1;
   }
 
   async registerFacebookPage(input: { tenantId: TenantId; externalPageId: string }): Promise<string> {
@@ -838,12 +971,7 @@ export class PostgresStore {
              AND (inbound_events.payload ? 'message' OR inbound_events.payload ? 'postback')
              AND inbound_events.received_at > current_batch.received_at
          ) AS has_newer`,
-        [
-          input.tenantId,
-          input.pageId,
-          input.externalCustomerId,
-          [...input.currentEventIds],
-        ],
+        [input.tenantId, input.pageId, input.externalCustomerId, [...input.currentEventIds]],
       );
       return result.rows[0]?.has_newer === true;
     });
@@ -1039,9 +1167,7 @@ function mapOutboundPlan(row: Record<string, unknown>): ConversationOutboundPlan
       ? payload.sourceEventIds.filter((item): item is string => typeof item === "string")
       : [],
     status: row.status as ConversationOutboundPlan["status"],
-    ...(typeof payload.lastMessageId === "string"
-      ? { lastMessageId: payload.lastMessageId }
-      : {}),
+    ...(typeof payload.lastMessageId === "string" ? { lastMessageId: payload.lastMessageId } : {}),
   };
 }
 

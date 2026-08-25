@@ -15,11 +15,7 @@ import type { OrderDraft } from "../domain/orders.js";
 import type { PushOrderInboxInput } from "./orderInbox.js";
 
 export type FollowupCoordinator = {
-  cancelConversation(input: {
-    tenantId: string;
-    conversationId: string;
-    reason: string;
-  }): Promise<number>;
+  cancelConversation(input: { tenantId: string; conversationId: string; reason: string }): Promise<number>;
   scheduleCycle(input: FollowupCycleSchedule): Promise<{ cycleId: string; created: boolean }>;
 };
 
@@ -62,6 +58,7 @@ export class MetaInboundProcessor {
     private readonly options: {
       store: MetaInboundStore;
       messenger: MetaMessenger;
+      messengerForPage?: (pageId: string) => Promise<MetaMessenger>;
       chat: DemoChatService;
       brain: MetaChatBrain;
       logger: StructuredLogger;
@@ -82,9 +79,7 @@ export class MetaInboundProcessor {
     if (
       jobs.some(
         (job) =>
-          job.tenantId !== first.tenantId ||
-          job.pageId !== first.pageId ||
-          job.senderId !== first.senderId,
+          job.tenantId !== first.tenantId || job.pageId !== first.pageId || job.senderId !== first.senderId,
       )
     ) {
       throw new Error("meta_batch_scope_mismatch");
@@ -102,10 +97,7 @@ export class MetaInboundProcessor {
     const sessionId = `${first.pageId}:${externalCustomerId}`;
     const contentJobs = jobs.filter(
       (job) =>
-        job.kind === "text" ||
-        job.kind === "image" ||
-        job.kind === "postback" ||
-        job.kind === "comment",
+        job.kind === "text" || job.kind === "image" || job.kind === "postback" || job.kind === "comment",
     );
     const turnIdempotencyKey = `${first.eventId}:reply:turn`;
     for (const job of contentJobs) {
@@ -115,10 +107,7 @@ export class MetaInboundProcessor {
         conversationId: conversation.conversationId,
         externalMessageId: job.eventId,
         direction: "inbound",
-        kind:
-          job.kind === "comment"
-            ? "text"
-            : (job.kind as "text" | "image" | "postback"),
+        kind: job.kind === "comment" ? "text" : (job.kind as "text" | "image" | "postback"),
         ...(job.text ? { text: job.text } : {}),
         payload: job.payload,
       });
@@ -154,6 +143,9 @@ export class MetaInboundProcessor {
       await this.markProcessed(jobs);
       return { status: "paused", replyCount: 0 };
     }
+    const messenger = this.options.messengerForPage
+      ? await this.options.messengerForPage(first.pageId)
+      : this.options.messenger;
     const existingOutbound = await this.options.store.findConversationTurnOutbound({
       tenantId: first.tenantId,
       idempotencyKey: turnIdempotencyKey,
@@ -172,6 +164,7 @@ export class MetaInboundProcessor {
           conversation,
           existingOutbound,
           conversation.stateVersion,
+          messenger,
         );
         replyCount = dispatched.count;
         suppressed = dispatched.suppressed;
@@ -196,7 +189,7 @@ export class MetaInboundProcessor {
     if (imageJobs.length > 0) {
       const reply =
         "Dạ em đã nhận được hình ảnh của mình ạ. Em chuyển bộ phận liên quan kiểm tra nội dung ảnh và phản hồi lại mình sớm nhé.";
-      void this.options.messenger.sendTyping(first.senderId).catch(() => undefined);
+      void messenger.sendTyping(first.senderId).catch(() => undefined);
       const committed = await this.options.store.commitConversationTurn({
         tenantId: first.tenantId,
         pageId: first.pageId,
@@ -220,15 +213,12 @@ export class MetaInboundProcessor {
         conversation,
         committed.outbound,
         committed.stateVersion,
+        messenger,
       );
       return { status: "paused", replyCount: dispatched.count };
     }
 
-    this.options.chat.restoreSession(
-      sessionId,
-      conversation.runtimeState,
-      this.context(),
-    );
+    this.options.chat.restoreSession(sessionId, conversation.runtimeState, this.context());
     const text = batchMessages(
       contentJobs.map((job) => ({
         id: job.eventId,
@@ -242,7 +232,7 @@ export class MetaInboundProcessor {
     }
 
     if (!isCommentTurn) {
-      void this.options.messenger.sendTyping(first.senderId).catch(() => undefined);
+      void messenger.sendTyping(first.senderId).catch(() => undefined);
     }
     const result = await this.options.brain.reply({
       sessionId,
@@ -300,6 +290,7 @@ export class MetaInboundProcessor {
       conversation,
       committed.outbound,
       committed.stateVersion,
+      messenger,
     );
     if (result.state.botPaused) {
       this.options.logger.log("warn", "customer_automation_suppressed_for_human_review", {
@@ -379,6 +370,7 @@ export class MetaInboundProcessor {
     conversation: MessengerConversation,
     plan: ConversationOutboundPlan,
     expectedStateVersion: number,
+    messenger: MetaMessenger,
   ): Promise<{ count: number; lastMessageId?: string; suppressed: boolean }> {
     if (!plan) return { count: 0, suppressed: false };
     let sentThisAttempt = 0;
@@ -407,8 +399,9 @@ export class MetaInboundProcessor {
               text,
               index,
               idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
+              messenger,
             })
-          : await this.options.messenger.sendText({
+          : await messenger.sendText({
               recipientId: plan.recipientId,
               text,
               idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
@@ -430,7 +423,12 @@ export class MetaInboundProcessor {
           sourceEventIds: plan.sourceEventIds,
           part: index + 1,
           totalParts: plan.texts.length,
-          channel: job.kind === "comment" ? (index === 0 ? "comment_private_reply" : "comment_public_reply") : "messenger",
+          channel:
+            job.kind === "comment"
+              ? index === 0
+                ? "comment_private_reply"
+                : "comment_public_reply"
+              : "messenger",
         },
       });
       sentThisAttempt += 1;
@@ -454,14 +452,16 @@ export class MetaInboundProcessor {
     text: string;
     index: number;
     idempotencyKey: string;
-  }): Promise<{ ok: true; value: { messageId: string } } | { ok: false; retryable: boolean; code: string; message: string }> {
+    messenger: MetaMessenger;
+  }): Promise<
+    | { ok: true; value: { messageId: string } }
+    | { ok: false; retryable: boolean; code: string; message: string }
+  > {
     if (!input.job.commentId) {
       return { ok: false, retryable: false, code: "missing_comment_id", message: "Thiếu comment_id" };
     }
     const sender =
-      input.index === 0
-        ? this.options.messenger.sendPrivateCommentReply
-        : this.options.messenger.sendPublicCommentReply;
+      input.index === 0 ? input.messenger.sendPrivateCommentReply : input.messenger.sendPublicCommentReply;
     if (!sender) {
       return {
         ok: false,
@@ -470,26 +470,28 @@ export class MetaInboundProcessor {
         message: "Meta adapter chưa hỗ trợ trả lời bình luận",
       };
     }
-    return sender.call(this.options.messenger, {
+    return sender.call(input.messenger, {
       commentId: input.job.commentId,
       text: input.text,
       idempotencyKey: input.idempotencyKey,
     });
   }
 
-  private async scheduleFollowup(
-    input: Omit<FollowupCycleSchedule, "anchorSentAt">,
-  ): Promise<void> {
+  private async scheduleFollowup(input: Omit<FollowupCycleSchedule, "anchorSentAt">): Promise<void> {
     if (!this.options.followups) return;
     const scheduled = await this.options.followups.scheduleCycle({
       ...input,
       anchorSentAt: new Date(),
     });
-    this.options.logger.log("info", scheduled.created ? "followup_cycle_scheduled" : "followup_cycle_exists", {
-      conversationId: input.conversationId,
-      cycleId: scheduled.cycleId,
-      anchorOutboundMessageId: input.anchorOutboundMessageId,
-    });
+    this.options.logger.log(
+      "info",
+      scheduled.created ? "followup_cycle_scheduled" : "followup_cycle_exists",
+      {
+        conversationId: input.conversationId,
+        cycleId: scheduled.cycleId,
+        anchorOutboundMessageId: input.anchorOutboundMessageId,
+      },
+    );
   }
 
   private async markProcessed(jobs: readonly MetaInboundJob[]): Promise<void> {

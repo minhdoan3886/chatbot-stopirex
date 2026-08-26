@@ -266,10 +266,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "price",
       title: "Giá và phương án mua đã duyệt",
       content:
-        "Giá Facebook đã duyệt: 1 lọ 285.000đ và phí giao 30.000đ; combo 2 lọ 510.000đ; combo 3 lọ 750.000đ; combo 4 lọ 1.000.000đ; combo 5 lọ 1.250.000đ. Combo 2–5 lọ miễn phí giao. Mọi đơn từ 2 lọ trở lên được tặng đúng 1 túi đa năng vải dệt Stopirex; quà tính theo đơn hàng, không tính theo số lọ. Đơn 1 lọ được miễn phí giao khi khách mặc cả hoặc từ lúc hệ thống bắt đầu gửi follow-up.",
+        "Bảng giá Facebook được phép chủ động báo khách: 1 lọ Stopirex 285.000đ và phí giao 30.000đ; combo 2 lọ 510.000đ, miễn phí giao và tiết kiệm 60.000đ; combo 3 lọ 750.000đ và miễn phí giao. Đơn mua từ 2 lọ Stopirex trở lên được tặng đúng 1 túi đa năng vải dệt Stopirex; quà tính theo đơn hàng, không tính theo số lọ. Đơn 1 lọ được miễn phí giao khi khách mặc cả hoặc từ lúc hệ thống bắt đầu gửi follow-up.",
       searchAliases: ["giá bao nhiêu", "báo giá", "giá một lọ", "giá combo", "phí giao hàng"],
       responseGuidance:
-        "Nếu khách hỏi giá chung, chỉ báo phương án 1–3 lọ và quà tặng. Chỉ báo combo 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó. Chỉ nhắc chuyển tư vấn viên khi khách thực sự hỏi từ 6 lọ trở lên. Không tự chốt đơn.",
+        "Nếu khách hỏi giá chung, chỉ báo phương án 1–3 lọ và quà tặng, đồng thời báo riêng combo 1 lăn Stopirex + 1 Herbal Body Wash 500 ml giá 525.000đ miễn phí giao; nói rõ sữa tắm chưa bán lẻ. Không đưa combo 4 hoặc 5 lọ vào bảng giá chung. Chỉ nhắc chuyển tư vấn viên khi khách thực sự hỏi từ 6 lọ trở lên. Không tự chốt đơn.",
       sourceRow: 25,
     },
     {

@@ -215,6 +215,8 @@ test("sales content không ép combo và follow-up đủ 3/6/9h", () => {
   assert.match(offer, /chọn phương án mấy lọ/);
   assert.match(offer, /tiết kiệm 60\.000đ/);
   assert.match(offer, /đơn từ 2 lọ trở lên.*1 túi đa năng vải dệt Stopirex.*1 túi\/đơn/isu);
+  assert.match(offer, /1 lăn Stopirex.*Herbal Body Wash 500 ml.*525\.000đ.*miễn phí giao/isu);
+  assert.match(offer, /Herbal Body Wash hiện chưa bán lẻ/iu);
   assert.match(followupMessage("3h"), /1 lọ/);
   assert.match(followupMessage("3h"), /miễn phí giao/);
   assert.match(followupMessage("6h"), /băn khoăn/);

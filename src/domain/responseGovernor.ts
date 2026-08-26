@@ -135,9 +135,19 @@ export function inferAnsweredTopicFromMessage(
 
 export function questionTopic(value: string): ConversationTopic | undefined {
   const withoutUrls = value.replace(/https?:\/\/\S+/giu, "");
-  const text = normalize(withoutUrls);
+  const questionEnd = Math.max(withoutUrls.lastIndexOf("?"), withoutUrls.lastIndexOf("？"));
+  const beforeQuestion = questionEnd >= 0 ? withoutUrls.slice(0, questionEnd + 1) : withoutUrls;
+  const questionStart = Math.max(
+    beforeQuestion.lastIndexOf(". "),
+    beforeQuestion.lastIndexOf("! "),
+    beforeQuestion.lastIndexOf("\n"),
+  );
+  // Classify the actual final question, not product statements that happen to
+  // share its Messenger bubble (for example “mùi cơ thể” above a quantity CTA).
+  const questionClause = questionEnd >= 0 ? beforeQuestion.slice(questionStart + 1) : withoutUrls;
+  const text = normalize(questionClause);
   const implicitChildAgeQuestion =
-    /be bao nhieu tuoi|bao nhieu tuoi.*be|tuoi cua be/.test(text);
+    /be bao nhieu tuoi|bao nhieu tuoi.*be|tuoi cua be/.test(normalize(withoutUrls));
   if (!/[?？]/u.test(withoutUrls) && !implicitChildAgeQuestion) return undefined;
   if (/ngoai troi|van dong|van phong|dieu hoa|cang thang|cong viec/.test(text)) {
     return "work_context";

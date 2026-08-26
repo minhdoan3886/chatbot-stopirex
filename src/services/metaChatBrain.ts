@@ -310,6 +310,24 @@ export class MetaChatBrain {
       });
       return base;
     }
+    const priceAnswerTopics = base.state.decisionTrace?.actionPlan?.answerTopics ?? [];
+    if (
+      base.state.decisionTrace?.selectedIntent === "price_request" &&
+      priceAnswerTopics.length > 0 &&
+      priceAnswerTopics.every((topic) => topic === "price")
+    ) {
+      // The LLM owns the intent, but the commerce renderer owns the approved
+      // catalog, prices, shipping and presentation. This prevents a grounded
+      // free-form draft from exposing hidden 4–5 bottle options or omitting the
+      // separate roll-on + body-wash offer from a general price response.
+      this.logger?.log("debug", "llm_composition", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        status: "skipped",
+        reason: "authoritative_price_catalog",
+        selectedIntent: base.state.decisionTrace.selectedIntent,
+      });
+      return base;
+    }
     const compositionInput = {
       customerMessage: input.text,
       ...(interpreted.draftReply ? { draftReply: interpreted.draftReply } : {}),

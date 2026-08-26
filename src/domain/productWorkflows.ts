@@ -182,6 +182,10 @@ function resolveWorkflow(
   // strong grounding score; otherwise require a literal alias or active flow.
   if ((input.semantic?.groundingConfidence ?? 0) >= 0.85) {
     const citedIds = new Set(input.semantic?.knowledgeIds ?? []);
+    // A general catalog price answer legitimately cites the body-wash offer as
+    // a supplement. That mixed citation must not switch the entire turn into
+    // the body-wash-only workflow unless the customer named it explicitly.
+    if (citedIds.has("pricing-approved-options-2026-08")) return undefined;
     const grounded = approvedProductWorkflows.find((workflow) =>
       Object.values(workflow.knowledgeIds).some((ids) => ids.some((id) => citedIds.has(id))),
     );

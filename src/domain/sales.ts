@@ -111,6 +111,7 @@ export function formatPriceOffer(
   const saved = single.productPrice.amount * 2 - combo.productPrice.amount;
   return [
     "Dạ giá hiện tại:",
+    "Lăn ngăn tiết mồ hôi Stopirex:",
     `• 1 lọ: ${money(single.productPrice.amount)}${single.shippingFee.amount ? ` + ${money(single.shippingFee.amount)} phí giao` : ", miễn phí giao"}.`,
     `• Combo 2 lọ: ${money(combo.total.amount)}${combo.shippingFee.amount === 0 ? ", miễn phí giao" : `, phí giao ${money(combo.shippingFee.amount)}`}${saved > 0 ? `, tiết kiệm ${money(saved)}` : ""}.`,
     ...bulk.map(
@@ -118,6 +119,10 @@ export function formatPriceOffer(
         `• Combo ${offer.quantity} lọ: ${money(offer.total.amount)}${offer.shippingFee.amount === 0 ? ", miễn phí giao" : `, phí giao ${money(offer.shippingFee.amount)}`}.`,
     ),
     "• Quà tặng: đơn từ 2 lọ trở lên được tặng 1 túi đa năng vải dệt Stopirex (1 túi/đơn).",
+    "",
+    "Combo chăm sóc mùi cơ thể:",
+    "• 1 lăn Stopirex + 1 chai Herbal Body Wash 500 ml: 525.000đ, miễn phí giao.",
+    "• Herbal Body Wash hiện chưa bán lẻ.",
     nextQuestion,
   ].join("\n");
 }

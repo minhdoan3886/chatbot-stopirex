@@ -3073,6 +3073,8 @@ test("bảng giá chung chỉ hiện 1 đến 3 lọ nhưng vẫn trả lời v�
   assert.doesNotMatch(price.reply, /5 lọ: 1\.250\.000đ/);
   assert.doesNotMatch(price.reply, /6 lọ trở lên/iu);
   assert.match(price.reply, /đơn từ 2 lọ trở lên.*1 túi đa năng vải dệt Stopirex/isu);
+  assert.match(price.reply, /1 lăn Stopirex.*Herbal Body Wash 500 ml.*525\.000đ.*miễn phí giao/isu);
+  assert.match(price.reply, /Herbal Body Wash hiện chưa bán lẻ/iu);
 
   const asked = chat.chat("bulk-price-on-request", "Combo 5 lọ giá bao nhiêu?");
   assert.match(asked.reply, /5 lọ.*1\.250\.000đ/isu);

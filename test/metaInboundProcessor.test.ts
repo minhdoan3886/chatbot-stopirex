@@ -303,6 +303,49 @@ test("Meta inbound dùng brain để trả lời và lưu state khi đã bật g
   assert.equal(context.sent.length, 2);
 });
 
+test("Meta brain khóa bảng giá chuẩn 1–3 lọ và combo sữa tắm trước bản nháp LLM cũ", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        intent: "price_request",
+        topic: "price",
+        subject: "product",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        needsClarification: false,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "price",
+            confidence: 0.99,
+            evidence: ["giá"],
+          },
+        ],
+        knowledgeIds: [
+          "pricing-approved-options-2026-08",
+          "body-wash-rollon-combo-price-2026-08",
+        ],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.99,
+        draftReply:
+          "Dạ 1 lọ 285.000đ; combo 2 lọ 510.000đ; combo 3 lọ 750.000đ; combo 4 lọ 1.000.000đ; combo 5 lọ 1.250.000đ ạ.",
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({ sessionId: "authoritative-general-price", text: "giá" });
+
+  assert.match(response.reply, /1 lọ: 285\.000đ/iu);
+  assert.match(response.reply, /Combo 2 lọ: 510\.000đ/iu);
+  assert.match(response.reply, /Combo 3 lọ: 750\.000đ/iu);
+  assert.doesNotMatch(response.reply, /Combo 4 lọ|1\.000\.000đ|Combo 5 lọ|1\.250\.000đ/iu);
+  assert.match(response.reply, /1 lăn Stopirex.*Herbal Body Wash 500 ml.*525\.000đ.*miễn phí giao/isu);
+  assert.match(response.reply, /Herbal Body Wash hiện chưa bán lẻ/iu);
+});
+
 test("Meta comment trả lời công khai trước rồi gửi đúng một private reply cô đọng", async () => {
   const context = fixture({ live: true });
   const result = await context.processor.processBatch([

@@ -336,6 +336,33 @@ test("Meta comment trả lời công khai trước rồi gửi đúng một priv
   assert.equal(context.followupSchedules.length, 0);
 });
 
+test("Meta comment dấu chấm hỏi đúng một nhu cầu và không pause phiên", async () => {
+  const context = fixture({ live: true });
+  const result = await context.processor.processBatch([
+    job({
+      eventId: "comment-empty-1",
+      kind: "comment",
+      commentId: "comment-empty-1",
+      text: ".",
+    }),
+  ]);
+
+  assert.deepEqual(result, { status: "replied", replyCount: 2 });
+  assert.deepEqual(context.commentDispatchOrder, ["public", "private"]);
+  assert.equal((context.privateCommentReplies[0]?.match(/\?/gu) ?? []).length, 1);
+  assert.match(context.privateCommentReplies[0] ?? "", /giá|cách dùng|tình trạng/iu);
+  assert.doesNotMatch(
+    `${context.publicCommentReplies[0]} ${context.privateCommentReplies[0]}`,
+    /chưa có đủ|chuyển bộ phận|kiểm tra rồi phản hồi/iu,
+  );
+  assert.ok(
+    context.commentWorkflowUpdates.some(
+      (item) => item.action === "prepared" && item.category === "other" && item.priority === "normal",
+    ),
+  );
+  assert.equal(context.runtimeUpdates[0]?.humanStatus, "bot");
+});
+
 test("Meta tự ẩn comment có SĐT công khai kể cả khi là khiếu nại thật", async () => {
   const context = fixture({ live: true });
   await context.processor.processBatch([

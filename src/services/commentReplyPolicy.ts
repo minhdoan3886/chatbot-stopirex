@@ -46,8 +46,20 @@ export function composeCommentReplyPlan(input: {
   groundedReplies: readonly string[];
   humanCareRequired?: boolean;
 }): CommentReplyPlan {
-  const category = commentCategory(input);
+  const openDiscovery = isLowInformationComment(input.commentText);
+  const category = openDiscovery ? "other" : commentCategory(input);
   const moderation = suggestCommentModeration(input.commentText, category);
+  if (openDiscovery) {
+    return {
+      category,
+      priority: "normal",
+      ...moderation,
+      publicReply:
+        "Dạ shop chào mình ạ 😊 Shop đã nhắn riêng để hỗ trợ, mình kiểm tra giúp shop nhé.",
+      privateReply:
+        "Dạ shop chào mình ạ 😊 Mình đang quan tâm giá, cách dùng hay muốn được tư vấn tình trạng mồ hôi và mùi cơ thể ạ?",
+    };
+  }
   if (category === "complaint") {
     return {
       category,
@@ -99,6 +111,27 @@ export function composeCommentReplyPlan(input: {
       "Dạ shop đã nhận bình luận của mình ạ. Shop gửi thông tin hỗ trợ qua tin nhắn riêng, mình kiểm tra giúp shop nhé 😊",
     privateReply,
   };
+}
+
+/**
+ * Comments made only of punctuation/emoji or a generic engagement marker do
+ * not contain a product claim for the LLM or Knowledge layer to resolve. They
+ * should open discovery instead of being misclassified as an unsupported
+ * question and pausing the customer conversation.
+ */
+export function isLowInformationComment(commentText: string): boolean {
+  const normalized = commentText
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim()
+    .replace(/\s+/gu, " ");
+
+  if (!normalized || normalized.length === 1) return true;
+  return /^(?:alo|hello|hi|ib|inbox|tv|tu van|quan tam|cham|hong|shop oi|ad oi|ok|okay|uh|um)$/u.test(
+    normalized,
+  );
 }
 
 /**

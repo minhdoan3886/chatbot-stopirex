@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { composeCommentReplyPlan } from "../src/services/commentReplyPolicy.js";
+import {
+  composeCommentReplyPlan,
+  isLowInformationComment,
+} from "../src/services/commentReplyPolicy.js";
 
 test("comment hỏi giá không lộ giá công khai và giữ báo giá grounded trong private reply", () => {
   const plan = composeCommentReplyPlan({
@@ -79,4 +82,28 @@ test("private reply luôn là đúng một nội dung cô đọng", () => {
   assert.equal(plan.category, "consultation");
   assert.ok(plan.privateReply.length <= 480);
   assert.equal(Array.isArray(plan.privateReply), false);
+});
+
+test("comment chỉ có dấu chấm mở một câu hỏi khai thác thay vì handoff", () => {
+  const plan = composeCommentReplyPlan({
+    commentText: ".",
+    intent: "knowledge_unknown",
+    groundedReplies: [
+      "Em chưa có đủ thông tin đã được xác nhận để trả lời. Em chuyển bộ phận liên quan kiểm tra ạ.",
+    ],
+    humanCareRequired: true,
+  });
+
+  assert.equal(plan.category, "other");
+  assert.match(plan.privateReply, /shop chào|đang quan tâm/iu);
+  assert.equal((plan.privateReply.match(/\?/gu) ?? []).length, 1);
+  assert.doesNotMatch(`${plan.publicReply} ${plan.privateReply}`, /chưa có đủ|chuyển bộ phận|kiểm tra rồi phản hồi/iu);
+});
+
+test("chỉ nhận diện tín hiệu comment không có nội dung, không chặn câu hỏi có nghĩa", () => {
+  assert.equal(isLowInformationComment("."), true);
+  assert.equal(isLowInformationComment("😊"), true);
+  assert.equal(isLowInformationComment("ib"), true);
+  assert.equal(isLowInformationComment("giá combo 2 lọ bao nhiêu?"), false);
+  assert.equal(isLowInformationComment("mình dùng khi mang thai được không?"), false);
 });

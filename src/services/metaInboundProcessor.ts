@@ -13,7 +13,7 @@ import type { StructuredLogger } from "./logger.js";
 import type { FollowupCycleSchedule } from "./followupRepository.js";
 import type { OrderDraft } from "../domain/orders.js";
 import type { PushOrderInboxInput } from "./orderInbox.js";
-import { composeCommentReplyPlan } from "./commentReplyPolicy.js";
+import { composeCommentReplyPlan, isLowInformationComment } from "./commentReplyPolicy.js";
 
 export type FollowupCoordinator = {
   cancelConversation(input: { tenantId: string; conversationId: string; reason: string }): Promise<number>;
@@ -263,15 +263,41 @@ export class MetaInboundProcessor {
     if (!isCommentTurn) {
       void messenger.sendTyping(first.senderId).catch(() => undefined);
     }
-    const result = await this.options.brain.reply({
-      sessionId,
-      text,
-      traceId: first.traceId,
-      tenantId: first.tenantId,
-      pageId: first.pageId,
-      conversationId: conversation.conversationId,
-      ...this.context(),
-    });
+    const lowInformationComment = isCommentTurn && isLowInformationComment(text);
+    // A punctuation/emoji-only comment carries no semantic product question.
+    // Keep all meaningful language LLM-first, while routing this narrow case
+    // directly to discovery so the Knowledge coverage gate cannot create a
+    // false handoff or pause the shared Messenger session.
+    const result = lowInformationComment
+      ? this.options.chat.chat(
+          sessionId,
+          text,
+          {
+            slots: {},
+            intent: "consultation",
+            topic: "other",
+            subject: "product",
+            scenario: "actual",
+            asksDirectAnswer: false,
+            confidence: 1,
+            needsClarification: false,
+            evidence: [],
+            actions: [],
+            uncertainties: [],
+            knowledgeIds: [],
+            unsupportedQuestions: [],
+          },
+          this.context(),
+        )
+      : await this.options.brain.reply({
+          sessionId,
+          text,
+          traceId: first.traceId,
+          tenantId: first.tenantId,
+          pageId: first.pageId,
+          conversationId: conversation.conversationId,
+          ...this.context(),
+        });
     const hasNewerInbound = await this.options.store.hasNewerInboundContent({
       tenantId: first.tenantId,
       pageId: first.pageId,

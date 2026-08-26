@@ -595,14 +595,27 @@ async function probeMetaGateway(port: number): Promise<{ ok: boolean; latencyMs:
 
 async function probePublicWebhook(url: string): Promise<{ ok: boolean; latencyMs: number }> {
   const startedAt = performance.now();
+  const target = new URL(url);
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+    const directOk = response.status === 403 || response.ok;
+    if (directOk || !requiresPublicDnsProbe(target.hostname)) {
+      return {
+        ok: directOk,
+        latencyMs: Math.round(performance.now() - startedAt),
+      };
+    }
+
+    // A Tailscale host resolves to its private 100.x address from inside the
+    // tailnet. Probing that address can return 503 even while Funnel is healthy
+    // for Meta and other public callers. Retry through public DNS before
+    // declaring the webhook unavailable.
+    const ok = await probePublicWebhookWithPublicDns(target);
     return {
-      ok: response.status === 403 || response.ok,
+      ok,
       latencyMs: Math.round(performance.now() - startedAt),
     };
   } catch {
-    const target = new URL(url);
     if (requiresPublicDnsProbe(target.hostname)) {
       const ok = await probePublicWebhookWithPublicDns(target);
       return {

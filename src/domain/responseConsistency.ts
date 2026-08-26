@@ -1,6 +1,6 @@
 import type { DecisionTrace } from "./conversationDecision.js";
 import type { SupportedOrderQuantity } from "./conversationActions.js";
-import { replyViolatesIntentEvidencePolicy } from "./evidencePolicy.js";
+import { intentEvidencePolicyViolation } from "./evidencePolicy.js";
 
 export function assertReplyMatchesConversationState(input: {
   reply: string;
@@ -10,9 +10,11 @@ export function assertReplyMatchesConversationState(input: {
   botPaused: boolean;
   freeShippingApproved: boolean;
 }): void {
-  if (replyViolatesIntentEvidencePolicy(input.trace?.selectedIntent, input.reply)) {
-    throw consistencyError("intent_forbidden_sales_cta");
-  }
+  const intentPolicyViolation = intentEvidencePolicyViolation(
+    input.trace?.selectedIntent,
+    input.reply,
+  );
+  if (intentPolicyViolation) throw consistencyError(intentPolicyViolation);
   if (input.trace?.actionExecutionMode !== "multi_action") return;
   const text = normalize(input.reply);
   const plan = input.trace.actionPlan;

@@ -171,6 +171,34 @@ test("quality evaluator chặn CTA số lượng trong lượt hoài nghi hiệu
   assert.ok(result.hardFailReasons.includes("intent_forbidden_sales_cta"));
 });
 
+test("quality evaluator bắt buộc bằng chứng và câu hỏi loại lăn ở lượt hoài nghi hiệu quả", () => {
+  const missingEvidence = evaluateConversationQuality({
+    customerMessage: "Bên nào cũng bảo hỗ trợ, anh mua nhiều loại rồi chả hết",
+    baseReply:
+      "Dạ em hiểu băn khoăn của mình. Những loại mình từng dùng là lăn hằng ngày hay dòng ngăn tiết mồ hôi chuyên sâu ạ?",
+    replies: [
+      "Stopirex hỗ trợ kiểm soát mồ hôi chuyên sâu. Những loại mình từng dùng là lăn hằng ngày hay dòng ngăn tiết mồ hôi chuyên sâu ạ?",
+    ],
+    skill: "solution-guidance",
+    intent: "efficacy_objection",
+    asksDirectAnswer: true,
+  });
+  assert.ok(missingEvidence.hardFailReasons.includes("intent_missing_required_evidence"));
+
+  const missingDiagnostic = evaluateConversationQuality({
+    customerMessage: "Bên nào cũng bảo hỗ trợ, anh mua nhiều loại rồi chả hết",
+    baseReply:
+      "Dạ em hiểu băn khoăn của mình. Những loại mình từng dùng là lăn hằng ngày hay dòng ngăn tiết mồ hôi chuyên sâu ạ?",
+    replies: [
+      "Stopirex có Aluminium Sesquichlorohydrate, là hoạt chất ngăn tiết mồ hôi. Nếu mình muốn, em hỗ trợ cách dùng phù hợp ạ.",
+    ],
+    skill: "solution-guidance",
+    intent: "efficacy_objection",
+    asksDirectAnswer: true,
+  });
+  assert.ok(missingDiagnostic.hardFailReasons.includes("intent_missing_allowed_next_action"));
+});
+
 test("quality gate đánh trượt câu logistics trả nhầm bảng giá", () => {
   const result = evaluateConversationQuality({
     customerMessage:

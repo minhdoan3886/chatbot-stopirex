@@ -80,3 +80,35 @@ test("response consistency chặn CTA chốt sale trong lượt hoài nghi hiệ
     /intent_forbidden_sales_cta/u,
   );
 });
+
+test("response consistency chặn LLM bỏ bằng chứng hoặc đổi câu hỏi chẩn đoán thành CTA mơ hồ", () => {
+  const { quantity, ...actionPlanWithoutQuantity } = trace.actionPlan;
+  void quantity;
+  const efficacyTrace = {
+    ...trace,
+    selectedIntent: "efficacy_objection" as const,
+    actionPlan: actionPlanWithoutQuantity,
+  };
+  assert.throws(
+    () =>
+      assertReplyMatchesConversationState({
+        reply:
+          "Stopirex hỗ trợ kiểm soát mồ hôi chuyên sâu. Nếu mình muốn, em hỗ trợ cách dùng phù hợp ạ.",
+        trace: efficacyTrace,
+        botPaused: false,
+        freeShippingApproved: false,
+      }),
+    /intent_missing_required_evidence/u,
+  );
+  assert.throws(
+    () =>
+      assertReplyMatchesConversationState({
+        reply:
+          "Stopirex có Aluminium Sesquichlorohydrate, là hoạt chất ngăn tiết mồ hôi. Nếu mình muốn, em hỗ trợ cách dùng phù hợp ạ.",
+        trace: efficacyTrace,
+        botPaused: false,
+        freeShippingApproved: false,
+      }),
+    /intent_missing_allowed_next_action/u,
+  );
+});

@@ -540,6 +540,59 @@ test("Meta brain nạp gói bằng chứng cho LLM khi khách hoài nghi hiệu 
   assert.doesNotMatch(response.reply, /mấy lọ|chọn.*lọ|combo|lên đơn/iu);
 });
 
+test("Meta brain giữ câu grounded nếu LLM thay câu chẩn đoán bằng CTA mơ hồ", async () => {
+  let llmCalls = 0;
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () => {
+      llmCalls += 1;
+      return JSON.stringify({
+        summary: "Khách hoài nghi vì đã thử nhiều loại chưa hiệu quả",
+        skill: "solution-guidance",
+        intent: "efficacy_objection",
+        topic: "effectiveness",
+        subject: "customer",
+        scenario: "past",
+        asksDirectAnswer: true,
+        confidence: 0.98,
+        needsClarification: false,
+        evidence: ["mua nhiều loại rồi chả hết"],
+        actions: [
+          {
+            type: "answer_question",
+            topic: "effectiveness",
+            confidence: 0.98,
+            evidence: ["mua nhiều loại rồi chả hết"],
+          },
+        ],
+        knowledgeIds: [
+          "product-official-ingredient-list-2022",
+          "product-training-ingredient-roles",
+          "product-comparison-traditional-rollon",
+          "mechanism-control-not-permanent",
+        ],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Stopirex hỗ trợ kiểm soát mồ hôi chuyên sâu, dùng duy trì. Nếu mình muốn, em hỗ trợ chọn cách dùng phù hợp ạ.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "meta-efficacy-vague-cta-blocked",
+    text: "Bên nào cũng bảo hỗ trợ kiểm soát, anh mua nhiều loại rồi chả hết",
+  });
+
+  assert.equal(llmCalls, 2);
+  assert.match(response.reply, /Aluminium Sesquichlorohydrate/iu);
+  assert.match(response.reply, /lăn hằng ngày.*ngăn tiết mồ hôi chuyên sâu/isu);
+  assert.doesNotMatch(response.reply, /nếu mình muốn.*hỗ trợ/iu);
+});
+
 test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge thay vì handoff", async () => {
   const prompts: string[] = [];
   const chat = new DemoChatService();

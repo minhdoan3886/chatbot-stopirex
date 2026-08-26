@@ -566,6 +566,7 @@ export class MetaChatBrain {
         ...(base.state.decisionTrace ? { trace: base.state.decisionTrace } : {}),
         ...(base.state.selectedQuantity ? { selectedQuantity: base.state.selectedQuantity } : {}),
         ...(base.state.orderId ? { orderId: base.state.orderId } : {}),
+        orderReceived: base.state.orderFlowStatus === "created",
         botPaused: base.state.botPaused,
         freeShippingApproved: base.state.freeShippingApproved,
       });
@@ -599,7 +600,11 @@ export function reconcilePendingConsultationAnswer<T extends SemanticUnderstandi
   customerMessage: string,
 ): T {
   const pendingTopic = state.pendingQuestionTopic;
+  const bareAffirmative = /^(?:dạ\s*)?(?:uh|ừ|u|ok|okay|oke|được|đc|có|vâng|ừm)(?:\s+ạ)?$/iu.test(
+    customerMessage.trim(),
+  );
   if (
+    bareAffirmative ||
     !pendingTopic ||
     !["work_context", "symptom", "prior_product", "usage", "child_age"].includes(pendingTopic) ||
     !inferAnsweredTopicFromMessage(customerMessage, pendingTopic).includes(pendingTopic) ||

@@ -313,7 +313,7 @@ export class MetaInboundProcessor {
       outbound: {
         idempotencyKey: turnIdempotencyKey,
         recipientId: first.senderId,
-        texts: commentPlan ? [commentPlan.publicReply, commentPlan.privateReply] : result.replies.slice(0, 2),
+        texts: commentPlan ? [commentPlan.publicReply, commentPlan.privateReply] : result.replies.slice(0, 3),
       },
     });
     if (commentPlan && first.commentId && committed.outbound) {

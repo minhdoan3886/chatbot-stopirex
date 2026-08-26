@@ -3270,6 +3270,41 @@ test("câu wording cuối được thay vào lịch sử thật thay vì giữ c
   assert.doesNotMatch(state.recentTurns.at(-1)?.text ?? "", /GIÁ SANDBOX/);
 });
 
+test("'uh' thực hiện đề nghị giải thích gần nhất thay vì recap đơn đã tạo", () => {
+  const chat = new DemoChatService();
+  const sessionId = "latest-comparison-offer-wins-created-order";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "Mình lấy combo 2 lọ");
+  chat.chat(
+    sessionId,
+    "Hong Nhung 0918626684, số 28 ngõ 30 Văn Phú, phường Văn Phú, quận Hà Đông, Hà Nội",
+  );
+  const created = chat.chat(sessionId, "ĐỒNG Ý");
+  assert.equal(created.state.pipeline, "6.Đã tạo đơn");
+
+  const offer = [
+    "Mình đang cần em giải thích thêm điểm khác nhau về cách dùng và hiệu quả hỗ trợ không ạ?",
+  ];
+  const offeredState = chat.replaceLatestAssistantTurns(sessionId, created.replies, offer);
+  assert.equal(offeredState.pendingAction, "send_comparison_explanation");
+
+  const explained = chat.chat(sessionId, "uh", {
+    slots: {},
+    intent: "product_comparison",
+    topic: "comparison",
+    asksDirectAnswer: true,
+    affirmation: true,
+    replyTo: "offer_usage_guidance",
+    confidence: 0.98,
+  });
+
+  assert.equal(explained.state.pipeline, "6.Đã tạo đơn");
+  assert.equal(explained.state.pendingAction, undefined);
+  assert.match(explained.reply, /lăn nách thông thường/iu);
+  assert.match(explained.reply, /buổi tối/iu);
+  assert.doesNotMatch(explained.reply, /đơn.*(?:đã hoàn tất|đã nhận đủ thông tin)/isu);
+});
+
 test("global entity memory resolves Cầu Giấy and male reference before order fast-path", () => {
   const chat = new DemoChatService();
   const sessionId = "global-entity-memory-order-reference";

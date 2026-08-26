@@ -63,3 +63,21 @@ test("câu hỏi mới không bị coi là câu trả lời cho chủ đề đan
     ["quantity"],
   );
 });
+
+test("governor tách một đoạn dài thành các bubble ngắn mà không mất nội dung", () => {
+  const longReply =
+    "Dạ em giải thích ngắn gọn để mình dễ phân biệt nhé. Stopirex là sản phẩm dùng vào buổi tối trên vùng da sạch, khô hoàn toàn; giai đoạn đầu mình lăn mỏng 2–3 lần/tuần, sau đó khi tình trạng ổn hơn thì giãn cách khoảng 2–3 ngày/lần theo hướng dẫn. Điểm khác với lăn nách thông thường là Stopirex hướng đến hỗ trợ kiểm soát mồ hôi trong quá trình sử dụng đúng cách, còn lăn nách thường chủ yếu thiên về khử mùi hoặc che mùi hằng ngày. Về hiệu quả, thực tế còn tùy mức mồ hôi, vận động và cách dùng của mỗi người ạ.";
+  const result = governCustomerResponse({
+    replies: [longReply],
+    maxBubbles: 2,
+    preserveFullText: true,
+  });
+
+  assert.ok(result.replies.length >= 2);
+  assert.ok(result.replies.length <= 3);
+  assert.ok(result.replies.every((reply) => reply.length <= 300));
+  assert.equal(
+    result.replies.join(" ").replace(/\s+/gu, " "),
+    longReply.replace(/\s+/gu, " "),
+  );
+});

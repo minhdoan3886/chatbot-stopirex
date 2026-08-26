@@ -30,6 +30,7 @@ export type ResponseGovernorInput = {
 // bắt buộc như recap đơn/CSKH có thể chủ động bật preserveFullText.
 const DEFAULT_MAX_CHARACTERS = 360;
 const DEFAULT_MAX_BUBBLES = 2;
+const DEFAULT_BUBBLE_TARGET = 280;
 
 export function governCustomerResponse(
   input: ResponseGovernorInput,
@@ -51,7 +52,9 @@ export function governCustomerResponse(
   });
 
   const withSingleQuestion = keepOnlyLastQuestion(deduplicated);
-  let replies = withSingleQuestion;
+  let replies = withSingleQuestion.flatMap((block) =>
+    splitLongBlock(block, DEFAULT_BUBBLE_TARGET),
+  );
   let truncated = false;
 
   if (!input.preserveFullText) {
@@ -60,7 +63,12 @@ export function governCustomerResponse(
     replies = compacted.replies;
     truncated = compacted.truncated;
   }
-  const maxBubbles = input.maxBubbles ?? DEFAULT_MAX_BUBBLES;
+  const expandsLongSingleReply =
+    input.replies.length === 1 && (input.replies[0]?.trim().length ?? 0) > DEFAULT_BUBBLE_TARGET;
+  const maxBubbles = Math.max(
+    input.maxBubbles ?? DEFAULT_MAX_BUBBLES,
+    expandsLongSingleReply ? 3 : 0,
+  );
   replies = mergeToBubbleLimit(replies, maxBubbles);
 
   const askedTopics = replies
@@ -187,6 +195,49 @@ function isMostlyQuestion(value: string): boolean {
 
 function splitBlocks(value: string): string[] {
   return value.split(/\n\s*\n+/u);
+}
+
+function splitLongBlock(value: string, target: number): string[] {
+  const text = value.trim();
+  if (text.length <= target) return [text];
+  const units = text
+    .split(/(?<=[.!?？])\s+|\n+/u)
+    .map((unit) => unit.trim())
+    .filter(Boolean);
+  const blocks: string[] = [];
+  let current = "";
+  for (const unit of units) {
+    const pieces = unit.length > target ? splitLongUnit(unit, target) : [unit];
+    for (const piece of pieces) {
+      const candidate = current ? `${current} ${piece}` : piece;
+      if (candidate.length <= target) {
+        current = candidate;
+        continue;
+      }
+      if (current) blocks.push(current);
+      current = piece;
+    }
+  }
+  if (current) blocks.push(current);
+  return blocks.length > 0 ? blocks : [text];
+}
+
+function splitLongUnit(value: string, target: number): string[] {
+  const chunks: string[] = [];
+  let rest = value.trim();
+  while (rest.length > target) {
+    const window = rest.slice(0, target + 1);
+    const boundary = Math.max(
+      window.lastIndexOf("; "),
+      window.lastIndexOf(", "),
+      window.lastIndexOf(" "),
+    );
+    const cut = boundary >= Math.floor(target * 0.55) ? boundary + 1 : target;
+    chunks.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
 }
 
 function keepOnlyLastQuestion(blocks: string[]): string[] {

@@ -1467,6 +1467,22 @@ export class DemoChatService {
         audience === "child" ? childUsageGuidanceReply() : generalUsageGuidanceReply(),
       );
     }
+    if (
+      decision.route === "pending_action" &&
+      session.pendingAction === "send_comparison_explanation"
+    ) {
+      delete session.pendingAction;
+      delete session.lastDecision.pendingActionAfter;
+      session.lastIntent = "product_comparison";
+      session.activeSkill = "direct-answer";
+      session.skillReason =
+        "Khách đồng ý với đề nghị giải thích gần nhất; trả lời đúng phần so sánh và cách dùng, không quay về trạng thái đơn cũ.";
+      recordKnowledge(session, ["product-comparison-traditional-rollon", "usage-general"]);
+      return this.respond(session, [
+        "Dạ, điểm khác nhau chính nằm ở mục tiêu sử dụng ạ. Lăn nách thông thường thường thiên về khử hoặc che mùi hằng ngày; Stopirex hỗ trợ kiểm soát lượng mồ hôi khi dùng đúng hướng dẫn.",
+        "Stopirex dùng buổi tối trên da sạch, khô hoàn toàn: giai đoạn đầu lăn mỏng 2–3 lần/tuần, khi ổn hơn thì giãn cách 2–3 ngày/lần. Hiệu quả thực tế còn tùy cơ địa, mức mồ hôi và cách dùng ạ.",
+      ]);
+    }
     if (decision.route === "pending_action" && session.pendingAction === "send_price") {
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
@@ -2292,6 +2308,7 @@ export class DemoChatService {
     const pendingQuestionTopic = askedTopics.at(-1);
     if (pendingQuestionTopic) session.pendingQuestionTopic = pendingQuestionTopic;
     else delete session.pendingQuestionTopic;
+    syncPendingOfferFromAssistant(session, renderedReplies.join("\n\n"));
     return stateOf(session);
   }
 
@@ -2514,6 +2531,7 @@ export class DemoChatService {
       preserveFullText: shouldPreserveFullResponse(session, logicalReplies),
     });
     logicalReplies = governed.replies;
+    syncPendingOfferFromAssistant(session, logicalReplies.join("\n\n"));
     session.askedTopics = [...new Set([...session.askedTopics, ...governed.askedTopics])];
     if (governed.pendingQuestionTopic) {
       session.pendingQuestionTopic = governed.pendingQuestionTopic;
@@ -2538,7 +2556,7 @@ export class DemoChatService {
       rememberTurn(session, { role: "assistant", text: message });
     }
     finalizeDecisionTrace(session);
-    const replies = logicalReplies.slice(0, 2);
+    const replies = logicalReplies.slice(0, 3);
     return {
       sessionId: session.id,
       reply: replies.join("\n\n"),
@@ -2984,6 +3002,22 @@ function normalize(value: string): string {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function syncPendingOfferFromAssistant(session: DemoSession, assistantText: string): void {
+  const text = normalize(assistantText);
+  const offersComparisonExplanation =
+    /(?:can|muon|co can|co muon).*(?:em|minh).*(?:giai thich|noi ro|phan biet).*(?:khac nhau|diem khac).*(?:cach dung|hieu qua)/u.test(
+      text,
+    ) ||
+    /(?:giai thich|noi ro|phan biet).*(?:khac nhau|diem khac).*(?:cach dung|hieu qua).*(?:khong|nhe|a)$/u.test(
+      text,
+    );
+  if (!offersComparisonExplanation) return;
+  session.pendingAction = "send_comparison_explanation";
+  if (session.lastDecision) {
+    session.lastDecision.pendingActionAfter = "send_comparison_explanation";
+  }
 }
 
 function isReset(text: string): boolean {

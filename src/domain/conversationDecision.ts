@@ -6,6 +6,7 @@ import type { ActionExecutionMode } from "./actionRollout.js";
 
 export type PendingAction =
   | "send_usage_guidance"
+  | "send_comparison_explanation"
   | "send_price"
   | "send_authenticity_legal_summary"
   | "choose_quantity"
@@ -210,12 +211,19 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
 
   const pendingAction = input.pendingAction;
   const expectedPendingReplyTo = pendingAction ? pendingReplyTo(pendingAction) : undefined;
+  const semanticFulfillsPendingAction = Boolean(
+    pendingAction &&
+      input.semantic.intent === pendingIntent(pendingAction) &&
+      (input.affirmativeFollowup ||
+        (expectedPendingReplyTo !== undefined && input.semantic.replyTo === expectedPendingReplyTo)),
+  );
   const efficacyObjectionInterruptsPendingAction = Boolean(
     input.semantic.intent === "efficacy_objection" &&
       semanticConfidence >= 0.65 &&
       input.semantic.needsClarification !== true,
   );
   const directQuestionInterruptsPendingAction = Boolean(
+    !semanticFulfillsPendingAction &&
     input.semantic.asksDirectAnswer === true &&
       input.semantic.intent &&
       input.semantic.intent !== "other" &&
@@ -380,6 +388,7 @@ function decision(
 
 function pendingIntent(action: PendingAction): CustomerIntent {
   if (action === "send_usage_guidance") return "usage_guidance";
+  if (action === "send_comparison_explanation") return "product_comparison";
   if (action === "send_price") return "price_request";
   if (action === "send_authenticity_legal_summary") return "authenticity_question";
   return "buying";
@@ -387,6 +396,7 @@ function pendingIntent(action: PendingAction): CustomerIntent {
 
 function pendingReplyTo(action: PendingAction): SemanticUnderstanding["replyTo"] | undefined {
   if (action === "send_usage_guidance") return "offer_usage_guidance";
+  if (action === "send_comparison_explanation") return "offer_usage_guidance";
   if (action === "send_price") return "offer_price";
   if (action === "choose_quantity") return "choose_quantity";
   if (action === "confirm_order") return "confirm_order";

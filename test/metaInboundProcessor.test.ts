@@ -958,6 +958,39 @@ test("câu hỏi mới vẫn giữ nguyên phân loại trả lời trực tiế
   assert.equal(reconciled, semantic);
 });
 
+test("câu đồng ý ngắn giữ nguyên ý định thực hiện đề nghị gần nhất", () => {
+  const semantic = {
+    slots: {},
+    skill: "direct-answer" as const,
+    intent: "product_comparison" as const,
+    topic: "comparison" as const,
+    asksDirectAnswer: true,
+    affirmation: true,
+    replyTo: "offer_usage_guidance" as const,
+    confidence: 0.98,
+    draftReply: "Dạ em giải thích điểm khác nhau về cách dùng và hiệu quả ạ.",
+    actions: [
+      {
+        type: "answer_question" as const,
+        topic: "comparison" as const,
+        source: "llm" as const,
+        confidence: 0.98,
+        evidence: ["uh"],
+      },
+    ],
+  } satisfies Parameters<typeof reconcilePendingConsultationAnswer>[0];
+
+  const reconciled = reconcilePendingConsultationAnswer(
+    semantic,
+    { pendingQuestionTopic: "usage" },
+    "uh",
+  );
+
+  assert.equal(reconciled, semantic);
+  assert.equal(reconciled.affirmation, true);
+  assert.equal(reconciled.actions?.[0]?.type, "answer_question");
+});
+
 test("Meta tiếp tục tư vấn khi khách trả lời tình trạng sau báo giá", async () => {
   const chat = new DemoChatService();
   const sessionId = "price-then-symptom-answer";

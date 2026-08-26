@@ -1731,6 +1731,12 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
     );
   }
 
+  if (state.pendingAction === "send_comparison_explanation") {
+    add(
+      "STATE đang chờ send_comparison_explanation vì bot vừa hỏi có cần giải thích điểm khác nhau về cách dùng/hiệu quả: 'uh', 'ok', 'được', 'có' → product_comparison + replyTo offer_usage_guidance + affirmation=true + needsClarification=false. Đây là yêu cầu thực hiện lời đề nghị gần nhất; nó thắng selectedQuantity và trạng thái đơn đã tạo. Trả lời so sánh và cách dùng, cấm recap đơn hoặc tiếp tục thu đơn.",
+    );
+  }
+
   const historyKeepsChildAudience =
     state.customerProfile?.age !== undefined &&
     state.recentTurns.some((turn) =>

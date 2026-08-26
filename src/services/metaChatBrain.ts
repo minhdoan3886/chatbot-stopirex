@@ -445,7 +445,11 @@ export class MetaChatBrain {
         Boolean(base.state.selectedQuantity) ||
         Boolean(base.state.orderId) ||
         requiredAnswerTopics(input.text).length >= 2 ||
-        semanticAnswerTopics(interpreted, input.text).length >= 3,
+        semanticAnswerTopics(
+          interpreted,
+          input.text,
+          base.state.decisionTrace?.actionPlan?.answerTopics,
+        ).length >= 2,
     });
     const governedCoverage = assessQuestionCoverage({
       customerMessage: input.text,
@@ -639,18 +643,29 @@ function assessQuestionCoverage(input: {
 }): QuestionCoverageAssessment {
   const explicitQuestionCount = extractCustomerQuestionClauses(input.customerMessage).length;
   const requiredFactTopics = requiredAnswerTopics(input.customerMessage);
-  const requiredSemanticTopics = semanticAnswerTopics(input.interpreted, input.customerMessage);
+  const requiredSemanticTopics = semanticAnswerTopics(
+    input.interpreted,
+    input.customerMessage,
+    input.base.state.decisionTrace?.actionPlan?.answerTopics,
+  );
   const requiredTopics = [...new Set([...requiredFactTopics, ...requiredSemanticTopics])];
   const questionCount = Math.max(
     explicitQuestionCount,
     requiredSemanticTopics.length,
     requiredFactTopics.length,
-    requiredTopics.length,
     input.interpreted.unsupportedQuestions?.length ?? 0,
   );
+  const groundedLlmDraft =
+    input.interpretationStatus === "interpreted" &&
+    input.compositionStatus === "enhanced" &&
+    (input.interpreted.knowledgeIds?.length ?? 0) > 0 &&
+    (input.interpreted.groundingConfidence ?? 0) >= 0.8 &&
+    (input.interpreted.unsupportedQuestions?.length ?? 0) === 0;
   const missingTopics = [
     ...missingRequiredAnswerTopics(input.customerMessage, input.candidateReply),
-    ...requiredSemanticTopics.filter((topic) => !replyCoversSemanticTopic(topic, input.candidateReply)),
+    ...(groundedLlmDraft
+      ? []
+      : requiredSemanticTopics.filter((topic) => !replyCoversSemanticTopic(topic, input.candidateReply))),
   ].filter((topic, index, all) => all.indexOf(topic) === index);
   const enforced = questionCount >= 1;
   if (!enforced) {
@@ -698,7 +713,7 @@ function assessQuestionCoverage(input: {
     input.interpretationStatus === "interpreted" &&
     input.compositionStatus === "enhanced" &&
     (input.interpreted.knowledgeIds?.length ?? 0) > 0
-      ? actionCoveredCount
+      ? Math.max(actionCoveredCount, groundedLlmDraft ? requiredSemanticTopics.length : 0)
       : 0;
   const semanticCoveredCount = requiredSemanticTopics.filter((topic) =>
     replyCoversSemanticTopic(topic, input.candidateReply),
@@ -737,16 +752,22 @@ function assessQuestionCoverage(input: {
   };
 }
 
-function semanticAnswerTopics(semantic: SemanticUnderstanding, customerMessage: string): SemanticTopic[] {
+function semanticAnswerTopics(
+  semantic: SemanticUnderstanding,
+  customerMessage: string,
+  reconciledActionTopics?: readonly SemanticTopic[],
+): SemanticTopic[] {
   const normalizeTopic = (topic: SemanticTopic, evidence: string): SemanticTopic =>
     topic === "order" && isShippingDestinationEvidence(evidence) ? "shipping" : topic;
   const topics = [
     ...(semantic.asksDirectAnswer === true && semantic.topic
       ? [normalizeTopic(semantic.topic, customerMessage)]
       : []),
-    ...(semantic.actions ?? [])
-      .filter((action) => action.type === "answer_question")
-      .map((action) => normalizeTopic(action.topic, action.evidence.join(" "))),
+    ...(reconciledActionTopics !== undefined
+      ? reconciledActionTopics
+      : (semantic.actions ?? [])
+          .filter((action) => action.type === "answer_question")
+          .map((action) => normalizeTopic(action.topic, action.evidence.join(" ")))),
   ];
   return topics.filter((topic, index, all) => topic !== "other" && all.indexOf(topic) === index);
 }

@@ -53,7 +53,8 @@ export type RejectedConversationAction = {
     | "non_current_care_scenario"
     | "unverifiable_purchase_condition"
     | "inapplicable_return_logistics"
-    | "inapplicable_recurrence_statistic";
+    | "inapplicable_recurrence_statistic"
+    | "unsupported_topic_evidence";
 };
 
 export type ConversationActionPlan = {
@@ -512,6 +513,16 @@ function validateAction(
 ): RejectedConversationAction["reason"] | undefined {
   if (action.source === "llm" && action.confidence < 0.65) return "low_confidence";
   if (action.source === "llm" && action.evidence.length === 0) return "missing_evidence";
+  if (
+    action.type === "answer_question" &&
+    action.topic === "order" &&
+    !hasActualOrderEvidence(action.evidence.join(" "))
+  ) {
+    // `mua` can describe a concern (for example dependency or value), not an
+    // order. The LLM still owns the intent; this only rejects a structured
+    // order action that has no evidence about an actual order or policy.
+    return "unsupported_topic_evidence";
+  }
   if (action.type === "select_quantity") {
     if (![1, 2, 3, 4, 5].includes(action.quantity)) return "unsupported_quantity";
     const trustedLinguisticSelection =
@@ -541,6 +552,13 @@ function validateAction(
     return "invalid_fact";
   }
   return undefined;
+}
+
+function hasActualOrderEvidence(value: string): boolean {
+  const text = normalize(value);
+  return /\b(?:don|don hang|ma don|ma van don|van don|tracking|cod|giao|ship|van chuyen|nhan hang|kiem hang|huy don|doi hang|tra hang|hoan tien|hoa don|vat|dia chi|sdt|so dien thoai|nguoi nhan)\b/.test(
+    text,
+  );
 }
 
 function trustedLlmPurchaseQuantity(input: {

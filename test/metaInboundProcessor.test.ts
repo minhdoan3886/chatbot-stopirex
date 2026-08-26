@@ -1592,6 +1592,92 @@ test("Question Coverage Gate chấp nhận câu LLM diễn đạt lại thời �
   );
 });
 
+test("LLM-first giữ phản hồi price objection và không nối CTA chọn số lượng", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        intent: "price_objection",
+        skill: "pricing-objection",
+        topic: "price",
+        asksDirectAnswer: true,
+        confidence: 0.98,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "price",
+            confidence: 0.98,
+            evidence: ["giá hơi cao", "ngoài siêu thị lăn nách có mấy chục nghìn"],
+          },
+        ],
+        knowledgeIds: ["product-comparison-traditional-rollon"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Dạ em hiểu băn khoăn của mình. Stopirex là dòng ngăn tiết mồ hôi chuyên sâu, khác với lăn khử mùi hằng ngày chủ yếu xử lý mùi; sau giai đoạn đầu thường dùng giãn cách 2–3 ngày/lần ạ.",
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "llm-first-price-objection",
+    text: "Lọ bé tí thế này mà giá hơi cao nhỉ, anh thấy ngoài siêu thị lăn nách có mấy chục nghìn thôi",
+  });
+
+  assert.match(response.reply, /ngăn tiết mồ hôi chuyên sâu/iu);
+  assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận|mấy lọ|combo/iu);
+  assert.equal(response.state.botPaused, false);
+});
+
+test("LLM-first bỏ action order suy diễn từ chữ mua trong câu hỏi phụ thuộc", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        intent: "product_effect",
+        skill: "direct-answer",
+        topic: "effectiveness",
+        asksDirectAnswer: true,
+        confidence: 0.98,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "effectiveness",
+            confidence: 0.98,
+            evidence: ["ngừng dùng thì có bị hôi lại không"],
+          },
+          {
+            type: "answer_question",
+            topic: "order",
+            confidence: 0.96,
+            evidence: ["bắt anh phải mua dùng phụ thuộc cả đời"],
+          },
+        ],
+        knowledgeIds: ["effectiveness-usage-journey"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Dạ không bắt mình phải mua dùng phụ thuộc cả đời ạ. Stopirex hỗ trợ kiểm soát mồ hôi và mùi khi dùng duy trì đúng hướng dẫn; khi ngừng dùng, tình trạng có thể xuất hiện lại vì sản phẩm không loại bỏ tuyến mồ hôi.",
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "llm-first-dependency-question",
+    text: "Thế ngừng dùng thì có bị hôi lại không? Hay bắt anh phải mua dùng phụ thuộc cả đời?",
+  });
+
+  assert.match(response.reply, /không bắt.*phụ thuộc cả đời/isu);
+  assert.match(response.reply, /khi ngừng dùng.*có thể xuất hiện lại/isu);
+  assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận|mấy lọ|combo/iu);
+  assert.deepEqual(response.state.decisionTrace?.actionPlan?.answerTopics, ["effectiveness"]);
+  assert.equal(response.state.botPaused, false);
+});
+
 test("Grounding guard bỏ nguồn gần nghĩa sai và dùng nguồn chính xác về tắm xà phòng", async () => {
   const chat = new DemoChatService();
   const llm = new CodexLlmBridge({

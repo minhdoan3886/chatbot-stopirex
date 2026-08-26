@@ -484,11 +484,10 @@ export class CodexLlmBridge {
       actions: input.actions ?? [],
       hasUnsupportedQuestions: Boolean(input.unsupportedQuestions?.length),
     });
-    const reply = appendMissingConversationQuestion(
-      shapedReply,
-      input.baseReplies ?? [input.baseReply],
-      input.state,
-    );
+    // The interpreted LLM draft owns conversational direction. Deterministic
+    // workflow copy may supply executed state, but must not append its own CTA
+    // or force the customer back into an earlier funnel step.
+    const reply = shapedReply;
     try {
       this.claims.assertSafe(reply);
       const groundedKnowledgeFirst =
@@ -512,7 +511,7 @@ export class CodexLlmBridge {
       // Validate claims about executed state before checking conversational
       // wording so false order/handoff assertions keep their precise reason.
       assertActionClaimsGrounded(input.state, reply);
-      assertConversationDirectionPreserved(input.baseReply, reply, input.state);
+      assertInterpretedDirectionGrounded(reply, input.actions ?? [], input.state);
       const citedKnowledge = (input.knowledge ?? [])
         .filter((entity) => input.knowledgeIds?.includes(entity.id))
         .map((entity) => entity.content)
@@ -712,6 +711,25 @@ export class CodexLlmBridge {
     }
     this.providerHealth[input.provider] = next;
   }
+}
+
+function assertInterpretedDirectionGrounded(
+  generatedReply: string,
+  actions: readonly ConversationAction[],
+  state: DemoChatState,
+): void {
+  const asksForQuantity = extractQuestions(generatedReply).some(
+    (question) => questionTopic(question) === "quantity",
+  );
+  if (!asksForQuantity) return;
+  const orderDirectionApproved = actions.some(
+    (action) => action.type === "select_quantity" || action.type === "continue_order_collection",
+  );
+  const orderPaused = actions.some((action) => action.type === "pause_order") || state.orderFlowStatus === "paused";
+  if (orderDirectionApproved && !orderPaused) return;
+  const error = new Error("LLM tự chuyển sang chốt số lượng khi action plan chưa cho phép");
+  error.name = "ConversationDirectionError";
+  throw error;
 }
 
 type LlmProviderAttempt = {
@@ -1240,6 +1258,8 @@ function buildInterpretPrompt(input: {
     `Nguyên tắc giọng nhân viên tư vấn: ${compactCustomerAdvisorVoiceForPrompt()}`,
     "Skill chỉ là nhãn nội bộ, không được nhắc tên skill hoặc quy trình trong draftReply.",
     "Kỷ luật Pipeline 6 bước: chào/phân loại → tư vấn → báo giá → xử lý băn khoăn → chốt và thu thông tin → xác nhận/tạo đơn/vận đơn. Không ép khách đi tuần tự nếu họ đang hỏi việc khác; trả lời ý hiện tại trước.",
+    "LLM sở hữu hướng hội thoại và CTA của lượt hiện tại. Workflow chỉ thực thi action đã được chấp nhận, không được ép giữ câu hỏi/CTA của lượt trước. Với price_objection hoặc efficacy_objection, không hỏi chọn số lượng trừ khi MESSAGE đồng thời có quyết định mua rõ ràng.",
+    "Từ 'mua' trong câu hoài nghi như 'bắt phải mua dùng phụ thuộc cả đời' không phải dữ liệu đơn hàng. Phân loại product_effect/effectiveness và chỉ tạo answer_question(effectiveness); topic order chỉ dùng khi khách thực sự hỏi đơn, giao nhận, hủy/đổi/trả, thanh toán, hóa đơn hoặc dữ liệu người nhận.",
     "Không được tự phê duyệt giảm giá, freeship, hoàn tiền, đổi trả hoặc tạo đơn. Chỉ phân loại đúng ý định để Action Executor xử lý.",
     "Số lượng 1–5 lọ là mức hệ thống có thể xử lý; nếu khách yêu cầu từ 6 lọ trở lên, tạo handoff_to_human và không tiếp tục thu thông tin đơn.",
     "Ưu tiên ý khách đang muốn nói ở lượt hiện tại và dùng lịch sử để hiểu tiếng địa phương, từ viết tắt, sai chính tả hoặc nói tiếp ý trước. Không đặt needsClarification chỉ vì cách viết không chuẩn nếu toàn câu vẫn chỉ có một cách hiểu hợp lý.",
@@ -1294,6 +1314,8 @@ function buildInterpretPrompt(input: {
     "Khi xác nhận chính hãng, hãy nói sản phẩm bên em cung cấp là hàng chính hãng và hướng dẫn đối chiếu bao bì, tem, tên sản phẩm, thông tin người gửi. Không nói 'đơn đặt trực tiếp được gửi đúng hàng chính hãng' hoặc câu khiến khách hiểu chỉ mua trực tiếp mới là hàng thật; không phán đoán hàng ở kênh khác khi chưa kiểm tra.",
     "Chỉ dùng luồng sự cố hàng giả khi khách nói rõ mình đã mua/đã nhận một sản phẩm đang nghi giả.",
     "Ví dụ: 'đắt quá nhưng để tôi cân nhắc' => intent price_objection.",
+    "Ví dụ: 'lọ bé mà giá cao, ngoài siêu thị lăn nách chỉ mấy chục nghìn' => price_objection, topic price, skill pricing-objection, answer_question(price); ghi nhận băn khoăn và giải thích khác biệt bằng Knowledge, không hỏi chọn lọ/combo.",
+    "Ví dụ: 'ngừng dùng có bị hôi lại không, hay bắt phải mua dùng phụ thuộc cả đời?' => product_effect, topic effectiveness, answer_question(effectiveness); giải thích tác dụng cần duy trì và ngừng thì mồ hôi/mùi có thể quay lại, không tạo action order và không chốt sale.",
     "Ví dụ: 'freeship không em', 'bớt giá được không' hoặc 'bao ship nhé' => intent negotiation, asksDirectAnswer true.",
     "Ví dụ: 'sao thấy có chương trình giảm 75k phải không shop' => intent promotion_inquiry, topic promotion, discountAmountVnd 75000, asksDirectAnswer true. Đây là câu hỏi xác minh một chương trình cụ thể, không phải dữ liệu địa chỉ và không được tự xác nhận nếu kho tri thức chưa có chương trình đó.",
     "Nếu khách hỏi một dữ kiện, chính sách, chương trình hoặc cam kết cụ thể nhưng không thuộc bất kỳ nhóm tri thức đã định nghĩa nào, dùng intent knowledge_unknown và asksDirectAnswer=true. Không dùng consultation để kéo khách sang câu hỏi bán hàng khác; hệ thống sẽ chuyển người xác minh.",
@@ -1363,6 +1385,7 @@ function buildCompactInterpretPrompt(input: {
   return [
     "Bạn là Routing Agent kiêm soạn câu trả lời cho chatbot Stopirex. Chỉ xuất một JSON object hợp lệ, không markdown và không dùng công cụ.",
     "Mục tiêu: hiểu TẤT CẢ ý trong tin hiện tại bằng lịch sử + state; trả lời câu hỏi hiện tại trước; sau đó mới ghi nhận mua hàng hoặc tiếp tục đơn.",
+    "LLM sở hữu hướng hội thoại và CTA của lượt hiện tại. Workflow chỉ thực thi action đã được chấp nhận, không ép giữ câu hỏi/CTA cũ. Với price_objection hoặc efficacy_objection, cấm hỏi chọn số lượng nếu MESSAGE không đồng thời xác nhận mua rõ ràng.",
     `Skill hợp lệ: ${compactSkillCatalogForPrompt()}`,
     `Giọng tư vấn: ${compactCustomerAdvisorVoiceForPrompt()} Gọi khách là 'mình', không dùng 'bạn'. Tối đa 240 ký tự, 1–2 đoạn, không quá một câu hỏi; không lộ thuật ngữ nội bộ.`,
     "Mọi handoff trong draftReply phải nói 'em chuyển bộ phận liên quan'; cấm gọi tên nhân viên, sale online, CSKH hoặc bộ phận kinh doanh trong câu gửi khách.",
@@ -1372,6 +1395,7 @@ function buildCompactInterpretPrompt(input: {
     "Đếm từng mệnh đề hỏi độc lập: mỗi mệnh đề phải có một answer_question hoặc một unsupportedQuestions tương ứng. draftReply xử lý đủ các câu hỏi trước mọi hành động mua/thu đơn.",
     "Hiểu tiếng địa phương và viết tắt theo toàn câu: 'xài tnao' là hỏi cách dùng, 'bết k' là hỏi cảm giác sau khi bôi, 'k đỡ/k khỏi' là chưa hiệu quả, 'hoàn xèng' là hoàn tiền. Nếu KNOWLEDGE có câu trả lời thì phải trả lời, không handoff.",
     "Cụm 'mua/1 chai mà không đỡ có được hoàn tiền không' là câu hỏi điều kiện chính sách, không phải quyết định mua. Tạo answer_question(topic order), không tạo select_quantity hoặc continue_order_collection. Câu đa ý có cách dùng + bết dính + hoàn tiền phải có answer_question usage cho từng ý dùng/bết và answer_question order cho hoàn tiền.",
+    "Từ 'mua' trong câu hoài nghi như 'bắt phải mua dùng phụ thuộc cả đời' KHÔNG phải chủ đề đơn hàng. Dùng product_effect/effectiveness và chỉ answer_question(effectiveness). Chỉ dùng topic order khi evidence nói thật về đơn, giao nhận, hủy/đổi/trả, thanh toán, hóa đơn hoặc dữ liệu người nhận.",
     "MESSAGE nhiều dòng là các tin liên tiếp: xử lý từng dòng như một ý độc lập rồi hợp nhất. Câu hỏi/xác nhận kiểu hội thoại không có dấu '?' (ví dụ '1 ngày chỉ lăn 1 lần ạ') vẫn phải có answer_question phù hợp.",
     "Ưu tiên hội thoại nối tiếp: nếu STATE.pendingAction khác null và MESSAGE là lời đồng ý/yêu cầu thực hiện đề nghị ở lượt bot gần nhất, phải xử lý pendingAction đó trước mọi selectedQuantity, orderMissing, pipeline hoặc trạng thái đơn cũ. Ví dụ pendingAction=send_usage_guidance và khách nói 'gửi cho chị' thì bắt buộc dùng usage_guidance + replyTo offer_usage_guidance + affirmation=true + needsClarification=false; cấm order_support và cấm tiếp tục thu đơn.",
     "Giữ đối tượng sử dụng đã xác nhận qua HISTORY + STATE.customerProfile: nếu khách đã nói đang hỏi cho con/bé và đã có tuổi, câu nối tiếp vẫn áp dụng cho bé nhưng topic/intent/actions phải theo câu hỏi MỚI. Cấm đổi topic thành child_age hoặc lặp 'bé N tuổi dùng được' nếu MESSAGE không hỏi lại tuổi/khả năng trẻ được dùng. Trả lời theo KNOWLEDGE, needsClarification=false; cấm hỏi lại bé/mang thai/cho con bú/da nhạy cảm nếu MESSAGE không nêu đối tượng mới hay mâu thuẫn thật.",
@@ -1463,6 +1487,7 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
     add(
       "'245k giờ lên 285k' → price_change + asksDirectAnswer; không gửi bảng giá thay cho lời giải thích.",
       "'giảm 75k phải không?' → promotion_inquiry; không xác nhận nếu knowledge chưa có.",
+      "'lọ bé mà giá cao, ngoài siêu thị lăn nách chỉ mấy chục nghìn' → price_objection + answer_question(price); giải thích khác biệt theo KNOWLEDGE, cấm hỏi chọn lọ/combo nếu khách chưa xác nhận mua.",
     );
   }
   if (/\b(?:dung|boi|lan|buoi|sang|toi|may lan|bao lau|thang|nuoc hoa)\b/.test(text)) {
@@ -1471,11 +1496,12 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
       "'một lọ dùng mấy tháng?' → usage_frequency; trả mốc knowledge trước, không tiếp tục combo.",
     );
   }
-  if (/\b(?:hieu qua|tac dung|mo hoi|mui|uot|gym|the thao|dut diem|tam thoi|botox|cat tuyen)\b/.test(text)) {
+  if (/\b(?:hieu qua|tac dung|mo hoi|mui|uot|gym|the thao|dut diem|tam thoi|botox|cat tuyen|ngung dung|phu thuoc)\b/.test(text)) {
     add(
       "'tập gym ra mồ hôi có bị trôi tác dụng không?' → product_effect; mở đầu 'Dạ không ạ', giải thích đúng cơ chế dùng từ tối.",
       "'chữa dứt điểm hay chỉ ngăn tạm thời?' → product_effect + asksDirectAnswer; đây là câu hỏi hai lựa chọn, không mở đầu 'Dạ có'. Chỉ trả lời theo knowledge.",
       "'đã cắt tuyến/tiêm botox nhưng bị lại, Stopirex có ăn thua không?' → product_comparison + asksDirectAnswer; trả lời đúng phép so sánh, không dùng mẫu công dụng chung.",
+      "'ngừng dùng có bị hôi lại không, hay bắt phải mua dùng phụ thuộc cả đời?' → product_effect + answer_question(effectiveness); không tạo order, không hỏi mua/chọn số lượng.",
     );
   }
   if (
@@ -1892,30 +1918,6 @@ export function mergeDraftWithExecutedState(input: {
     rawContinuation && orderStart >= 0 ? rawContinuation.slice(orderStart).trim() : rawContinuation;
   if (!continuation) return input.draftReply.trim();
   return `${input.draftReply.trim()}\n\n${continuation}`;
-}
-
-function appendMissingConversationQuestion(
-  draftReply: string,
-  baseReplies: readonly string[],
-  state: DemoChatState,
-): string {
-  if (/[?？]/u.test(draftReply)) return draftReply;
-  for (const reply of [...baseReplies].reverse()) {
-    for (const line of reply.split("\n").reverse()) {
-      const questionEnd = Math.max(line.lastIndexOf("?"), line.lastIndexOf("？"));
-      if (questionEnd < 0) continue;
-      const beforeQuestion = line.slice(0, questionEnd + 1);
-      const sentenceBoundary = Math.max(
-        beforeQuestion.lastIndexOf(". "),
-        beforeQuestion.lastIndexOf("! "),
-        beforeQuestion.lastIndexOf("。 "),
-      );
-      const question = beforeQuestion.slice(sentenceBoundary >= 0 ? sentenceBoundary + 2 : 0).trim();
-      if (isResolvedAudienceClarification(question, state)) continue;
-      if (question) return `${draftReply.trim()}\n\n${question}`;
-    }
-  }
-  return draftReply;
 }
 
 function isResolvedAudienceClarification(question: string, state: DemoChatState): boolean {

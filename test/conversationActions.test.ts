@@ -178,6 +178,43 @@ test("LLM được quyền hiểu tiếng địa phương và lỗi chính tả 
   );
 });
 
+test("LLM-first loại topic order không có bằng chứng đơn hàng trong câu hỏi phụ thuộc", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "Thế ngừng dùng thì có bị hôi lại không? Hay bắt anh phải mua dùng phụ thuộc cả đời?",
+    semantic: semantic({
+      intent: "product_effect",
+      topic: "effectiveness",
+      asksDirectAnswer: true,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "effectiveness",
+          confidence: 0.98,
+          evidence: ["ngừng dùng thì có bị hôi lại không"],
+          source: "llm",
+        },
+        {
+          type: "answer_question",
+          topic: "order",
+          confidence: 0.96,
+          evidence: ["bắt anh phải mua dùng phụ thuộc cả đời"],
+          source: "llm",
+        },
+      ],
+    }),
+    exactIntent: "product_effect",
+    optOut: false,
+    collectingOrder: false,
+  });
+
+  assert.deepEqual(plan.answerTopics, ["effectiveness"]);
+  assert.ok(
+    plan.rejected.some(
+      (item) => item.action.type === "answer_question" && item.reason === "unsupported_topic_evidence",
+    ),
+  );
+});
+
 test("LLM không được tạo đơn khi evidence không nằm trong lời khách", () => {
   const plan = reconcileConversationActions({
     customerMessage: "Tư vấn giúp mình loại nào hợp",

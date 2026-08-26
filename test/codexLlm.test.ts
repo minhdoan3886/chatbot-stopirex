@@ -909,7 +909,7 @@ test("action grounding không để câu điều kiện khác che tuyên bố đ
   assert.equal(result.reply, baseReply);
 });
 
-test("direction guard chặn LLM thay câu hỏi tình trạng bằng câu chốt số lượng", () => {
+test("direction guard chặn LLM tự chốt số lượng khi action plan không cho phép", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const baseReply = "Dạ em hiểu ạ. Tình trạng của mình có kèm mùi khó chịu không ạ?";
   const result = bridge.adoptInterpretedDraft({
@@ -922,6 +922,43 @@ test("direction guard chặn LLM thay câu hỏi tình trạng bằng câu chố
   assert.equal(result.status, "fallback");
   assert.equal(result.reason, "direction_guard");
   assert.equal(result.reply, baseReply);
+});
+
+test("LLM-first không bị ép giữ CTA chọn số lượng của workflow khi xử lý băn khoăn", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage:
+      "Lọ bé tí thế này mà giá hơi cao nhỉ, anh thấy ngoài siêu thị lăn nách có mấy chục nghìn thôi",
+    draftReply:
+      "Dạ em hiểu băn khoăn của mình. Stopirex thuộc dòng ngăn tiết mồ hôi chuyên sâu và sau giai đoạn đầu thường dùng giãn cách 2–3 ngày/lần, khác với lăn khử mùi hằng ngày ạ.",
+    baseReply:
+      "Dạ em hiểu băn khoăn của mình ạ. Stopirex là dòng ngăn tiết mồ hôi chuyên sâu. Mình muốn chọn mấy lọ ạ?",
+    state,
+    actions: [
+      {
+        type: "answer_question",
+        topic: "price",
+        confidence: 0.98,
+        evidence: ["giá hơi cao", "ngoài siêu thị lăn nách có mấy chục nghìn"],
+        source: "llm",
+      },
+    ],
+    knowledge: [
+      {
+        id: "comparison",
+        title: "So sánh lăn thường",
+        content:
+          "Stopirex thuộc dòng ngăn tiết mồ hôi chuyên sâu; sau giai đoạn đầu thường dùng giãn cách 2–3 ngày/lần, khác với lăn khử mùi hằng ngày.",
+      },
+    ],
+    knowledgeIds: ["comparison"],
+    groundingConfidence: 0.98,
+    knowledgeGroundingRequired: true,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft");
+  assert.doesNotMatch(result.reply, /mấy lọ|combo/iu);
 });
 
 test("single-pass chỉ nhận câu trả lời có knowledge id thật đã được truy xuất", () => {
@@ -950,7 +987,7 @@ test("single-pass chỉ nhận câu trả lời có knowledge id thật đã đ�
   assert.equal(fabricated.reason, "knowledge_grounding_guard:unknown_knowledge_id");
 });
 
-test("single-pass có Knowledge vẫn không được bỏ câu hỏi nối tiếp của workflow", () => {
+test("single-pass có Knowledge được quyền bỏ CTA nối tiếp không còn phù hợp", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const baseReply =
     "Dạ 1 lọ 285.000đ + 30.000đ phí giao ạ. Để em tư vấn sát hơn, mình khó chịu vì mồ hôi, mùi hay cả hai tình trạng ạ?";
@@ -973,7 +1010,8 @@ test("single-pass có Knowledge vẫn không được bỏ câu hỏi nối ti�
 
   assert.equal(result.status, "enhanced");
   assert.equal(result.reason, "single_pass_draft");
-  assert.match(result.reply, /mình khó chịu vì mồ hôi, mùi hay cả hai/iu);
+  assert.equal(result.reply, "Dạ 1 lọ 285.000đ + 30.000đ phí giao ạ.");
+  assert.doesNotMatch(result.reply, /mình khó chịu vì mồ hôi, mùi hay cả hai/iu);
 });
 
 test("LLM-first giữ câu grounded đúng dù base regex đang trả sai chủ đề", () => {

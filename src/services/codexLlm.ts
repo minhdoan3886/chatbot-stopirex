@@ -49,6 +49,13 @@ export type CodexInterpretResult = SemanticUnderstanding & {
   provider: LlmProviderMode;
 };
 
+export type OrderAddressExtractionResult = {
+  fields: Record<string, string>;
+  status: "extracted" | "fallback" | "unavailable";
+  latencyMs: number;
+  reason?: string;
+};
+
 export function repairMissingKnowledgeCitations(
   interpreted: CodexInterpretResult,
   candidateIds: readonly string[],
@@ -132,7 +139,6 @@ export function requiresKnowledgeGrounding(intent: CustomerIntent | undefined): 
       "usage_frequency",
       "safety",
       "ineffective",
-      "order_support",
       "knowledge_unknown",
     ].includes(intent),
   );
@@ -431,6 +437,31 @@ export class CodexLlmBridge {
       return this.interpretResult(understanding, "interpreted", startedAt);
     } catch (error) {
       return this.interpretResult({ slots: {} }, "fallback", startedAt, llmFailureReason(error));
+    }
+  }
+
+  async extractOrderAddress(input: {
+    customerMessage: string;
+    state: DemoChatState;
+  }): Promise<OrderAddressExtractionResult> {
+    const startedAt = Date.now();
+    if (!this.enabled) {
+      return { fields: {}, status: "unavailable", latencyMs: 0, reason: "disabled" };
+    }
+    try {
+      const raw = (await this.run(buildOrderAddressExtractionPrompt(input), "interpret")).trim();
+      const fields = parseOrderAddressExtraction(raw);
+      if (Object.keys(fields).length === 0) {
+        return { fields, status: "fallback", latencyMs: Date.now() - startedAt, reason: "empty_fields" };
+      }
+      return { fields, status: "extracted", latencyMs: Date.now() - startedAt };
+    } catch (error) {
+      return {
+        fields: {},
+        status: "fallback",
+        latencyMs: Date.now() - startedAt,
+        reason: llmFailureReason(error),
+      };
     }
   }
 
@@ -1261,6 +1292,23 @@ function buildOpeningPrompt(input: {
   ].join("\n");
 }
 
+function buildOrderAddressExtractionPrompt(input: {
+  customerMessage: string;
+  state: DemoChatState;
+}): string {
+  return [
+    "<order_address_extraction>",
+    "Bạn chỉ làm nhiệm vụ trích xuất địa chỉ giao hàng Việt Nam. Không trả lời hội thoại.",
+    "Chỉ xuất một JSON object với đúng bốn khóa street, ward, district, province. Giá trị chưa xác định là null.",
+    "Chuẩn hóa viết tắt và lỗi gõ chắc chắn: sn thành Số nhà; hnoi/hn thành Hà Nội; tphcm/hcm/sg thành Hồ Chí Minh.",
+    "Được thêm loại hành chính Phường/Xã/Thị trấn và Quận/Huyện/Thị xã khi địa danh trong tin chỉ có một cách hiểu hợp lý. Không bịa số nhà, tên đường hoặc địa danh.",
+    "Nếu khách ghi một chuỗi liền, vẫn tách theo kiến thức địa lý Việt Nam. Ví dụ 'Sn 28 ngõ 30 văn phú hà đông hnoi' phải ra street='Số nhà 28 ngõ 30', ward='Phường Văn Phú', district='Quận Hà Đông', province='Hà Nội'.",
+    `Tin cần trích xuất: ${JSON.stringify(input.customerMessage)}`,
+    `Các trường đơn còn thiếu trước lượt này: ${JSON.stringify(input.state.orderMissing)}`,
+    "</order_address_extraction>",
+  ].join("\n");
+}
+
 function openingStyleProfile(styleSeed: string | undefined): string {
   const profiles = [
     "ấm áp và gần gũi; lời chào nhẹ nhàng, câu hỏi giống một người tư vấn đang lắng nghe",
@@ -1763,6 +1811,26 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
 
 export function parseSemanticSlots(raw: string): ConsultationSlots {
   return parseSemanticUnderstanding(raw).slots;
+}
+
+export function parseOrderAddressExtraction(raw: string): Record<string, string> {
+  const cleaned = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("Không có JSON địa chỉ");
+  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+  const fields: Record<string, string> = {};
+  for (const field of ["street", "ward", "district", "province"] as const) {
+    const value = parsed[field];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.length > 100) continue;
+    fields[field] = trimmed;
+  }
+  return fields;
 }
 
 export function parseSemanticUnderstanding(raw: string): SemanticUnderstanding {

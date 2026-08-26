@@ -1134,6 +1134,81 @@ test("Meta brain vẫn cho toàn bộ tin chứa SĐT và địa chỉ qua LLM r
   assert.doesNotMatch(response.reply, /chưa hiểu|chưa nghe rõ/iu);
 });
 
+test("Meta brain yêu cầu LLM tách lại địa chỉ thô trước khi kiểm tra cấp hành chính", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "meta-llm-address-refinement";
+  chat.chat(sessionId, "C đặt 2 lọ nhé", {
+    intent: "buying",
+    topic: "order",
+    confidence: 0.99,
+    needsClarification: false,
+    slots: {},
+    actions: [
+      { type: "select_quantity", quantity: 2, confidence: 0.99, evidence: ["đặt 2 lọ"], source: "llm" },
+      { type: "continue_order_collection", confidence: 0.99, evidence: ["đặt 2 lọ"], source: "llm" },
+    ],
+  });
+  let extractionCalls = 0;
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      if (prompt.includes("<order_address_extraction>")) {
+        extractionCalls += 1;
+        return JSON.stringify({
+          street: "Số nhà 28 ngõ 30",
+          ward: "Phường Văn Phú",
+          district: "Quận Hà Đông",
+          province: "Hà Nội",
+        });
+      }
+      return JSON.stringify({
+        intent: "order_support",
+        skill: "order-closing",
+        topic: "order",
+        confidence: 0.98,
+        needsClarification: false,
+        actions: [
+          {
+            type: "update_order",
+            fields: {
+              recipientName: "Hong Nhung",
+              phone: "0918626684",
+              legacyAddress: "28 ngõ 30 văn phú hà đông hnoi",
+            },
+            confidence: 0.98,
+            evidence: ["Hong Nhung 0918626684 28 ngõ 30 văn phú hà đông hnoi"],
+          },
+          {
+            type: "continue_order_collection",
+            confidence: 0.98,
+            evidence: ["28 ngõ 30 văn phú hà đông hnoi"],
+          },
+        ],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply: "Dạ em đã hiểu địa chỉ giao hàng của mình và sẽ xác nhận lại đầy đủ ạ.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId,
+    text: "Hong Nhung 0918626684 28 ngõ 30 văn phú hà đông hnoi",
+  });
+
+  assert.equal(extractionCalls, 1);
+  assert.match(
+    response.state.orderDraft?.legacyAddress ?? "",
+    /Số nhà 28 ngõ 30.*Phường Văn Phú.*Quận Hà Đông.*Hà Nội/isu,
+  );
+  assert.deepEqual(response.state.orderMissing, []);
+  assert.match(response.reply, /Hong Nhung.*0918626684.*Phường Văn Phú.*Quận Hà Đông.*Hà Nội/isu);
+  assert.match(response.reply, /ĐỒNG Ý/iu);
+  assert.doesNotMatch(response.reply, /còn thiếu phường|bổ sung.*phường|tình trạng.*mồ hôi/isu);
+});
+
 test("LLM chuẩn hóa tiếng tự nhiên thành truy vấn Knowledge rồi hệ thống truy xuất lại", async () => {
   const chat = new DemoChatService();
   const prompts: string[] = [];

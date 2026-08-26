@@ -655,11 +655,7 @@ function groundedOrderUpdateFields(
         if (!provinceAlias || normalize(value) !== normalize(provinceAlias)) return false;
       } else if (field === "street" && !appearsInMessage) {
         const streetCore = normalizedValue.replace(/^so nha\s+/u, "");
-        if (
-          !streetCore ||
-          (!normalizedMessage.includes(`sn ${streetCore}`) &&
-            !normalizedMessage.includes(`so nha ${streetCore}`))
-        ) {
+        if (!streetCore || !normalizedMessage.includes(streetCore)) {
           return false;
         }
       } else if ((field === "ward" || field === "district") && !appearsInMessage) {

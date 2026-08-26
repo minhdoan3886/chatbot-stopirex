@@ -5,6 +5,7 @@ import {
   CodexLlmBridge,
   mergeDraftWithExecutedState,
   parseCodexJsonl,
+  parseOrderAddressExtraction,
   parseSemanticSlots,
   parseSemanticUnderstanding,
   repairMissingKnowledgeCitations,
@@ -332,6 +333,19 @@ test("parser giữ truy vấn Knowledge do LLM chuẩn hóa và loại PII", () 
     "an toàn cho da nhạy cảm",
     "kiểm tra hàng chính hãng",
   ]);
+});
+
+test("parser địa chỉ giữ đúng bốn trường cấu trúc và bỏ giá trị ngoài schema", () => {
+  const fields = parseOrderAddressExtraction(
+    '```json\n{"street":"Số nhà 28 ngõ 30","ward":"Phường Văn Phú","district":"Quận Hà Đông","province":"Hà Nội","phone":"0918626684"}\n```',
+  );
+
+  assert.deepEqual(fields, {
+    street: "Số nhà 28 ngõ 30",
+    ward: "Phường Văn Phú",
+    district: "Quận Hà Đông",
+    province: "Hà Nội",
+  });
 });
 
 test("cấu hình auto ưu tiên OpenAI API khi có key", () => {

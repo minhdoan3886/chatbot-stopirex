@@ -145,6 +145,32 @@ export class MetaChatBrain {
           knowledgeRetry = true;
         }
       }
+      const rawAddressAction = rawLlmResult.actions?.find(
+        (action) => action.type === "update_order" && needsStructuredAddressExtraction(action.fields),
+      );
+      if (rawAddressAction?.type === "update_order") {
+        const extraction = await this.llm.extractOrderAddress({
+          customerMessage: input.text,
+          state: before,
+        });
+        this.logger?.log(extraction.status === "extracted" ? "info" : "warn", "llm_order_address_extraction", {
+          ...(input.traceId ? { traceId: input.traceId } : {}),
+          status: extraction.status,
+          reason: extraction.reason,
+          latencyMs: extraction.latencyMs,
+          extractedFields: Object.keys(extraction.fields),
+        });
+        if (extraction.status === "extracted") {
+          rawLlmResult = {
+            ...rawLlmResult,
+            actions: (rawLlmResult.actions ?? []).map((action) =>
+              action.type === "update_order" && needsStructuredAddressExtraction(action.fields)
+                ? { ...action, fields: { ...action.fields, ...extraction.fields } }
+                : action,
+            ),
+          };
+        }
+      }
       const retrievedIds = new Set(knowledge.map((entity) => entity.id));
       const validCitations = (rawLlmResult.knowledgeIds ?? []).filter((id) => retrievedIds.has(id));
       const citationCandidates = rawLlmResult.draftReply
@@ -645,6 +671,13 @@ type QuestionCoverageAssessment = {
   requiredTopics: (RequiredAnswerTopic | SemanticTopic)[];
   missingTopics: (RequiredAnswerTopic | SemanticTopic)[];
 };
+
+function needsStructuredAddressExtraction(fields: Record<string, string>): boolean {
+  return Boolean(
+    fields.legacyAddress?.trim() &&
+      ["street", "ward", "district", "province"].some((field) => !fields[field]?.trim()),
+  );
+}
 
 function shouldOfferLlmPostcheckRevision(reason: string | undefined): boolean {
   if (!reason) return false;

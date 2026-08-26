@@ -873,6 +873,21 @@ test("single-pass không coi giả định chọn 1 lọ để hỏi hoàn tiề
   assert.equal(result.reply, draftReply);
 });
 
+test("single-pass không hiểu nhầm ghi nhận băn khoăn có nhắc 1 lọ là đã chốt đơn", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, model: "test-model" });
+  const draftReply =
+    "Dạ em ghi nhận băn khoăn của mình về giá 1 lọ. Điểm khác nằm ở cơ chế hỗ trợ kiểm soát mồ hôi thay vì chỉ che mùi tạm thời ạ.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "Lọ bé mà giá cao, ngoài siêu thị có mấy chục nghìn thôi",
+    draftReply,
+    baseReply: draftReply,
+    state,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft");
+});
+
 test("single-pass không được xin dữ liệu đơn khi action plan đang pause_order", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const answerAction = {

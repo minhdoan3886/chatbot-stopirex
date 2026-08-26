@@ -1631,6 +1631,53 @@ test("LLM-first giữ phản hồi price objection và không nối CTA chọn s
   assert.equal(response.state.botPaused, false);
 });
 
+test("hậu kiểm trả lỗi cho LLM sửa thay vì bẻ sang câu handoff chung chung", async () => {
+  const chat = new DemoChatService();
+  let calls = 0;
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (_prompt, purpose) => {
+      calls += 1;
+      if (purpose === "enhance") {
+        return "Dạ mình so sánh như vậy rất thực tế. Điểm khác nằm ở cơ chế hỗ trợ kiểm soát lượng mồ hôi, còn lăn khử mùi thông thường chủ yếu xử lý mùi hằng ngày ạ.";
+      }
+      return JSON.stringify({
+        intent: "price_objection",
+        skill: "pricing-objection",
+        topic: "price",
+        asksDirectAnswer: true,
+        confidence: 0.98,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "price",
+            confidence: 0.98,
+            evidence: ["giá cao", "ngoài siêu thị"],
+          },
+        ],
+        knowledgeIds: ["product-comparison-traditional-rollon"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Dạ em đã ghi nhận mình lấy 1 lọ. Stopirex khác lăn siêu thị ở cơ chế hỗ trợ kiểm soát mồ hôi ạ.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "llm-postcheck-revision",
+    text: "Lọ bé mà giá cao, ngoài siêu thị có mấy chục nghìn thôi",
+  });
+
+  assert.equal(calls, 2);
+  assert.match(response.reply, /so sánh.*thực tế.*cơ chế.*kiểm soát.*mồ hôi/isu);
+  assert.doesNotMatch(response.reply, /đã ghi nhận mình lấy|chuyển bộ phận|chưa có đủ thông tin/iu);
+  assert.equal(response.state.selectedQuantity, undefined);
+  assert.equal(response.state.botPaused, false);
+});
+
 test("LLM-first bỏ action order suy diễn từ chữ mua trong câu hỏi phụ thuộc", async () => {
   const chat = new DemoChatService();
   const llm = new CodexLlmBridge({

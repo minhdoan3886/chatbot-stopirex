@@ -3421,6 +3421,59 @@ test("thu đơn tích lũy tên và địa chỉ qua nhiều tin, chỉ hỏi l�
   assert.doesNotMatch(supplemented.reply, /chưa thấy thông tin|trong một tin nhắn/iu);
 });
 
+test("LLM trích xuất trọn tên SĐT và địa chỉ viết tắt rồi hệ thống xác nhận đơn", () => {
+  const chat = new DemoChatService();
+  const sessionId = "llm-structured-vietnamese-address";
+  chat.chat(sessionId, "C đặt 2 lọ nhé", {
+    intent: "buying",
+    topic: "order",
+    confidence: 0.99,
+    needsClarification: false,
+    slots: {},
+    actions: [
+      { type: "select_quantity", quantity: 2, confidence: 0.99, evidence: ["đặt 2 lọ"], source: "llm" },
+      { type: "continue_order_collection", confidence: 0.99, evidence: ["đặt 2 lọ"], source: "llm" },
+    ],
+  });
+
+  const message = "hong nhung Sn 28 ngõ 30 văn phú hà đông hnoi 0918626684";
+  const result = chat.chat(sessionId, message, {
+    intent: "order_support",
+    topic: "order",
+    confidence: 0.99,
+    needsClarification: false,
+    slots: {},
+    actions: [
+      {
+        type: "update_order",
+        fields: {
+          recipientName: "hong nhung",
+          phone: "0918626684",
+          street: "Số nhà 28 ngõ 30",
+          ward: "Phường Văn Phú",
+          district: "Quận Hà Đông",
+          province: "Hà Nội",
+        },
+        confidence: 0.99,
+        evidence: [message],
+        source: "llm",
+      },
+      { type: "continue_order_collection", confidence: 0.99, evidence: [message], source: "llm" },
+    ],
+  });
+
+  assert.equal(result.state.orderDraft?.recipientName, "Hong Nhung");
+  assert.equal(result.state.orderDraft?.phone, "0918626684");
+  assert.match(
+    result.state.orderDraft?.legacyAddress ?? "",
+    /Số nhà 28 ngõ 30.*Phường Văn Phú.*Quận Hà Đông.*Hà Nội/isu,
+  );
+  assert.deepEqual(result.state.orderMissing, []);
+  assert.match(result.reply, /Hong Nhung.*0918626684.*Phường Văn Phú.*Quận Hà Đông.*Hà Nội/isu);
+  assert.match(result.reply, /ĐỒNG Ý/iu);
+  assert.doesNotMatch(result.reply, /còn thiếu phường|tình trạng ra nhiều mồ hôi|chọn phương án/iu);
+});
+
 test("quantity mentioned in a price and shipping question does not commit an order", () => {
   const chat = new DemoChatService();
   const result = chat.chat(

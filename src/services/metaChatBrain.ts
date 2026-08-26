@@ -284,7 +284,7 @@ export class MetaChatBrain {
       });
       return base;
     }
-    const composed = this.llm.adoptInterpretedDraft({
+    const compositionInput = {
       customerMessage: input.text,
       ...(interpreted.draftReply ? { draftReply: interpreted.draftReply } : {}),
       baseReply: base.reply,
@@ -304,7 +304,8 @@ export class MetaChatBrain {
           interpreted.knowledgeIds?.length &&
           interpreted.actions?.some((action) => action.type === "answer_question"),
         ),
-    });
+    };
+    let composed = this.llm.adoptInterpretedDraft(compositionInput);
     this.logger?.log(composed.status === "enhanced" ? "debug" : "warn", "llm_composition", {
       ...(input.traceId ? { traceId: input.traceId } : {}),
       status: composed.status,
@@ -315,7 +316,28 @@ export class MetaChatBrain {
       selectedRoute: base.state.decisionTrace?.selectedRoute,
       selectedIntent: base.state.decisionTrace?.selectedIntent,
     });
-    const coverage = assessQuestionCoverage({
+    let postcheckRevisionUsed = false;
+    if (
+      composed.status === "fallback" &&
+      interpreted.draftReply?.trim() &&
+      shouldOfferLlmPostcheckRevision(composed.reason)
+    ) {
+      const revised = await this.llm.reviseRejectedDraft({
+        ...compositionInput,
+        draftReply: interpreted.draftReply,
+        rejectionReason: composed.reason ?? "postcheck_rejected",
+      });
+      postcheckRevisionUsed = true;
+      this.logger?.log(revised.status === "enhanced" ? "info" : "warn", "llm_postcheck_revision", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        trigger: composed.reason,
+        status: revised.status,
+        reason: revised.reason,
+        latencyMs: revised.latencyMs,
+      });
+      if (revised.status === "enhanced") composed = revised;
+    }
+    let coverage = assessQuestionCoverage({
       customerMessage: input.text,
       interpretationStatus,
       interpreted,
@@ -324,6 +346,33 @@ export class MetaChatBrain {
       orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
       candidateReply: composed.status === "enhanced" ? composed.reply : base.reply,
     });
+    if (!coverage.complete && interpreted.draftReply?.trim() && !postcheckRevisionUsed) {
+      const revised = await this.llm.reviseRejectedDraft({
+        ...compositionInput,
+        draftReply: composed.status === "enhanced" ? composed.reply : interpreted.draftReply,
+        rejectionReason: `question_coverage:${coverage.missingTopics.join(",") || coverage.reason}`,
+      });
+      this.logger?.log(revised.status === "enhanced" ? "info" : "warn", "llm_postcheck_revision", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        trigger: "question_coverage",
+        missingTopics: coverage.missingTopics,
+        status: revised.status,
+        reason: revised.reason,
+        latencyMs: revised.latencyMs,
+      });
+      if (revised.status === "enhanced") {
+        composed = revised;
+        coverage = assessQuestionCoverage({
+          customerMessage: input.text,
+          interpretationStatus,
+          interpreted,
+          compositionStatus: composed.status,
+          base,
+          orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
+          candidateReply: composed.reply,
+        });
+      }
+    }
     if (!coverage.complete) {
       const groundedBaseCoverage = assessQuestionCoverage({
         customerMessage: input.text,
@@ -597,6 +646,21 @@ type QuestionCoverageAssessment = {
   missingTopics: (RequiredAnswerTopic | SemanticTopic)[];
 };
 
+function shouldOfferLlmPostcheckRevision(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return (
+    reason === "claim_guard" ||
+    reason === "commerce_guard" ||
+    reason === "direction_guard" ||
+    reason === "critical_direction_guard" ||
+    reason === "advisor_voice_guard" ||
+    reason === "action_grounding_guard" ||
+    reason === "skill_shape_guard" ||
+    reason === "fact_guard" ||
+    reason.startsWith("knowledge_grounding_guard:")
+  );
+}
+
 export function extractCustomerQuestionClauses(value: string): string[] {
   const explicit = value
     .split(/[?？]+/u)
@@ -719,7 +783,7 @@ function assessQuestionCoverage(input: {
       ? Math.max(actionCoveredCount, groundedLlmDraft ? requiredSemanticTopics.length : 0)
       : 0;
   const semanticCoveredCount = requiredSemanticTopics.filter((topic) =>
-    replyCoversSemanticTopic(topic, input.candidateReply),
+    replyCoversSemanticTopic(topic, input.candidateReply, input.interpreted.intent),
   ).length;
   const factCoveredCount = requiredFactTopics.filter((topic) =>
     replyCoversRequiredAnswerTopic(topic, input.candidateReply),
@@ -789,11 +853,21 @@ function isShippingDestinationEvidence(value: string): boolean {
   );
 }
 
-function replyCoversSemanticTopic(topic: SemanticTopic, reply: string): boolean {
+function replyCoversSemanticTopic(
+  topic: SemanticTopic,
+  reply: string,
+  intent?: SemanticUnderstanding["intent"],
+): boolean {
   const text = reply.toLocaleLowerCase("vi-VN").normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/gu, "d");
   switch (topic) {
     case "price":
-      return /\b(?:gia|combo)\b|\b\d{2,3}(?:[. ]\d{3})+(?:d|đ)?\b/u.test(text);
+      return (
+        /\b(?:gia|combo|chi phi|dat|re)\b|\b\d{2,3}(?:[. ]\d{3})+(?:d|đ)?\b/u.test(text) ||
+        (intent === "price_objection" &&
+          /\b(?:khac|so voi|lan thuong|lan khu mui|kiem soat mo hoi|ngan tiet mo hoi|dung gian cach|gia tri)\b/u.test(
+            text,
+          ))
+      );
     case "promotion":
       return /\b(?:qua tang|tang|uu dai|khuyen mai|giam|tiet kiem)\b/u.test(text);
     case "shipping":

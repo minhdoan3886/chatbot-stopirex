@@ -6444,6 +6444,7 @@ function commitLegacyAddress(
 
 function canonicalizeLegacyAddress(value: string): string {
   const expanded = value
+    .replace(/^\s*(?:sn|số\s*nhà)\s+/iu, "Số nhà ")
     .replace(/(?:^|,\s*)HN\.?\s*$/iu, ", Hà Nội")
     .replace(
       /([^,])\s+(Hà Nội|TP\.?\s*HCM|TP\.?\s*Hồ Chí Minh|Hồ Chí Minh|Hải Phòng|Đà Nẵng|Cần Thơ|Huế|Tỉnh\s+[\p{L}\s]+)$/iu,

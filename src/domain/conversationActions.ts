@@ -627,10 +627,19 @@ function groundedOrderUpdateFields(
   fields: Record<string, string>,
   customerMessage: string,
 ): Record<string, string> {
-  const allowed = new Set(["recipientName", "phone", "legacyAddress", "deliveryNote"]);
+  const allowed = new Set([
+    "recipientName",
+    "phone",
+    "legacyAddress",
+    "deliveryNote",
+    "street",
+    "ward",
+    "district",
+    "province",
+  ]);
   const normalizedMessage = normalize(customerMessage);
   const digitGroups: string[] = [...(customerMessage.match(/\d+/gu) ?? [])];
-  return Object.fromEntries(
+  const grounded = Object.fromEntries(
     Object.entries(fields).filter(([field, rawValue]) => {
       if (!allowed.has(field)) return false;
       const value = rawValue.trim();
@@ -639,7 +648,29 @@ function groundedOrderUpdateFields(
         return /^0\d{9}$/u.test(value) && digitGroups.includes(value);
       }
       const normalizedValue = normalize(value);
-      if (!normalizedValue || !normalizedMessage.includes(normalizedValue)) return false;
+      if (!normalizedValue) return false;
+      const appearsInMessage = normalizedMessage.includes(normalizedValue);
+      if (field === "province" && !appearsInMessage) {
+        const provinceAlias = normalizedProvinceAlias(normalizedMessage);
+        if (!provinceAlias || normalize(value) !== normalize(provinceAlias)) return false;
+      } else if (field === "street" && !appearsInMessage) {
+        const streetCore = normalizedValue.replace(/^so nha\s+/u, "");
+        if (
+          !streetCore ||
+          (!normalizedMessage.includes(`sn ${streetCore}`) &&
+            !normalizedMessage.includes(`so nha ${streetCore}`))
+        ) {
+          return false;
+        }
+      } else if ((field === "ward" || field === "district") && !appearsInMessage) {
+        const administrativeCore = normalizedValue.replace(
+          /^(?:phuong|xa|thi tran|quan|huyen|thi xa)\s+/u,
+          "",
+        );
+        if (!administrativeCore || !normalizedMessage.includes(administrativeCore)) return false;
+      } else if (!appearsInMessage) {
+        return false;
+      }
       if (field === "recipientName") {
         return value.length <= 50 && /^[\p{L}\s]+$/u.test(value) && value.trim().split(/\s+/u).length <= 6;
       }
@@ -649,9 +680,40 @@ function groundedOrderUpdateFields(
           /\d|\b(?:duong|pho|ngo|thon|phuong|xa|quan|huyen|tinh|ha noi)\b/u.test(normalizedValue)
         );
       }
+      if (["street", "ward", "district", "province"].includes(field)) return value.length <= 100;
       return value.length <= 160;
     }),
   );
+  const structuredAddress = composeStructuredAddress(grounded, normalizedMessage);
+  if (structuredAddress) grounded.legacyAddress = structuredAddress;
+  delete grounded.street;
+  delete grounded.ward;
+  delete grounded.district;
+  delete grounded.province;
+  return grounded;
+}
+
+function composeStructuredAddress(fields: Record<string, string>, normalizedMessage: string): string | undefined {
+  const province = fields.province ?? normalizedProvinceAlias(normalizedMessage);
+  const parts = [
+    fields.street,
+    fields.ward ? administrativePart("Phường", fields.ward) : undefined,
+    fields.district ? administrativePart("Quận", fields.district) : undefined,
+    province,
+  ].filter((value): value is string => Boolean(value?.trim()));
+  return parts.length >= 2 ? parts.join(", ") : undefined;
+}
+
+function administrativePart(prefix: "Phường" | "Quận", value: string): string {
+  return /^(?:phường|xã|thị trấn|quận|huyện|thị xã)\b/iu.test(value.trim())
+    ? value.trim()
+    : `${prefix} ${value.trim()}`;
+}
+
+function normalizedProvinceAlias(normalizedMessage: string): string | undefined {
+  if (/\b(?:hnoi|hn|ha noi)\b/u.test(normalizedMessage)) return "Hà Nội";
+  if (/\b(?:sg|hcm|tphcm|tp hcm|ho chi minh)\b/u.test(normalizedMessage)) return "Hồ Chí Minh";
+  return undefined;
 }
 
 function inferredAnswerTopic(

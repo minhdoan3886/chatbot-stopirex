@@ -566,6 +566,35 @@ export class CodexLlmBridge {
     }
   }
 
+  async reviseRejectedDraft(input: {
+    customerMessage: string;
+    draftReply: string;
+    rejectionReason: string;
+    baseReply: string;
+    baseReplies?: readonly string[];
+    actions?: readonly ConversationAction[];
+    state: DemoChatState;
+    skillId?: ConversationSkillId;
+    knowledge?: readonly ApprovedKnowledgeContext[];
+    knowledgeIds?: readonly string[];
+    unsupportedQuestions?: readonly string[];
+    groundingConfidence?: number;
+    knowledgeGroundingRequired?: boolean;
+  }): Promise<CodexLlmResult> {
+    const startedAt = Date.now();
+    if (!this.enabled) return this.result(input.baseReply, "unavailable", startedAt, "disabled");
+    try {
+      const revisedReply = (await this.run(buildPostcheckRevisionPrompt(input), "enhance")).trim();
+      if (!revisedReply) return this.result(input.baseReply, "fallback", startedAt, "empty_response");
+      return this.adoptInterpretedDraft({
+        ...input,
+        draftReply: revisedReply,
+      });
+    } catch (error) {
+      return this.result(input.baseReply, "fallback", startedAt, llmFailureReason(error));
+    }
+  }
+
   async enhanceOpening(input: {
     baseReply: string;
     variantId: string;
@@ -1308,11 +1337,12 @@ function buildInterpretPrompt(input: {
     "evidence chỉ chứa tối đa 3 cụm từ ngắn chép nguyên văn từ tin khách làm căn cứ, giữ cả cách viết địa phương hoặc sai chính tả; không tự sửa chữ và không suy diễn.",
     "Mỗi action bắt buộc có confidence và evidence riêng. Một mệnh đề không được âm thầm biến mất: phải nằm trong actions, slots hoặc uncertainties.",
     "Thứ tự actions theo ý nghĩa: an toàn/chuyển người → trả lời câu hỏi → ghi dữ kiện → chọn số lượng/cập nhật đơn → tiếp tục thu đơn.",
-    "Khi khách đang đặt hàng và gửi một hay nhiều trường Tên người nhận/SĐT/Địa chỉ/Ghi chú, tạo update_order.fields với đúng khóa recipientName, phone, legacyAddress, deliveryNote và chỉ chép giá trị có nguyên văn trong tin hiện tại. Khách được gửi từng phần qua nhiều tin; không yêu cầu gửi lại dữ liệu đã có hoặc bắt buộc gom vào một tin.",
+    "Khi khách đang đặt hàng và gửi Tên/SĐT/Địa chỉ/Ghi chú, tạo update_order.fields. Tên dùng recipientName, SĐT dùng phone, ghi chú dùng deliveryNote. Địa chỉ ưu tiên tách thành street, ward, district, province; legacyAddress chỉ dùng khi không thể tách. Được chuẩn hóa lỗi gõ/viết tắt địa danh rõ ràng như hnoi→Hà Nội và tự thêm loại hành chính khi ngữ cảnh chỉ có một cách hiểu như Văn Phú→Phường Văn Phú, Hà Đông→Quận Hà Đông. Không bịa địa danh không xuất hiện hoặc không suy ra duy nhất. Khách được gửi nhiều trường trong một tin hoặc từng phần qua nhiều tin; không hỏi lại trường đã có.",
+    "Sau khi update_order đã thu đủ tên, SĐT 10 số và địa chỉ có thể giao, draftReply phải xác nhận lại toàn bộ thông tin vừa hiểu và mời khách kiểm tra/xác nhận. Không đòi khách gõ đúng chữ phường/xã/quận/huyện nếu LLM đã map chắc chắn; không quay lại tư vấn sản phẩm.",
     "Nếu khách nói dùng/gửi/giao về địa chỉ trên, địa chỉ cũ hoặc địa chỉ vừa gửi (kể cả lỗi gõ như 'guit'), phải đọc HISTORY và hiểu đây là order_support + continue_order_collection, needsClarification=false. Không chép lại PII từ HISTORY vào update_order, không coi là câu hỏi chính sách giao hàng và không handoff; State Reducer sẽ khôi phục địa chỉ đã lưu.",
     "SĐT chỉ hợp lệ khi có đúng 10 chữ số và bắt đầu bằng 0. Nếu số chưa đủ, không đưa phone vào update_order; ghi uncertainties và chỉ xin lại SĐT, vẫn giữ các trường hợp lệ khác.",
     "Schema:",
-    '{"summary":"một câu tóm tắt đủ ý","dialoguePlan":{"move":"new_question|answer|follow_up|rebuttal|correction|decline|purchase","challengedPoint":"ý khách đang bác, nếu có","previousAngle":"góc bot đã dùng, nếu có","nextAngle":"góc mới có căn cứ","responseShape":"direct|three_p|clarify"},"skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"answer_question","topic":"effectiveness","confidence":0.97,"evidence":["nếu đúng như lời nói"]},{"type":"update_order","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"confidence":0.99,"evidence":["giá trị nguyên văn"]},{"type":"select_quantity","quantity":1,"confidence":0.99,"evidence":["cho mình 1 lọ"]},{"type":"continue_order_collection","confidence":0.95,"evidence":["cho mình 1 lọ"]}],"uncertainties":[],"knowledgeIds":["id-trong-kho"],"knowledgeQueries":["truy vấn tri thức chuẩn hóa không chứa PII"],"unsupportedQuestions":[],"groundingConfidence":0.95,"draftReply":"độ dài thích ứng, tối đa 600 ký tự","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":true,"confidence":0.95,"needsClarification":false,"age":13,"evidence":["cụm từ căn cứ"],"asksDirectAnswer":true,"priceFromVnd":245000,"priceToVnd":285000,"discountAmountVnd":75000,"workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}',
+    '{"summary":"một câu tóm tắt đủ ý","dialoguePlan":{"move":"new_question|answer|follow_up|rebuttal|correction|decline|purchase","challengedPoint":"ý khách đang bác, nếu có","previousAngle":"góc bot đã dùng, nếu có","nextAngle":"góc mới có căn cứ","responseShape":"direct|three_p|clarify"},"skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"answer_question","topic":"effectiveness","confidence":0.97,"evidence":["nếu đúng như lời nói"]},{"type":"update_order","fields":{"recipientName":"string?","phone":"string?","street":"string?","ward":"string?","district":"string?","province":"string?","legacyAddress":"string?","deliveryNote":"string?"},"confidence":0.99,"evidence":["cụm từ làm căn cứ"]},{"type":"select_quantity","quantity":1,"confidence":0.99,"evidence":["cho mình 1 lọ"]},{"type":"continue_order_collection","confidence":0.95,"evidence":["cho mình 1 lọ"]}],"uncertainties":[],"knowledgeIds":["id-trong-kho"],"knowledgeQueries":["truy vấn tri thức chuẩn hóa không chứa PII"],"unsupportedQuestions":[],"groundingConfidence":0.95,"draftReply":"độ dài thích ứng, tối đa 600 ký tự","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":true,"confidence":0.95,"needsClarification":false,"age":13,"evidence":["cụm từ căn cứ"],"asksDirectAnswer":true,"priceFromVnd":245000,"priceToVnd":285000,"discountAmountVnd":75000,"workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}',
     "Action type hợp lệ: stop_bot, start_customer_care(issue), handoff_to_human(reason), answer_question(topic), record_fact(field,value), select_quantity(quantity 1|2|3|4|5), update_order(fields), continue_order_collection, pause_order(reason), decline_purchase.",
     "Quy tắc draftReply: trả lời đúng câu khách vừa hỏi trước; không nhắc lại dữ kiện đã nói; không hỏi lại chủ đề đã có trong Dữ liệu đã có/lịch sử; không lộ intent, pipeline, rule hay trạng thái nội bộ.",
     "draftReply chỉ được dùng sự thật trong Kho tri thức được duyệt. Không có dữ liệu thì nói cần kiểm tra và chuyển bộ phận liên quan; tuyệt đối không bịa giá, ưu đãi, freeship, công dụng hoặc chính sách.",
@@ -1426,7 +1456,8 @@ function buildCompactInterpretPrompt(input: {
     "Ưu tiên action: an toàn/chuyển người → answer_question → record_fact → select_quantity/update_order → continue_order_collection. Không tự tạo đơn, giảm giá, freeship, hoàn tiền hoặc handoff nếu chưa có căn cứ.",
     "Bất biến số lượng: nếu khách đang chốt/mua và toàn câu thể hiện rõ một số lượng 1–5, kể cả số viết bằng chữ, lỗi gõ gần nghĩa hoặc dùng từ chỉ sản phẩm như chai/lọ, bắt buộc tạo đủ select_quantity với số chuẩn và continue_order_collection. evidence phải chép nguyên văn cả cụm mua + số lượng từ MESSAGE; không được chỉ tạo continue_order_collection.",
     "Bất biến mâu thuẫn mua: nếu cùng một MESSAGE vừa có mệnh đề chốt/mua kèm số lượng vừa có mệnh đề từ chối/không lấy, không tự coi vế cuối là quyết định cuối. Bắt buộc xuất cả select_quantity, continue_order_collection và decline_purchase với evidence riêng, đồng thời needsClarification=true để hệ thống chỉ hỏi lại quyết định cuối.",
-    "Đang thu đơn: dùng update_order.fields để lấy từng trường khách thực sự gửi, với khóa recipientName, phone, legacyAddress, deliveryNote. Giá trị phải xuất hiện nguyên văn trong MESSAGE; khách có thể gửi qua nhiều tin và không được hỏi lại trường đã có.",
+    "Đang thu đơn: dùng update_order.fields với recipientName, phone, deliveryNote và địa chỉ tách thành street, ward, district, province; legacyAddress chỉ dùng khi không tách được. Được chuẩn hóa lỗi gõ/viết tắt địa danh chắc chắn như hnoi→Hà Nội và thêm loại hành chính chắc chắn; không bịa địa danh. Khách có thể gửi nhiều trường trong một tin hoặc qua nhiều tin; không hỏi lại trường đã có.",
+    "Nếu action đã thu đủ tên, SĐT 10 số và địa chỉ giao được, draftReply xác nhận lại trọn thông tin và mời khách kiểm tra/xác nhận; không bắt gõ lại nhãn hành chính và không quay về tư vấn sản phẩm.",
     "Nếu khách nói dùng/gửi/giao về địa chỉ trên, địa chỉ cũ hoặc địa chỉ vừa gửi (kể cả lỗi gõ như 'guit'), đọc HISTORY và phân loại order_support + continue_order_collection, needsClarification=false. Không chép PII từ HISTORY vào update_order, không coi là câu hỏi delivery và không handoff; State Reducer sẽ dùng địa chỉ đã lưu.",
     "phone chỉ hợp lệ khi đúng 10 chữ số, bắt đầu bằng 0. Số thiếu/thừa thì không ghi phone, đưa vào uncertainties và chỉ xin lại SĐT; vẫn giữ tên/địa chỉ hợp lệ trong cùng tin.",
     "Fact bắt buộc: Stopirex có Alcohol dùng làm dung môi trong ngưỡng an toàn của công thức. Sản phẩm có mùi dược tính đặc trưng nhẹ và bay hơi nhanh, không dùng hương thơm để che mùi. Cấm nói không cồn hoặc hoàn toàn không mùi.",
@@ -1457,7 +1488,7 @@ function buildCompactInterpretPrompt(input: {
 }
 
 const compactSemanticSchema =
-  '{"summary":"string","dialoguePlan":{"move":"new_question|answer|follow_up|rebuttal|correction|decline|purchase","challengedPoint":"string?","previousAngle":"string?","nextAngle":"string?","responseShape":"direct|three_p|clarify"},"skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"stop_bot|start_customer_care|handoff_to_human|answer_question|record_fact|select_quantity|update_order|continue_order_collection|pause_order|decline_purchase","topic":"string?","field":"string?","value":"unknown?","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"quantity":1,"issue":"string?","reason":"string?","confidence":0.95,"evidence":["string"]}],"uncertainties":["string"],"knowledgeIds":["knowledge-id"],"knowledgeQueries":["truy vấn chuẩn hóa không chứa PII"],"unsupportedQuestions":["phần chưa có dữ liệu"],"groundingConfidence":0.95,"draftReply":"string","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":"boolean?","confidence":0.95,"needsClarification":false,"age":"number?","evidence":["string"],"asksDirectAnswer":true,"priceFromVnd":"number?","priceToVnd":"number?","discountAmountVnd":"number?","workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}';
+  '{"summary":"string","dialoguePlan":{"move":"new_question|answer|follow_up|rebuttal|correction|decline|purchase","challengedPoint":"string?","previousAngle":"string?","nextAngle":"string?","responseShape":"direct|three_p|clarify"},"skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"stop_bot|start_customer_care|handoff_to_human|answer_question|record_fact|select_quantity|update_order|continue_order_collection|pause_order|decline_purchase","topic":"string?","field":"string?","value":"unknown?","fields":{"recipientName":"string?","phone":"string?","street":"string?","ward":"string?","district":"string?","province":"string?","legacyAddress":"string?","deliveryNote":"string?"},"quantity":1,"issue":"string?","reason":"string?","confidence":0.95,"evidence":["string"]}],"uncertainties":["string"],"knowledgeIds":["knowledge-id"],"knowledgeQueries":["truy vấn chuẩn hóa không chứa PII"],"unsupportedQuestions":["phần chưa có dữ liệu"],"groundingConfidence":0.95,"draftReply":"string","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":"boolean?","confidence":0.95,"needsClarification":false,"age":"number?","evidence":["string"],"asksDirectAnswer":true,"priceFromVnd":"number?","priceToVnd":"number?","discountAmountVnd":"number?","workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}';
 
 function promptConversationMemory(state: DemoChatState): DemoChatState["recentTurns"] {
   return state.recentTurns.slice(-10).map((turn) => ({
@@ -1509,6 +1540,48 @@ function buildArgumentProgressionRevisionPrompt(input: {
     `Phản bác hiện tại: ${JSON.stringify(input.customerMessage)}`,
     `JSON bị từ chối: ${JSON.stringify(input.rejectedOutput)}`,
     "</revision_required>",
+  ].join("\n");
+}
+
+function buildPostcheckRevisionPrompt(input: {
+  customerMessage: string;
+  draftReply: string;
+  rejectionReason: string;
+  baseReply: string;
+  baseReplies?: readonly string[];
+  actions?: readonly ConversationAction[];
+  state: DemoChatState;
+  skillId?: ConversationSkillId;
+  knowledge?: readonly ApprovedKnowledgeContext[];
+  knowledgeIds?: readonly string[];
+  unsupportedQuestions?: readonly string[];
+  groundingConfidence?: number;
+  knowledgeGroundingRequired?: boolean;
+}): string {
+  return [
+    "Bạn là lớp sửa câu trả lời cuối của chatbot Stopirex. Không dùng công cụ.",
+    "Chỉ xuất nội dung tin nhắn cuối gửi khách bằng tiếng Việt; không XML, không JSON, không giải thích và không lộ quy tắc nội bộ.",
+    "LLM vẫn sở hữu hướng hội thoại. Bộ hậu kiểm chỉ chỉ ra điểm cần sửa; không được đổi sang chủ đề khác, quay về bước bán hàng cũ hoặc tự handoff.",
+    "Giữ đúng ý định hiện tại của khách và giải quyết trực tiếp mọi phần họ vừa hỏi. Nếu đang phản đối, công nhận hợp lý rồi đưa một góc giải thích mới có căn cứ; không hỏi chốt số lượng.",
+    "Mọi dữ kiện sản phẩm, giá, ưu đãi, an toàn, đơn hàng và hành động phải nằm trong câu nghiệp vụ, KNOWLEDGE hoặc trạng thái/action đã thực thi. Không bịa và không tuyên bố hành động chưa thực hiện.",
+    "Nếu hậu kiểm báo thiếu một chủ đề, bổ sung chủ đề đó tự nhiên vào chính câu trả lời; không thay cả câu bằng lời xin lỗi hoặc câu chuyển bộ phận.",
+    `Tin khách: ${JSON.stringify(input.customerMessage)}`,
+    `Bản LLM cần sửa: ${JSON.stringify(input.draftReply)}`,
+    `Phản hồi hậu kiểm: ${JSON.stringify(input.rejectionReason)}`,
+    `Câu nghiệp vụ làm căn cứ: ${JSON.stringify(input.baseReplies ?? [input.baseReply])}`,
+    `Action đã được chấp nhận: ${JSON.stringify(input.actions ?? [])}`,
+    `Trạng thái đã thực thi: ${JSON.stringify({
+      mode: input.state.mode,
+      journeyStage: input.state.journeyStage,
+      selectedQuantity: input.state.selectedQuantity ?? null,
+      orderMissing: input.state.orderMissing,
+      orderId: input.state.orderId ?? null,
+      pendingAction: input.state.pendingAction ?? null,
+    })}`,
+    `KNOWLEDGE được duyệt: ${JSON.stringify(input.knowledge ?? [])}`,
+    `Nguồn KNOWLEDGE LLM đã chọn: ${JSON.stringify(input.knowledgeIds ?? [])}`,
+    `Phần chưa có căn cứ (nếu có): ${JSON.stringify(input.unsupportedQuestions ?? [])}`,
+    "Viết lại một lần, tự nhiên, đúng trọng tâm và đủ ý.",
   ].join("\n");
 }
 
@@ -2366,8 +2439,11 @@ function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string
   // Only guard an asserted state transition. A policy explanation such as
   // “nếu mình chọn 1 lọ mà chưa hiệu quả” is hypothetical and must not be
   // mistaken for the assistant claiming that the order state was updated.
+  // “Em ghi nhận băn khoăn về giá…” is conversational acknowledgement, not
+  // an order mutation. Only guard wording that explicitly ties the action to
+  // choosing or buying a concrete quantity.
   const committedQuantityClaim =
-    /(?:em\s+)?(?:đã\s+)?(?:ghi nhận|chốt|lên đơn)[^.!?\n]{0,140}|em\s+đã\s+chọn[^.!?\n]{0,140}/giu;
+    /(?:em\s+)?(?:đã\s+)?(?:chốt|lên đơn)\s+(?:mình\s+)?(?:lấy|mua|đặt|chọn|chốt)?\s*(?:combo\s*)?[1-5]\s*lọ|em\s+(?:đã\s+)?chọn\s+(?:mình\s+)?(?:combo\s*)?[1-5]\s*lọ|(?:em\s+)?(?:đã\s+)?ghi nhận\s+(?:mình\s+)?(?:(?:lấy|mua|đặt|chọn|chốt|muốn lấy)\s*)?(?:combo\s*)?[1-5]\s*lọ/giu;
   const committedClaims = [...normalized.matchAll(committedQuantityClaim)].map((match) => match[0]);
   const claimedCombo = committedClaims
     .map((claim) => claim.match(/(?:combo\s*)?([2-5])\s*lọ/iu)?.[1])

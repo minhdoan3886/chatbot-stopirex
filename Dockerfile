@@ -15,4 +15,4 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
 RUN mkdir -p /app/work/runtime && chown -R node:node /app
 USER node
-CMD ["sh", "-c", "node dist/scripts/migrate.js && exec node dist/src/production.js"]
+CMD ["sh", "-c", "node dist/scripts/migrate.js && exec node dist/src/http/server.js"]

@@ -33,6 +33,7 @@ import {
   missingLegacyAddressComponents,
   missingOrderFields,
   type OrderDraft,
+  type OrderPriceBreakdown,
 } from "../domain/orders.js";
 import {
   transitionPipeline,
@@ -1494,6 +1495,9 @@ export class DemoChatService {
       );
     }
     if (decision.route === "pending_action" && session.pendingAction === "confirm_order") {
+      if (session.orderConfirmationMode === "inbox" && orderHasAllFields(session.order)) {
+        return this.respond(session, orderCollectionReply(session, raw));
+      }
       return this.respond(
         session,
         "Dạ để tránh sai thông tin đơn, mình phản hồi “ĐÚNG” hoặc “ĐỒNG Ý” giúp em nhé ạ.",
@@ -2522,6 +2526,9 @@ export class DemoChatService {
       ...(session.lastDecision ? { trace: session.lastDecision } : {}),
       ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
       ...(session.orderId ? { orderId: session.orderId } : {}),
+      orderReceived: Boolean(
+        session.pipeline === "6.Đã tạo đơn" && session.order.customerConfirmedAt,
+      ),
       botPaused: isSessionBotPaused(session),
       freeShippingApproved: session.freeShippingApproved,
     });
@@ -6565,6 +6572,13 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
     const selected = quote(session.selectedQuantity ?? 1);
     const shippingFeeVnd =
       session.selectedQuantity === 1 && session.freeShippingApproved ? 0 : selected.shippingFee.amount;
+    if (session.orderConfirmationMode === "inbox") {
+      receiveCompleteInboxOrder(session, raw);
+      return formatInboxOrderReceipt(session.order, {
+        productPriceVnd: selected.productPrice.amount,
+        shippingFeeVnd,
+      });
+    }
     return `Dạ em tổng hợp đơn thử như sau:\n${formatOrderConfirmation(session.order, {
       productPriceVnd: selected.productPrice.amount,
       shippingFeeVnd,
@@ -6614,6 +6628,45 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
     ? `Dạ em đã ghi nhận ${recorded.join("; ")} ạ.`
     : "Dạ em đã ghi nhận thông tin vừa gửi.";
   return `${acknowledgement}\n\nMình bổ sung giúp em:\n• ${missing.join("\n• ")} ạ.`;
+}
+
+function receiveCompleteInboxOrder(session: DemoSession, evidence: string): void {
+  if (!session.order.customerConfirmedAt) {
+    commitOrderMutations(session, [
+      {
+        type: "confirm_order",
+        confirmedAt: new Date(),
+        evidence: evidence || "Khách đã gửi đủ thông tin đơn hàng",
+      },
+    ]);
+  }
+  assertOrderReady(session.order);
+  delete session.pendingAction;
+  if (session.lastDecision) delete session.lastDecision.pendingActionAfter;
+  session.orderCollectionPaused = false;
+  session.pipeline = "6.Đã tạo đơn";
+  session.consultation = { ...session.consultation, stage: "S8.order" };
+  session.signal = undefined;
+  session.lastIntent = "buying";
+  session.activeSkill = "order-closing";
+  session.skillReason =
+    "Khách đã gửi đủ dữ liệu; hệ thống tiếp nhận đơn ngay và chỉ gửi bản tóm tắt để khách đối chiếu.";
+}
+
+function formatInboxOrderReceipt(order: OrderDraft, price: OrderPriceBreakdown): string {
+  return [
+    "Dạ em đã nhận đủ thông tin và ghi nhận đơn của mình rồi ạ ✅",
+    `Người nhận: ${order.recipientName} – ${order.phone}`,
+    `Địa chỉ: ${order.legacyAddress}`,
+    `Sản phẩm: ${order.sku} × ${order.quantity}`,
+    `Tiền hàng: ${price.productPriceVnd.toLocaleString("vi-VN")}đ`,
+    `Phí giao: ${price.shippingFeeVnd === 0 ? "Miễn phí" : `${price.shippingFeeVnd.toLocaleString("vi-VN")}đ`}`,
+    ...(order.quantity !== undefined && order.quantity >= 2
+      ? ["Quà tặng: 1 túi đa năng vải dệt Stopirex (1 túi/đơn)"]
+      : []),
+    `Tổng thanh toán: ${order.totalVnd?.toLocaleString("vi-VN")}đ (${order.paymentMethod === "bank_transfer" ? "Chuyển khoản" : "COD"})`,
+    "Khi có mã vận đơn, bên em sẽ gửi lại để mình theo dõi ạ.",
+  ].join("\n");
 }
 
 function invalidPhoneDigitCount(raw: string): number | undefined {

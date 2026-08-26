@@ -56,7 +56,7 @@ tbody tr:hover{background:#f8faff}
 </style></head><body><main>
 <section class="hero"><div class="hero-row"><div>
 <h1>Hứng Đơn — Chốt Đơn</h1>
-<p>Đơn khách đã xác nhận. Nhập mã vận đơn thật để gửi thông báo cho khách.</p>
+<p>Đơn được ghi nhận ngay khi khách gửi đủ thông tin. Nhập mã vận đơn thật để gửi thông báo cho khách.</p>
 </div><div>
 <div class="hero-actions"><button id="refresh" class="refresh">Làm mới</button></div>
 <div id="freshness" class="freshness">Đang tải…</div>
@@ -92,7 +92,7 @@ tbody tr:hover{background:#f8faff}
     <div class="filters">
       <select id="statusFilter">
         <option value="all">Tất cả trạng thái</option>
-        <option value="pending" selected>Chờ nhập vận đơn</option>
+        <option value="pending" selected>Khách đã phản hồi / chờ vận đơn</option>
         <option value="completed">Đã gửi vận đơn</option>
         <option value="cancelled">Đã huỷ</option>
       </select>
@@ -102,13 +102,13 @@ tbody tr:hover{background:#f8faff}
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>Trạng thái</th>
+        <th>Tình trạng</th>
         <th>Khách hàng</th>
         <th>Địa chỉ giao</th>
         <th>Sản phẩm</th>
         <th>Tổng tiền</th>
         <th>Thanh toán</th>
-        <th>Thời gian xác nhận</th>
+        <th>Khách phản hồi lúc</th>
         <th>Vận đơn / Gửi khách</th>
       </tr></thead>
       <tbody id="orderRows"></tbody>
@@ -122,7 +122,7 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const fullTime=v=>v?new Intl.DateTimeFormat('vi-VN',{dateStyle:'short',timeStyle:'medium'}).format(new Date(v)):'—';
 const relTime=v=>{if(!v)return'—';const ms=Date.now()-new Date(v).getTime();if(ms<60000)return Math.max(1,Math.round(ms/1000))+' giây trước';if(ms<3600000)return Math.round(ms/60000)+' phút trước';if(ms<86400000)return Math.round(ms/3600000)+' giờ trước';return Math.round(ms/86400000)+' ngày trước'};
 const vnd=v=>v?new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(Number(v)):'—';
-const statusLabel={pending:'Chờ nhập vận đơn',completed:'Đã gửi vận đơn',cancelled:'Đã huỷ'};
+const statusLabel={pending:'Khách đã phản hồi',completed:'Đã gửi vận đơn',cancelled:'Đã huỷ'};
 const payLabel={cod:'COD',bank_transfer:'Chuyển khoản'};
 
 let allRecords=[];

@@ -272,24 +272,24 @@ test("Meta inbound chỉ lưu dữ liệu khi công tắc gửi thật đang t�
   assert.deepEqual(context.processed, ["message-1"]);
 });
 
-test("Meta xác nhận đơn ghi vào inbox và không gửi mã demo", async () => {
+test("Meta ghi đơn vào inbox ngay khi khách gửi đủ thông tin và không gửi mã demo", async () => {
   const context = fixture({ live: true });
   await context.processor.processBatch([job({ eventId: "order-1", text: "Giá bao nhiêu?" })]);
   await context.processor.processBatch([job({ eventId: "order-2", text: "Mình lấy combo 2 lọ" })]);
-  await context.processor.processBatch([
+  const received = await context.processor.processBatch([
     job({
       eventId: "order-3",
       text: "Nguyễn Văn A, 0912345678, số 12 Đội Cấn, phường Đội Cấn, quận Ba Đình, Hà Nội",
     }),
   ]);
-  const confirmed = await context.processor.processBatch([job({ eventId: "order-4", text: "ĐỒNG Ý" })]);
 
-  assert.equal(confirmed.status, "replied");
+  assert.equal(received.status, "replied");
   assert.equal(context.inboxPushes.length, 1);
   assert.equal(context.inboxPushes[0]?.sessionId, "page-1:customer-1");
   assert.ok(context.inboxPushes[0]?.confirmedAt instanceof Date);
   assert.equal((context.inboxPushes[0]?.draft as { phone?: string })?.phone, "0912345678");
-  assert.ok(context.sent.some((reply) => /đã ghi nhận thông tin đơn/iu.test(reply)));
+  assert.ok(context.sent.some((reply) => /đã nhận đủ thông tin.*ghi nhận đơn/isu.test(reply)));
+  assert.ok(context.sent.every((reply) => !/phản hồi.*ĐỒNG Ý|phản hồi.*ĐÚNG/iu.test(reply)));
   assert.ok(context.sent.every((reply) => !/DEMO-|SPX-DEMO|đã lên đơn thành công/iu.test(reply)));
 });
 
@@ -1196,6 +1196,7 @@ test("Meta brain yêu cầu LLM tách lại địa chỉ thô trước khi kiể
   const response = await brain.reply({
     sessionId,
     text: "Hong Nhung 0918626684 28 ngõ 30 văn phú hà đông hnoi",
+    orderConfirmationMode: "inbox",
   });
 
   assert.equal(extractionCalls, 1);
@@ -1205,7 +1206,8 @@ test("Meta brain yêu cầu LLM tách lại địa chỉ thô trước khi kiể
   );
   assert.deepEqual(response.state.orderMissing, []);
   assert.match(response.reply, /Hong Nhung.*0918626684.*Phường Văn Phú.*Quận Hà Đông.*Hà Nội/isu);
-  assert.match(response.reply, /ĐỒNG Ý/iu);
+  assert.equal(response.state.orderFlowStatus, "created");
+  assert.doesNotMatch(response.reply, /ĐỒNG Ý|ĐÚNG/iu);
   assert.doesNotMatch(response.reply, /còn thiếu phường|bổ sung.*phường|tình trạng.*mồ hôi/isu);
 });
 

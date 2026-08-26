@@ -49,8 +49,8 @@ export class OrderInboxService {
   constructor(private readonly pool: Pool) {}
 
   /**
-   * Ghi đơn mới vào inbox sau khi khách xác nhận ĐỒNG Ý.
-   * Idempotent theo phiên và thời điểm xác nhận để retry không tạo bản ghi trùng.
+   * Ghi đơn mới vào inbox ngay khi khách đã gửi đủ thông tin giao hàng.
+   * Idempotent theo phiên và thời điểm tiếp nhận để retry không tạo bản ghi trùng.
    */
   async push(input: PushOrderInboxInput): Promise<OrderInboxRecord> {
     const {

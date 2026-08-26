@@ -156,6 +156,21 @@ test("quality evaluator đánh trượt trả lời vòng vo và lộ thuật ng
   assert.ok(result.hardFailReasons.includes("price_fact_missing_or_changed"));
 });
 
+test("quality evaluator chặn CTA số lượng trong lượt hoài nghi hiệu quả", () => {
+  const result = evaluateConversationQuality({
+    customerMessage: "Bên nào cũng bảo hỗ trợ, anh mua nhiều loại rồi chả hết",
+    baseReply:
+      "Dạ em hiểu băn khoăn của mình. Những loại mình từng dùng là lăn hằng ngày hay dòng ngăn tiết mồ hôi chuyên sâu ạ?",
+    replies: ["Dạ em hiểu băn khoăn của mình. Anh/chị muốn chọn phương án mấy lọ ạ?"],
+    skill: "solution-guidance",
+    intent: "efficacy_objection",
+    asksDirectAnswer: true,
+  });
+
+  assert.equal(result.passed, false);
+  assert.ok(result.hardFailReasons.includes("intent_forbidden_sales_cta"));
+});
+
 test("quality gate đánh trượt câu logistics trả nhầm bảng giá", () => {
   const result = evaluateConversationQuality({
     customerMessage:

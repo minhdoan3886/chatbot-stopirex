@@ -134,11 +134,14 @@ export function questionTopic(value: string): ConversationTopic | undefined {
   if (/ngoai troi|van dong|van phong|dieu hoa|cang thang|cong viec/.test(text)) {
     return "work_context";
   }
-  if (/uot|o ao|mo hoi|mui|kho chiu nhat|tinh trang nao/.test(text)) {
-    return "symptom";
-  }
+  // A prior-product question can mention "ngăn tiết mồ hôi" as one of the
+  // product categories. Classify the requested fact before the symptom words,
+  // otherwise the governor may drop it as a repeated symptom question.
   if (/lan cu|lan thuong|hang ngay|truoc day.*dung|tung dung/.test(text)) {
     return "prior_product";
+  }
+  if (/uot|o ao|mo hoi|mui|kho chiu nhat|tinh trang nao/.test(text)) {
+    return "symptom";
   }
   if (/cach dung|buoi toi|buoi sang|may lan|tan suat|da kho/.test(text)) {
     return "usage";

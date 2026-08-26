@@ -74,6 +74,7 @@ import {
   resolveApprovedProductWorkflowTurn,
   type ApprovedProductWorkflowTurn,
 } from "../domain/productWorkflows.js";
+import { requiredKnowledgeIdsForIntent } from "../domain/evidencePolicy.js";
 
 const demoTenant = tenantId("local-demo");
 const demoCatalog = createDemoProductCatalog(demoTenant);
@@ -1840,17 +1841,19 @@ export class DemoChatService {
       session.lastIntent = "efficacy_objection";
       session.signal = "CT.Hiệu quả";
       session.pipeline = "4.XL băn khoăn";
+      session.orderCollectionPaused = Boolean(session.selectedQuantity);
+      delete session.pendingAction;
+      delete session.pendingUsageAudience;
+      delete session.lastDecision.pendingActionAfter;
       session.consultation = mergeConfirmedSlots(session.consultation, semanticSlots);
       session.consultation = {
         ...session.consultation,
         stage: "S5.guidance",
       };
-      session.pendingAction = "send_usage_guidance";
-      session.pendingUsageAudience = "general";
-      session.lastDecision.pendingActionAfter = "send_usage_guidance";
+      recordKnowledge(session, requiredKnowledgeIdsForIntent("efficacy_objection"));
       return this.respond(
         session,
-        "Dạ Stopirex hỗ trợ kiểm soát tình trạng ra nhiều mồ hôi ạ. Mình dùng buổi tối khi da sạch, khô, lăn một lớp mỏng và theo dõi trong 2 tuần đầu.\n\nNếu chưa cải thiện, mình nhắn lại để bên em kiểm tra cách dùng và hỗ trợ tiếp nhé ạ.",
+        "Dạ em hiểu vì mình đã thử nhiều loại mà chưa cải thiện nên khó tin ngay ạ. Bảng thành phần công bố của Stopirex có Aluminium Sesquichlorohydrate, hoạt chất ngăn tiết mồ hôi; dùng buổi tối trên da khô, khác lăn thường chủ yếu che mùi.\n\nNhững loại mình từng dùng là lăn hằng ngày hay dòng ngăn tiết mồ hôi chuyên sâu ạ?",
       );
     }
 

@@ -16,6 +16,7 @@ import {
 } from "../domain/actionRollout.js";
 import type { SemanticTopic, SemanticUnderstanding } from "../domain/consultation.js";
 import { hasAuthoritativeProductWorkflowDecision } from "../domain/productWorkflows.js";
+import { requiredKnowledgeIdsForIntent } from "../domain/evidencePolicy.js";
 import type { SupportedOrderQuantity } from "../domain/conversationActions.js";
 import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
@@ -109,8 +110,18 @@ export class MetaChatBrain {
       });
       let knowledgeRetry = false;
       const semanticQueries = semanticKnowledgeQueries(rawLlmResult);
-      if (semanticQueries.length > 0 && needsSemanticKnowledgeExpansion(rawLlmResult)) {
-        const expandedMatches = semanticQueries.flatMap((query) =>
+      const requiredEvidenceMatches = knowledgeMatchesForIds(
+        requiredKnowledgeIdsForIntent(rawLlmResult.intent),
+      );
+      const retrievedBeforeExpansion = new Set(matches.map((match) => match.entity.id));
+      const missingRequiredEvidence = requiredEvidenceMatches.some(
+        (match) => !retrievedBeforeExpansion.has(match.entity.id),
+      );
+      if (
+        missingRequiredEvidence ||
+        (semanticQueries.length > 0 && needsSemanticKnowledgeExpansion(rawLlmResult))
+      ) {
+        const semanticExpandedMatches = semanticQueries.flatMap((query) =>
           retrieveKnowledgeMatches({
             tenantId: liveKnowledgeTenant,
             query,
@@ -118,7 +129,9 @@ export class MetaChatBrain {
             limit: 3,
           }),
         );
-        const mergedMatches = mergeKnowledgeMatches(matches, expandedMatches, 8);
+        const mergedMatches = requiredEvidenceMatches.length
+          ? mergeKnowledgeMatches(requiredEvidenceMatches, [...matches, ...semanticExpandedMatches], 10)
+          : mergeKnowledgeMatches(matches, semanticExpandedMatches, 8);
         const previousIds = matches.map((match) => match.entity.id).join("|");
         const mergedIds = mergedMatches.map((match) => match.entity.id).join("|");
         if (mergedIds !== previousIds) {
@@ -185,6 +198,7 @@ export class MetaChatBrain {
         groundingConfidence: llmResult.groundingConfidence,
         knowledgeRetry,
         semanticKnowledgeQueryCount: semanticQueries.length,
+        requiredEvidenceCount: requiredEvidenceMatches.length,
       });
     }
     const liveVariant = selectActionExecutionMode({
@@ -971,6 +985,19 @@ function knowledgeContexts(matches: readonly KnowledgeMatch[]): ApprovedKnowledg
     content,
     ...(responseGuidance ? { responseGuidance } : {}),
   }));
+}
+
+function knowledgeMatchesForIds(ids: readonly string[]): KnowledgeMatch[] {
+  const requested = new Set(ids);
+  return liveKnowledge
+    .filter((entity) => requested.has(entity.id))
+    .sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
+    .map((entity) => ({
+      entity: { ...entity },
+      score: 100,
+      matchedTerms: [],
+      matchedConcepts: ["required_evidence"],
+    }));
 }
 
 function semanticKnowledgeQueries(semantic: SemanticUnderstanding): string[] {

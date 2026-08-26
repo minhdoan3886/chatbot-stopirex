@@ -2541,15 +2541,51 @@ test("khách đặt điều kiện mua theo hiệu quả không bị hiểu nh�
   assert.equal(result.state.lastIntent, "efficacy_objection");
   assert.equal(result.state.pipeline, "4.XL băn khoăn");
   assert.equal(result.state.signal, "CT.Hiệu quả");
-  assert.equal(result.replies.length, 2);
-  assert.match(result.replies[0] ?? "", /hỗ trợ kiểm soát tình trạng ra nhiều mồ hôi/);
-  assert.match(result.reply, /theo dõi trong 2 tuần đầu/);
-  assert.match(result.reply, /nếu chưa cải thiện.*kiểm tra cách dùng/isu);
-  assert.match(result.reply, /hỗ trợ kiểm soát tình trạng ra nhiều mồ hôi/);
+  assert.equal(result.state.pendingAction, undefined);
+  assert.match(result.reply, /Aluminium Sesquichlorohydrate/iu);
+  assert.match(result.reply, /hoạt chất ngăn tiết mồ hôi/iu);
+  assert.match(result.reply, /lăn hằng ngày.*ngăn tiết mồ hôi chuyên sâu/isu);
+  assert.ok(
+    result.state.decisionTrace?.knowledgeEntityIds.includes(
+      "product-official-ingredient-list-2022",
+    ),
+  );
+  assert.ok(
+    result.state.decisionTrace?.knowledgeEntityIds.includes("product-training-ingredient-roles"),
+  );
   assert.doesNotMatch(
     result.reply,
-    /mức giá|không làm phiền|phòng lạnh|không phải.*giá|đã thử nhiều phương pháp/,
+    /mấy lọ|chọn.*lọ|chọn.*combo|lên đơn|mức giá|không làm phiền|phòng lạnh/iu,
   );
+});
+
+test("hoài nghi hiệu quả ngắt trạng thái chọn số lượng cũ và không quay lại chốt sale", () => {
+  const chat = new DemoChatService();
+  const sessionId = "efficacy-objection-interrupts-quantity";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+
+  const result = chat.chat(
+    sessionId,
+    "Bên nào cũng bảo hỗ trợ kiểm soát, anh mua nhiều loại rồi chả hết",
+    {
+      intent: "efficacy_objection",
+      topic: "effectiveness",
+      asksDirectAnswer: true,
+      confidence: 0.99,
+      needsClarification: false,
+      slots: {},
+    },
+    { actionExecutionMode: "multi_action" },
+  );
+
+  assert.equal(result.state.lastIntent, "efficacy_objection");
+  assert.equal(result.state.pipeline, "4.XL băn khoăn");
+  assert.equal(result.state.pendingAction, undefined);
+  assert.equal(result.state.selectedQuantity, undefined);
+  assert.equal(result.state.orderFlowStatus, "idle");
+  assert.match(result.reply, /Aluminium Sesquichlorohydrate/iu);
+  assert.match(result.reply, /lăn hằng ngày.*ngăn tiết mồ hôi chuyên sâu/isu);
+  assert.doesNotMatch(result.reply, /mấy lọ|chọn.*lọ|combo|lên đơn/iu);
 });
 
 test("khách chốt 1 lọ trong câu điều kiện được ghi nhận đơn thay vì hỏi lại hướng đi", () => {

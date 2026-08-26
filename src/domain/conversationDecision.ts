@@ -210,6 +210,11 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
 
   const pendingAction = input.pendingAction;
   const expectedPendingReplyTo = pendingAction ? pendingReplyTo(pendingAction) : undefined;
+  const efficacyObjectionInterruptsPendingAction = Boolean(
+    input.semantic.intent === "efficacy_objection" &&
+      semanticConfidence >= 0.65 &&
+      input.semantic.needsClarification !== true,
+  );
   const directQuestionInterruptsPendingAction = Boolean(
     input.semantic.asksDirectAnswer === true &&
       input.semantic.intent &&
@@ -221,6 +226,7 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
   );
   const pendingMatches =
     pendingAction !== undefined &&
+    !efficacyObjectionInterruptsPendingAction &&
     !directQuestionInterruptsPendingAction &&
     !input.explicitPurchaseSelection &&
     (input.affirmativeFollowup ||

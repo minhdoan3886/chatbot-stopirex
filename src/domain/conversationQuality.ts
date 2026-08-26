@@ -2,6 +2,7 @@ import { ClaimRegistry, defaultBlockedClaims } from "./claims.js";
 import type { ConversationSkillId } from "./chatSkills.js";
 import type { CustomerIntent } from "./consultation.js";
 import { missingRequiredAnswerTopics } from "./requiredAnswerTopics.js";
+import { replyViolatesIntentEvidencePolicy } from "./evidencePolicy.js";
 
 export type ConversationQualityEvaluation = {
   intent: CustomerIntent | null;
@@ -48,6 +49,7 @@ export function evaluateConversationQuality(
     /hồ sơ hiện có không công bố|bên em không tự nêu|hệ thống (?:em )?(?:không có|chưa có) dữ liệu/iu.test(
       reply,
     );
+  const intentForbiddenCta = replyViolatesIntentEvidencePolicy(input.intent, reply);
   const answeredDirectly = input.asksDirectAnswer ? directAnswerHeuristic(reply) : null;
   const priceFactsPreserved = shouldCheckPrice(input)
     ? requiredCommerceFacts(input.baseReply).every((fact) => canonicalCommerce(reply).includes(fact))
@@ -63,6 +65,7 @@ export function evaluateConversationQuality(
   const hardFailReasons: string[] = [];
   if (unsafeClaim) hardFailReasons.push("unsafe_claim");
   if (internalLanguageLeaked) hardFailReasons.push("internal_language_leaked");
+  if (intentForbiddenCta) hardFailReasons.push("intent_forbidden_sales_cta");
   if (questionCount > 1) hardFailReasons.push("too_many_questions");
   if (bubbleCount > 3) hardFailReasons.push("too_many_bubbles");
   if (reply.length > 500) hardFailReasons.push("response_over_500_characters");

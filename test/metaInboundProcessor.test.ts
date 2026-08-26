@@ -478,6 +478,68 @@ test("Meta brain chỉ nhận câu trả lời AI có citation thuộc knowledge
   );
 });
 
+test("Meta brain nạp gói bằng chứng cho LLM khi khách hoài nghi hiệu quả", async () => {
+  const prompts: string[] = [];
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      prompts.push(prompt);
+      const hasEvidencePack =
+        prompt.includes("product-official-ingredient-list-2022") &&
+        prompt.includes("product-training-ingredient-roles") &&
+        prompt.includes("product-comparison-traditional-rollon");
+      return JSON.stringify({
+        summary: "Khách hoài nghi vì đã thử nhiều loại chưa hiệu quả",
+        skill: "solution-guidance",
+        intent: "efficacy_objection",
+        topic: "effectiveness",
+        subject: "customer",
+        scenario: "past",
+        asksDirectAnswer: true,
+        confidence: 0.98,
+        needsClarification: false,
+        evidence: ["mua nhiều loại rồi chả hết"],
+        actions: [
+          {
+            type: "answer_question",
+            topic: "effectiveness",
+            confidence: 0.98,
+            evidence: ["mua nhiều loại rồi chả hết"],
+          },
+        ],
+        knowledgeIds: hasEvidencePack
+          ? [
+              "product-official-ingredient-list-2022",
+              "product-training-ingredient-roles",
+              "product-comparison-traditional-rollon",
+            ]
+          : [],
+        knowledgeQueries: [],
+        unsupportedQuestions: [],
+        groundingConfidence: hasEvidencePack ? 0.98 : 0.7,
+        draftReply: hasEvidencePack
+          ? "Dạ em hiểu vì mình đã thử nhiều loại nên chưa thể tin ngay. Stopirex có Aluminium Sesquichlorohydrate, là hoạt chất ngăn tiết mồ hôi và khác lăn thường chủ yếu khử hoặc che mùi. Các loại mình từng dùng là lăn hằng ngày hay dòng ngăn tiết mồ hôi chuyên sâu ạ?"
+          : "Dạ em hiểu băn khoăn của mình ạ.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "meta-efficacy-evidence-policy",
+    text: "Bên nào cũng bảo hỗ trợ kiểm soát, anh mua nhiều loại rồi chả hết",
+  });
+
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1] ?? "", /product-official-ingredient-list-2022/iu);
+  assert.match(prompts[1] ?? "", /product-training-ingredient-roles/iu);
+  assert.match(response.reply, /Aluminium Sesquichlorohydrate/iu);
+  assert.match(response.reply, /lăn hằng ngày.*ngăn tiết mồ hôi chuyên sâu/isu);
+  assert.doesNotMatch(response.reply, /mấy lọ|chọn.*lọ|combo|lên đơn/iu);
+});
+
 test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge thay vì handoff", async () => {
   const prompts: string[] = [];
   const chat = new DemoChatService();

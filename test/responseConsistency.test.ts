@@ -60,3 +60,23 @@ test("response consistency chặn cách nói em ghi 1 lọ khi state chưa lưu"
     /reply_claims_uncommitted_quantity_1/u,
   );
 });
+
+test("response consistency chặn CTA chốt sale trong lượt hoài nghi hiệu quả", () => {
+  const { quantity, ...actionPlanWithoutQuantity } = trace.actionPlan;
+  void quantity;
+  const efficacyTrace = {
+    ...trace,
+    selectedIntent: "efficacy_objection" as const,
+    actionPlan: actionPlanWithoutQuantity,
+  };
+  assert.throws(
+    () =>
+      assertReplyMatchesConversationState({
+        reply: "Dạ em hiểu băn khoăn của mình. Anh/chị muốn chọn phương án mấy lọ ạ?",
+        trace: efficacyTrace,
+        botPaused: false,
+        freeShippingApproved: false,
+      }),
+    /intent_forbidden_sales_cta/u,
+  );
+});

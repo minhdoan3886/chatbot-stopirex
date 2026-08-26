@@ -70,6 +70,10 @@ import { InMemoryCareCaseRepository } from "./careCaseRepository.js";
 import { createDemoProductCatalog, demoCommerceEffectiveAt } from "../config/demoCommerce.js";
 import { trackingUrl } from "./shipmentTracking.js";
 import type { FollowupStage } from "../domain/followup.js";
+import {
+  resolveApprovedProductWorkflowTurn,
+  type ApprovedProductWorkflowTurn,
+} from "../domain/productWorkflows.js";
 
 const demoTenant = tenantId("local-demo");
 const demoCatalog = createDemoProductCatalog(demoTenant);
@@ -583,6 +587,37 @@ export class DemoChatService {
       session.pipeline = "1.Phân loại";
     }
     resumeAfterSoftHandoff(session);
+
+    const productWorkflowTurn = resolveApprovedProductWorkflowTurn({
+      text: raw,
+      semantic,
+    });
+    if (productWorkflowTurn) {
+      session.lastIntent = productWorkflowTurn.intent;
+      session.activeSkill = productWorkflowTurn.handoff ? "knowledge-handoff" : "direct-answer";
+      session.skillReason = productWorkflowTurn.handoff
+        ? "Product Workflow đã khóa đúng offer/SKU; offer này cần nhân viên hoàn tất."
+        : "Product Workflow dựng câu trả lời từ catalog và Knowledge đã duyệt.";
+      recordKnowledge(session, productWorkflowTurn.knowledgeIds);
+      if (productWorkflowTurn.handoff && productWorkflowTurn.handoffReason) {
+        pauseForHumanReview(session, productWorkflowTurn.handoffReason, "CT.Giá/Ship");
+        session.orderCollectionPaused = true;
+        delete session.pendingAction;
+      }
+      overrideDecisionClassification(
+        session,
+        productWorkflowTurn.intent,
+        productWorkflowTurn.handoff || productWorkflowTurn.intent === "price_request"
+          ? "price"
+          : "effectiveness",
+        [],
+        productWorkflowTurn.handoff
+          ? "Product Workflow khóa offer riêng; không quy đổi thành số lượng của sản phẩm khác."
+          : "Product Workflow đã xác nhận sản phẩm và nguồn Knowledge tương ứng.",
+      );
+      recordProductWorkflowDecision(session, productWorkflowTurn);
+      return this.respond(session, productWorkflowTurn.reply);
+    }
 
     if (compoundFinalQuantity) {
       selectQuantity(session, compoundFinalQuantity);
@@ -2440,7 +2475,7 @@ export class DemoChatService {
       answeredTopics: session.answeredTopics,
       askedTopics: session.askedTopics,
       ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
-      botPaused: session.care?.case.botPaused ?? false,
+      botPaused: isSessionBotPaused(session),
       hasCareCase: Boolean(session.care),
       handoffPending: Boolean(session.manualHandoffReason),
       optedOut: session.optedOut,
@@ -2484,7 +2519,7 @@ export class DemoChatService {
       ...(session.lastDecision ? { trace: session.lastDecision } : {}),
       ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
       ...(session.orderId ? { orderId: session.orderId } : {}),
-      botPaused: session.care?.case.botPaused ?? false,
+      botPaused: isSessionBotPaused(session),
       freeShippingApproved: session.freeShippingApproved,
     });
     for (const message of logicalReplies) {
@@ -2527,7 +2562,7 @@ function stateOf(session: DemoSession): DemoChatState {
         }
       : {}),
     ...(session.previousSalesPipeline ? { previousSalesPipeline: session.previousSalesPipeline } : {}),
-    botPaused: session.care?.case.botPaused ?? false,
+    botPaused: isSessionBotPaused(session),
     // Five complete user/assistant exchanges are enough to resolve references
     // such as “cái này”, “loại kia” and “như trên” without sending the full
     // lifetime of the conversation to the model.
@@ -2625,6 +2660,19 @@ function overrideDecisionClassification(
 function recordKnowledge(session: DemoSession, entityIds: readonly string[]): void {
   if (!session.lastDecision) return;
   session.lastDecision.knowledgeEntityIds = [...new Set(entityIds)];
+}
+
+function recordProductWorkflowDecision(session: DemoSession, turn: ApprovedProductWorkflowTurn): void {
+  if (!session.lastDecision) return;
+  session.lastDecision.ruleMatches = [
+    ...session.lastDecision.ruleMatches.filter((match) => !match.id.startsWith("product_workflow:")),
+    {
+      id: `product_workflow:${turn.workflowId}:${turn.workflowIntent}${turn.offerId ? `:${turn.offerId}` : ""}`,
+      kind: "hard",
+      confidence: 1,
+      intent: turn.intent,
+    },
+  ];
 }
 
 function newSession(id: string, context: DemoChatContext = {}): DemoSession {
@@ -4888,6 +4936,14 @@ function llmFailureKnowledgeAnswer(
   raw: string,
   semanticSlots: ConsultationSlots,
 ): { reply: string; knowledgeIds: string[]; intent: CustomerIntent } | undefined {
+  const productWorkflowTurn = resolveApprovedProductWorkflowTurn({ text: raw });
+  if (productWorkflowTurn) {
+    return {
+      reply: productWorkflowTurn.reply,
+      knowledgeIds: productWorkflowTurn.knowledgeIds,
+      intent: productWorkflowTurn.intent,
+    };
+  }
   const text = normalize(raw);
   let topics: SemanticTopic[] | undefined;
   let intent: CustomerIntent = "product_effect";
@@ -6666,6 +6722,13 @@ function resolveOrderFlowStatus(session: DemoSession): NonNullable<DemoChatState
     return "awaiting_confirmation";
   }
   return "collecting";
+}
+
+function isSessionBotPaused(session: DemoSession): boolean {
+  return (
+    (session.care?.case.botPaused ?? false) ||
+    session.manualHandoffReason?.startsWith("product_workflow_order_requires_human:") === true
+  );
 }
 
 function orderCreatedReply(session: DemoSession): string {

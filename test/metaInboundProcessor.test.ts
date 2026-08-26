@@ -547,6 +547,49 @@ test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge th
   assert.doesNotMatch(response.reply, /chuyển bộ phận|chưa có đủ thông tin/iu);
 });
 
+test("Product Workflow không cho bản nháp LLM ghi đè giá và offer đã duyệt", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        intent: "price_request",
+        topic: "price",
+        subject: "product",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "price",
+            confidence: 0.99,
+            evidence: ["sữa tắm giá bao nhiêu"],
+          },
+        ],
+        knowledgeIds: ["body-wash-rollon-combo-price-2026-08"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.99,
+        draftReply: "Dạ sữa tắm bán lẻ 999.000đ, phí giao 99.000đ ạ.",
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "authoritative-product-workflow-price",
+    text: "Sữa tắm Stopirex giá bao nhiêu, có bán lẻ không?",
+  });
+
+  assert.match(response.reply, /không bán lẻ.*525\.000đ.*miễn phí giao/isu);
+  assert.doesNotMatch(response.reply, /999\.000đ|99\.000đ/u);
+  assert.equal(
+    response.state.decisionTrace?.ruleMatches.some(
+      (match) => match.kind === "hard" && match.id.startsWith("product_workflow:herbal-body-wash:price"),
+    ),
+    true,
+  );
+});
+
 test("Meta brain khóa luồng khiếu nại khi LLM chỉ trả handoff after-sales", async () => {
   const chat = new DemoChatService();
   const message = "Giao lâu thế? Hủy đi, bôi bị bết dính ở vùng nách, làm ăn lôm côm!";

@@ -3437,3 +3437,39 @@ test("global NER stores strong order fields and rejects discourse prefix as reci
   assert.match(eta.reply, /nội miền.*2–3 ngày/isu);
   assert.match(eta.reply, /liên miền.*3–5 ngày/isu);
 });
+
+test("fallback báo đúng combo Herbal Body Wash và không lẫn bảng giá lăn", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat("body-wash-price-fallback", "Sữa tắm Stopirex giá bao nhiêu, có bán lẻ không?", {
+    status: "fallback",
+    slots: {},
+  });
+
+  assert.match(result.reply, /không bán lẻ/iu);
+  assert.match(result.reply, /1 lăn Stopirex.*1 chai Herbal Body Wash 500 ml.*525\.000đ.*miễn phí giao/isu);
+  assert.doesNotMatch(result.reply, /510\.000đ|285\.000đ/iu);
+  assert.equal(result.state.selectedQuantity, undefined);
+});
+
+test("yêu cầu mua combo sữa tắm không bị quy đổi thành combo 2 lọ lăn", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat("body-wash-order-guard", "Chốt cho mình combo sữa tắm nhé", {
+    intent: "buying",
+    confidence: 0.98,
+    slots: {},
+  });
+
+  assert.match(result.reply, /1 lăn Stopirex.*1 chai Herbal Body Wash 500 ml.*525\.000đ/isu);
+  assert.equal(result.state.selectedQuantity, undefined);
+  assert.equal(result.state.botPaused, true);
+  assert.equal(
+    result.state.handoffReason,
+    "product_workflow_order_requires_human:herbal-body-wash:stopirex-rollon-bodywash-2026-08",
+  );
+  assert.equal(
+    result.state.decisionTrace?.ruleMatches.some(
+      (match) => match.kind === "hard" && match.id.startsWith("product_workflow:herbal-body-wash:purchase"),
+    ),
+    true,
+  );
+});

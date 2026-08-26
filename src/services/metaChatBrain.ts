@@ -15,6 +15,7 @@ import {
   type MultiActionRolloutMode,
 } from "../domain/actionRollout.js";
 import type { SemanticTopic, SemanticUnderstanding } from "../domain/consultation.js";
+import { hasAuthoritativeProductWorkflowDecision } from "../domain/productWorkflows.js";
 import type { SupportedOrderQuantity } from "../domain/conversationActions.js";
 import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
@@ -251,6 +252,18 @@ export class MetaChatBrain {
         reason: "customer_care_route_locked",
         selectedRoute: base.state.decisionTrace.selectedRoute,
         selectedCareIssue: base.state.decisionTrace.selectedCareIssue,
+      });
+      return base;
+    }
+    if (hasAuthoritativeProductWorkflowDecision(base.state.decisionTrace?.ruleMatches)) {
+      // The LLM owns language understanding, but an approved Product Workflow
+      // owns product identity, offer, price, SKU, fulfillment and final wording.
+      // Never publish a free-form LLM draft over an authoritative offer.
+      this.logger?.log("debug", "llm_composition", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        status: "skipped",
+        reason: "authoritative_product_workflow",
+        selectedIntent: base.state.decisionTrace?.selectedIntent,
       });
       return base;
     }

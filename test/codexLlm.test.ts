@@ -168,6 +168,112 @@ test("parser giữ toàn bộ actions của một tin nhắn thay vì ép còn m
   );
 });
 
+test("parser giữ dialoguePlan ngắn để audit nhưng tách khỏi draft gửi khách", () => {
+  const parsed = parseSemanticUnderstanding(
+    JSON.stringify({
+      dialoguePlan: {
+        move: "rebuttal",
+        challengedPoint: "thời gian dùng tương đương",
+        previousAngle: "30ml dùng 3–4 tháng",
+        nextAngle: "cơ chế kiểm soát mồ hôi",
+        responseShape: "three_p",
+      },
+      draftReply: "Dạ đúng là thời gian dùng có thể tương đương ạ.",
+    }),
+  );
+
+  assert.deepEqual(parsed.dialoguePlan, {
+    move: "rebuttal",
+    challengedPoint: "thời gian dùng tương đương",
+    previousAngle: "30ml dùng 3–4 tháng",
+    nextAngle: "cơ chế kiểm soát mồ hôi",
+    responseShape: "three_p",
+  });
+  assert.doesNotMatch(parsed.draftReply ?? "", /dialoguePlan|previousAngle/u);
+});
+
+test("LLM tự viết lại bằng góc mới khi khách bác luận điểm vừa dùng", async () => {
+  const prompts: string[] = [];
+  const outputs = [
+    {
+      dialoguePlan: {
+        move: "rebuttal",
+        previousAngle: "thời gian sử dụng",
+        nextAngle: "thời gian sử dụng",
+        responseShape: "three_p",
+      },
+      intent: "price_objection",
+      skill: "pricing-objection",
+      actions: [
+        {
+          type: "answer_question",
+          topic: "price",
+          confidence: 0.98,
+          evidence: ["lọ siêu thị dùng 3-4 tháng"],
+        },
+      ],
+      draftReply:
+        "Dạ Stopirex cũng là chai 30ml, thường dùng khoảng 3–4 tháng khi lăn mỏng đúng cách nên tính theo thời gian dùng sẽ dễ cân hơn ạ.",
+      slots: {},
+    },
+    {
+      dialoguePlan: {
+        move: "rebuttal",
+        challengedPoint: "thời gian dùng tương đương",
+        previousAngle: "thời gian sử dụng",
+        nextAngle: "cơ chế kiểm soát mồ hôi",
+        responseShape: "three_p",
+      },
+      intent: "price_objection",
+      skill: "pricing-objection",
+      actions: [
+        {
+          type: "answer_question",
+          topic: "price",
+          confidence: 0.98,
+          evidence: ["lọ siêu thị dùng 3-4 tháng"],
+        },
+      ],
+      draftReply:
+        "Dạ anh tính vậy là hợp lý: thời gian dùng có thể tương đương. Điểm khác nằm ở cơ chế: nhiều lăn thông thường thiên về khử hoặc che mùi, còn Stopirex hỗ trợ kiểm soát lượng mồ hôi và dùng vào buổi tối. Loại anh từng dùng chủ yếu giảm mùi hay có giúp nách khô hơn ạ?",
+      slots: {},
+    },
+  ];
+  let callIndex = 0;
+  const bridge = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      prompts.push(prompt);
+      return JSON.stringify(outputs[Math.min(callIndex++, outputs.length - 1)]);
+    },
+  });
+
+  const result = await bridge.interpret({
+    customerMessage: "thì a mua lọ siêu thị dùng 3-4 tháng mà",
+    state: {
+      ...state,
+      recentTurns: [
+        {
+          role: "user",
+          text: "Lọ bé mà giá cao, ngoài siêu thị lăn nách chỉ mấy chục nghìn thôi",
+        },
+        {
+          role: "assistant",
+          text: "Dạ Stopirex là chai 30ml, thường dùng khoảng 3–4 tháng khi lăn mỏng đúng cách nên tính theo thời gian dùng sẽ dễ cân hơn ạ.",
+        },
+      ],
+    },
+  });
+
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1] ?? "", /revision_required/u);
+  assert.equal(result.dialoguePlan?.move, "rebuttal");
+  assert.equal(result.dialoguePlan?.nextAngle, "cơ chế kiểm soát mồ hôi");
+  assert.match(result.draftReply ?? "", /thời gian dùng có thể tương đương/iu);
+  assert.match(result.draftReply ?? "", /cơ chế.*kiểm soát lượng mồ hôi/isu);
+  assert.doesNotMatch(result.draftReply ?? "", /30ml|3–4 tháng/iu);
+});
+
 test("parser không làm mất số lượng khi model trả quantity dưới dạng chuỗi", () => {
   const parsed = parseSemanticUnderstanding(
     JSON.stringify({

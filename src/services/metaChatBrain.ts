@@ -196,6 +196,9 @@ export class MetaChatBrain {
         citedKnowledgeIds: llmResult.knowledgeIds ?? [],
         unsupportedQuestionCount: llmResult.unsupportedQuestions?.length ?? 0,
         groundingConfidence: llmResult.groundingConfidence,
+        dialogueMove: llmResult.dialoguePlan?.move,
+        previousAngle: llmResult.dialoguePlan?.previousAngle,
+        nextAngle: llmResult.dialoguePlan?.nextAngle,
         knowledgeRetry,
         semanticKnowledgeQueryCount: semanticQueries.length,
         requiredEvidenceCount: requiredEvidenceMatches.length,
@@ -989,7 +992,7 @@ function contextualKnowledgeQuery(customerMessage: string, state: DemoChatState)
     .replace(/đ/gu, "d")
     .trim();
   const needsPriorContext =
-    /^(?:the|vay|con|loai nay|cai nay|no|nhu tren|nhu vay)\b/.test(normalized) ||
+    /^(?:the|thi|nhung|ma|van|cung|vay|con|loai nay|cai nay|no|nhu tren|nhu vay)\b/.test(normalized) ||
     /^(?:da )?(?:ok|okay|oke|uh|u|duoc|dc|co|khong|ko|k|vang)(?: a| nhe)?$/.test(normalized);
   if (!needsPriorContext) return customerMessage;
   const priorCustomerTurns = state.recentTurns

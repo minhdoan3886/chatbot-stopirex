@@ -77,10 +77,10 @@ export const conversationSkills: Readonly<Record<ConversationSkillId, Conversati
     id: "pricing-objection",
     label: "Giá và băn khoăn",
     objective:
-      "Ghi nhận băn khoăn về giá, giải thích giá trị bằng dữ kiện đã duyệt, nêu đúng ưu đãi của phương án hiện tại và đưa lựa chọn nhẹ nhàng; không đôi co, gây áp lực hoặc tự tạo ưu đãi.",
+      "Đọc lịch sử để hiểu khách đang nêu băn khoăn mới hay phản bác luận điểm cũ. Ghi nhận đúng điểm khách vừa phản bác, dùng một góc giải thích mới có dữ kiện đã duyệt và chỉ hỏi tiếp khi câu hỏi đó giúp tư vấn; không đôi co, lặp luận điểm, gây áp lực hoặc tự tạo ưu đãi.",
     responsePattern:
-      "ghi nhận băn khoăn → giá trị sử dụng đã xác minh → giá/ship đúng phương án → một lựa chọn không gây áp lực",
-    maxCharacters: 320,
+      "ghi nhận đúng phản biện → một góc giá trị sử dụng đã xác minh và chưa dùng → bằng chứng/cách áp dụng liên quan → câu hỏi tư vấn hoặc một lựa chọn không gây áp lực, tùy ngữ cảnh",
+    maxCharacters: 520,
     maxBubbles: 3,
     maxQuestions: 1,
   },

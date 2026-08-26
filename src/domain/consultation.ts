@@ -72,6 +72,24 @@ export type SemanticReplyTo =
 
 export type SemanticScenario = "actual" | "hypothetical" | "past" | "unknown";
 
+export type DialogueMove =
+  | "new_question"
+  | "answer"
+  | "follow_up"
+  | "rebuttal"
+  | "correction"
+  | "decline"
+  | "purchase";
+
+export type DialoguePlan = {
+  /** Concise control metadata, not free-form chain-of-thought and never sent to customers. */
+  move: DialogueMove;
+  challengedPoint?: string;
+  previousAngle?: string;
+  nextAngle?: string;
+  responseShape?: "direct" | "three_p" | "clarify";
+};
+
 export type SemanticUnderstanding = {
   slots: ConsultationSlots;
   status?: "interpreted" | "fallback" | "skipped" | "unavailable";
@@ -83,6 +101,7 @@ export type SemanticUnderstanding = {
   knowledgeQueries?: string[];
   unsupportedQuestions?: string[];
   groundingConfidence?: number;
+  dialoguePlan?: DialoguePlan;
   draftReply?: string;
   skill?: ConversationSkillId;
   intent?: CustomerIntent;

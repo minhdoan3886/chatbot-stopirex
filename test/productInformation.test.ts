@@ -279,3 +279,30 @@ test("retrieval ưu tiên đúng knowledge hẹp và không để hướng dẫn
     false,
   );
 });
+
+test("Knowledge nhận đúng Herbal Body Wash, giá combo và giới hạn claim", () => {
+  const currentTenant = tenantId("body-wash-knowledge");
+  const entities = stopirexApprovedKnowledge(currentTenant);
+  const topIds = (query: string, limit = 4) =>
+    retrieveKnowledgeMatches({ tenantId: currentTenant, query, entities, limit }).map(
+      (item) => item.entity.id,
+    );
+
+  assert.ok(topIds("sữa tắm Stopirex mới có thành phần gì").includes("body-wash-product-profile-2026-08"));
+  assert.equal(topIds("sữa tắm giá bao nhiêu, có bán lẻ không?")[0], "body-wash-rollon-combo-price-2026-08");
+  assert.ok(
+    topIds("hôi nách thì dùng combo sữa tắm với lăn thế nào").includes(
+      "body-wash-rollon-odor-routine-2026-08",
+    ),
+  );
+  assert.ok(
+    topIds("sữa tắm có sulfate không và pH chính xác bao nhiêu").includes(
+      "body-wash-unapproved-safety-boundaries-2026-08",
+    ),
+  );
+
+  const combo = entities.find((item) => item.id === "body-wash-rollon-combo-price-2026-08");
+  assert.match(combo?.content ?? "", /không bán lẻ/u);
+  assert.match(combo?.content ?? "", /525\.000đ/u);
+  assert.match(combo?.content ?? "", /miễn phí giao/u);
+});

@@ -70,3 +70,12 @@ test("chặn tuyên bố không cồn và không có mùi trái hồ sơ", () =>
     ),
   );
 });
+
+test("chặn claim tuyệt đối khi tư vấn Herbal Body Wash", () => {
+  const registry = new ClaimRegistry(defaultBlockedClaims);
+  assert.throws(() => registry.assertSafe("Tràm trà diệt sạch ổ vi khuẩn gây mùi."), UnsafeClaimError);
+  assert.throws(() => registry.assertSafe("Combo này ức chế mồ hôi 100%."), UnsafeClaimError);
+  assert.throws(() => registry.assertSafe("Mùi được triệt tiêu tận gốc."), UnsafeClaimError);
+  assert.throws(() => registry.assertSafe("Em cam kết hết hẳn mùi cơ thể."), UnsafeClaimError);
+  assert.throws(() => registry.assertSafe("Các nốt mụn sẽ làm xẹp ngay."), UnsafeClaimError);
+});

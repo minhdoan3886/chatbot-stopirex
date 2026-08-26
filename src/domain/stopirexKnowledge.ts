@@ -546,10 +546,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Chương trình hiện hành không kèm quà sữa tắm",
       content:
-        "Chương trình bán lẻ hiện hành không có quà tặng sữa tắm. Quà đang áp dụng là 1 túi đa năng vải dệt Stopirex cho mỗi đơn từ 2 lọ trở lên; mỗi đơn chỉ nhận đúng 1 túi.",
+        "Chương trình bán lẻ Stopirex hiện hành không dùng sữa tắm làm quà tặng. Sữa tắm Herbal Body Wash là sản phẩm nằm trong combo trả phí riêng với lăn ngăn tiết mồ hôi Stopirex. Quà đang áp dụng cho đơn lăn từ 2 lọ trở lên là 1 túi đa năng vải dệt Stopirex cho mỗi đơn; mỗi đơn chỉ nhận đúng 1 túi.",
       searchAliases: ["quà sữa tắm", "có tặng sữa tắm không", "quà cũ"],
       responseGuidance:
-        "Không nhận lỗi hoặc xác nhận một quà tặng cũ chỉ từ lời kể của khách; chỉ nói chính sách hiện đang áp dụng.",
+        "Không gọi sữa tắm trong combo 525.000đ là quà tặng. Không tự cộng quà túi vào combo sữa tắm khi chưa có chính sách được duyệt.",
       sourceRow: 50,
     },
     {
@@ -582,6 +582,115 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       responseGuidance:
         "Trả lời trực tiếp rằng không có cửa hàng offline và không có ship hỏa tốc. Không đưa địa chỉ đến mua, không hứa giao trong ngày; hướng dẫn khách đặt online và nhận qua đơn vị vận chuyển.",
       sourceRow: 52,
+    },
+    {
+      id: "body-wash-product-profile-2026-08",
+      tenantId,
+      type: "product",
+      title: "STOPIREX HERBAL BODY WASH – Sữa tắm thảo mộc 500 ml",
+      content:
+        "STOPIREX HERBAL BODY WASH là sữa tắm thảo mộc dung tích 500 ml, xuất xứ Việt Nam, có pH cân bằng và phù hợp sử dụng hằng ngày. Thành phần nổi bật được duyệt gồm Mướp đắng (Bitter Melon), Tràm trà (Tea Tree), Niacinamide (Vitamin B3), Lactic Acid (AHA), Vitamin E và các chiết xuất thực vật. Sản phẩm giúp làm sạch da; hỗ trợ chăm sóc da có dầu thừa và mùi cơ thể; giúp duy trì làn da sạch; đồng thời hỗ trợ làm sáng và dưỡng ẩm da.",
+      searchAliases: [
+        "sữa tắm Stopirex",
+        "sữa tắm thảo mộc",
+        "Herbal Body Wash",
+        "body wash 500ml",
+        "sữa tắm mướp đắng tràm trà niacinamide",
+        "sữa tắm dùng hằng ngày",
+      ],
+      responseGuidance:
+        "Giữ đúng ngôn ngữ mỹ phẩm 'giúp' hoặc 'hỗ trợ'. Không diễn đạt sản phẩm là thuốc hoặc sản phẩm điều trị bệnh da.",
+      sourceRow: 55,
+    },
+    {
+      id: "body-wash-approved-ingredient-benefits-2026-08",
+      tenantId,
+      type: "product",
+      title: "Vai trò thành phần được phép tư vấn của Herbal Body Wash",
+      content:
+        "Tràm trà nằm trong công thức hỗ trợ chăm sóc da cơ thể có dầu thừa và mùi cơ thể. Mướp đắng là chiết xuất thực vật trong công thức làm sạch và chăm sóc da. Niacinamide hỗ trợ làm sáng, dưỡng ẩm và giúp da trông đều màu hơn. Lactic Acid (AHA) hỗ trợ làm sạch tế bào chết bề mặt và giúp da mịn hơn. Vitamin E hỗ trợ dưỡng ẩm. Đây là lợi ích chăm sóc mỹ phẩm; hiệu quả thực tế có thể khác theo tình trạng da và cách sử dụng.",
+      searchAliases: [
+        "thành phần sữa tắm",
+        "tràm trà có tác dụng gì",
+        "mướp đắng có tác dụng gì",
+        "niacinamide body",
+        "AHA sữa tắm",
+        "vitamin E sữa tắm",
+        "mụn lưng",
+        "viêm nang lông",
+        "thâm nách thâm mông bẹn",
+        "da sần da gà",
+      ],
+      responseGuidance:
+        "Không nói diệt sạch vi khuẩn, tiêu viêm, trị mụn/viêm da/nấm/ngứa, làm xẹp mụn ngay, đánh bay thâm hoặc hết viêm nang lông. Không tự khẳng định pH 5.5, không sulfate hay lành tính cho mọi loại da vì dữ liệu được duyệt chưa có các thông tin đó.",
+      sourceRow: 56,
+    },
+    {
+      id: "body-wash-rollon-combo-price-2026-08",
+      tenantId,
+      type: "price",
+      title: "Combo lăn Stopirex và Herbal Body Wash 500 ml",
+      content:
+        "Herbal Body Wash hiện không bán lẻ. Sản phẩm chỉ bán theo combo gồm 1 lăn ngăn tiết mồ hôi Stopirex và 1 chai STOPIREX HERBAL BODY WASH 500 ml. Giá combo là 525.000đ và được miễn phí giao hàng.",
+      searchAliases: [
+        "giá sữa tắm",
+        "sữa tắm bán lẻ không",
+        "mua riêng sữa tắm",
+        "combo lăn sữa tắm",
+        "combo 525k",
+        "525 nghìn freeship",
+      ],
+      responseGuidance:
+        "Nếu khách hỏi mua riêng sữa tắm, trả lời thẳng là hiện chưa bán lẻ và báo đúng combo 525.000đ miễn phí giao. Không nhầm combo này với combo 2 lọ lăn giá 510.000đ, không quy đổi thành số lượng 2 lọ và không tự thêm quà túi.",
+      sourceRow: 57,
+    },
+    {
+      id: "body-wash-rollon-odor-routine-2026-08",
+      tenantId,
+      type: "script",
+      title: "Tư vấn combo theo nhu cầu mùi cơ thể",
+      content:
+        "Với nhu cầu chăm sóc mùi cơ thể, có thể giải thích hai sản phẩm bổ trợ theo hai bước: Herbal Body Wash dùng hằng ngày để làm sạch và hỗ trợ chăm sóc dầu thừa, mùi cơ thể trên da; lăn Stopirex hỗ trợ kiểm soát mồ hôi vùng nách khi dùng đúng hướng dẫn. Lăn Stopirex vào buổi tối khi vùng nách sạch và khô hoàn toàn, một lớp mỏng, khoảng 2–3 lần/tuần theo hướng dẫn; không lăn trên da đang trầy, đỏ, rát hoặc ngay sau cạo, nhổ, wax hay triệt lông.",
+      searchAliases: [
+        "combo trị mùi cơ thể",
+        "hôi nách dùng sữa tắm và lăn",
+        "dùng combo như thế nào",
+        "tắm xong lăn Stopirex",
+        "chăm sóc mùi cơ thể",
+      ],
+      responseGuidance:
+        "Chỉ giới thiệu combo khi phù hợp câu hỏi hoặc nhu cầu khách. Không chào bán trong khiếu nại. Không nói nang lông mở giúp thấm sâu, khóa tuyến mồ hôi 100%, triệt tiêu mùi tận gốc, trị dứt điểm hoặc cam kết hết hẳn.",
+      sourceRow: 58,
+    },
+    {
+      id: "body-wash-unapproved-safety-boundaries-2026-08",
+      tenantId,
+      type: "policy",
+      title: "Giới hạn thông tin công thức và an toàn da của Herbal Body Wash",
+      content:
+        "Dữ liệu hiện được duyệt xác nhận Herbal Body Wash có pH cân bằng và phù hợp sử dụng hằng ngày. Chưa có dữ liệu được duyệt riêng về pH chính xác, tuyên bố không sulfate, dị ứng cụ thể, bệnh da hoặc vùng da đặc biệt. Khi khách hỏi các nội dung này, chỉ trả lời phần đã có và chuyển bộ phận liên quan kiểm tra phần còn thiếu.",
+      searchAliases: [
+        "da nhạy cảm dùng sữa tắm",
+        "sữa tắm có sulfate không",
+        "pH bao nhiêu",
+        "dị ứng sữa tắm",
+      ],
+      sourceRow: 59,
+    },
+    {
+      id: "body-wash-unapproved-populations-2026-08",
+      tenantId,
+      type: "policy",
+      title: "Nhóm đối tượng chưa có hướng dẫn riêng cho Herbal Body Wash",
+      content:
+        "Dữ liệu hiện được duyệt chưa có hướng dẫn riêng về độ tuổi tối thiểu, trẻ em, phụ nữ mang thai hoặc phụ nữ đang cho con bú đối với Herbal Body Wash. Khi khách hỏi các nhóm này, không tự áp dụng chính sách của lăn Stopirex sang sữa tắm; chuyển bộ phận liên quan kiểm tra trước khi tư vấn sử dụng.",
+      searchAliases: [
+        "sữa tắm cho trẻ em",
+        "bé dùng sữa tắm",
+        "bà bầu dùng sữa tắm",
+        "mẹ cho con bú dùng sữa tắm",
+      ],
+      sourceRow: 60,
     },
   ];
 }

@@ -352,6 +352,13 @@ const searchStopWords = new Set([
 ]);
 
 const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
+  body_wash: [
+    "sua tam",
+    "body wash",
+    "herbal body wash",
+    "sua tam thao moc",
+    "sua tam stopirex",
+  ],
   price: ["price", "price bao nhieu", "bao nhieu tien", "bao price", "combo"],
   promotion: ["uu dai", "khuyen mai", "giam price", "bot them", "bot dong", "tang kem", "qua tang", "gift"],
   shipping: [
@@ -437,6 +444,7 @@ const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
 };
 
 const precisionSearchConcepts = new Set([
+  "body_wash",
   "price",
   "pregnancy",
   "breastfeeding",
@@ -447,7 +455,13 @@ const precisionSearchConcepts = new Set([
   "general_usage",
 ]);
 
-const exclusiveSearchConcepts = new Set(["pregnancy", "breastfeeding", "child_age", "body_area_hands_feet"]);
+const exclusiveSearchConcepts = new Set([
+  "body_wash",
+  "pregnancy",
+  "breastfeeding",
+  "child_age",
+  "body_area_hands_feet",
+]);
 
 function normalizeSearchText(value: string): string {
   return (

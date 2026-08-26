@@ -34,6 +34,36 @@ test("Meta gửi private reply và public reply từ comment qua đúng Graph en
   );
 });
 
+test("Meta private reply fallback sang Send API khi edge legacy trả 400", async () => {
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const messenger = new GraphMetaMessenger({
+    pageAccessToken: "page-token",
+    graphVersion: "v25.0",
+    fetcher: async (input, init) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+      if (calls.length === 1) {
+        return Response.json({ error: { code: 100, error_subcode: 33 } }, { status: 400 });
+      }
+      return Response.json({ message_id: "fallback-message" });
+    },
+  });
+
+  const result = await messenger.sendPrivateCommentReply({
+    commentId: "comment_1",
+    text: "Em gửi thông tin chi tiết cho mình ạ.",
+    idempotencyKey: "private-fallback-1",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0]?.url ?? "", /\/v25\.0\/comment_1\/private_replies\?/u);
+  assert.match(calls[1]?.url ?? "", /\/v25\.0\/me\/messages\?/u);
+  assert.deepEqual(calls[1]?.body, {
+    recipient: { comment_id: "comment_1" },
+    message: { text: "Em gửi thông tin chi tiết cho mình ạ." },
+  });
+});
+
 test("Meta ẩn và hiện lại comment bằng is_hidden", async () => {
   const calls: Array<{ url: string; body: unknown }> = [];
   const messenger = new GraphMetaMessenger({

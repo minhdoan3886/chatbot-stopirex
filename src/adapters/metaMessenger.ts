@@ -55,9 +55,20 @@ export class GraphMetaMessenger implements MetaMessenger {
     text: string;
     idempotencyKey: string;
   }): Promise<ProviderResult<{ messageId: string }>> {
-    const result = await this.requestEndpoint(`${encodeURIComponent(input.commentId)}/private_replies`, {
+    let result = await this.requestEndpoint(`${encodeURIComponent(input.commentId)}/private_replies`, {
       message: input.text,
     });
+    // Graph versions and Page configurations do not expose the legacy
+    // private_replies edge consistently. The Messenger Send API supports the
+    // same one-time comment-to-DM operation through recipient.comment_id.
+    // Only fall back after a rejected request, so a successful legacy reply is
+    // never duplicated.
+    if (!result.ok && (result.code === "meta_400" || result.code === "meta_404")) {
+      result = await this.request({
+        recipient: { comment_id: input.commentId },
+        message: { text: input.text },
+      });
+    }
     if (!result.ok) return result;
     const payload = result.value as { id?: string; message_id?: string };
     const messageId = payload.message_id ?? payload.id;
@@ -123,11 +134,21 @@ export class GraphMetaMessenger implements MetaMessenger {
       );
       const payload = (await response.json()) as unknown;
       if (response.ok) return { ok: true, value: payload };
+      const graphError = (payload as { error?: { code?: unknown; error_subcode?: unknown } })?.error;
+      const graphCode = typeof graphError?.code === "number" ? graphError.code : undefined;
+      const graphSubcode =
+        typeof graphError?.error_subcode === "number" ? graphError.error_subcode : undefined;
       return {
         ok: false,
         retryable: response.status === 429 || response.status >= 500,
         code: `meta_${response.status}`,
-        message: "Meta request failed",
+        message: [
+          "Meta request failed",
+          graphCode !== undefined ? `Graph #${graphCode}` : "",
+          graphSubcode !== undefined ? `subcode ${graphSubcode}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
       };
     } catch (error) {
       return {

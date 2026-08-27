@@ -3152,6 +3152,27 @@ test("sau báo giá sớm, số 2 trần trả lời câu hỏi tình trạng ch
   assert.doesNotMatch(selected.reply, /Tên người nhận/);
 });
 
+test("sau báo giá, 'cả 2' được hiểu theo câu hỏi triệu chứng và không hỏi lặp", () => {
+  const chat = new DemoChatService();
+  const price = chat.chat("both-symptoms-after-price", "Giá bao nhiêu?");
+  assert.match(price.reply, /mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai/iu);
+
+  const result = chat.chat(
+    "both-symptoms-after-price",
+    "cả 2",
+    {
+      intent: "consultation",
+      confidence: 0.98,
+      needsClarification: false,
+      slots: { primarySymptom: "both" },
+    },
+  );
+
+  assert.equal(result.state.slots.primarySymptom, "both");
+  assert.doesNotMatch(result.reply, /trước giờ mình không dùng lăn nách/iu);
+  assert.doesNotMatch(result.reply, /1\. Mồ hôi làm ướt|3\. Gặp cả hai tình trạng/iu);
+});
+
 test("một tin có số lượng, freeship và dữ liệu nhận hàng được áp dụng cùng lượt", () => {
   const chat = new DemoChatService();
   chat.chat("atomic-order-turn", "Giá bao nhiêu?");

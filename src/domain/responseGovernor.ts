@@ -98,7 +98,7 @@ export function inferAnsweredTopicFromMessage(
   ) {
     topics.push("work_context");
   }
-  if (/mo hoi|uot|o ao|mui|hoi nach|ca hai/.test(text)) {
+  if (/mo hoi|uot|o ao|mui|hoi nach|ca hai|ca\s*2|hai cai|2 cai|deu bi/.test(text)) {
     topics.push("symptom");
   }
   if (/lan thuong|hang ngay|chuyen sau|gian cach|chua tung dung/.test(text)) {

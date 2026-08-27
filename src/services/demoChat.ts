@@ -2958,6 +2958,9 @@ function rememberTurn(session: DemoSession, turn: { role: "user" | "assistant"; 
 }
 
 function groundSemanticSlots(session: DemoSession, proposed: ConsultationSlots): ConsultationSlots {
+  const latestCustomerText = normalize(
+    [...session.history].reverse().find((turn) => turn.role === "user")?.text ?? "",
+  );
   const customerText = normalize(
     session.history
       .filter((turn) => turn.role === "user")
@@ -2984,10 +2987,20 @@ function groundSemanticSlots(session: DemoSession, proposed: ConsultationSlots):
 
   const sweatEvidence = /mo hoi|\buot\b|uot ao|o ao|tiet mo hoi/.test(customerText);
   const odorEvidence = /\bmui\b|mui co the|hoi nach/.test(customerText);
+  // LLM-first: a short answer such as “cả 2” is meaningful only together
+  // with the symptom question immediately before it. Do not require the
+  // customer to repeat both literal keywords after the model has resolved
+  // that context. The deterministic check remains a contradiction guard and
+  // a fallback, not a replacement for the model's interpretation.
+  const contextualSymptomAnswer =
+    session.pendingQuestionTopic === "symptom" &&
+    !/[?？]/u.test(latestCustomerText) &&
+    !isUnknownAnswer(latestCustomerText);
   if (
-    (grounded.primarySymptom === "sweat" && !sweatEvidence) ||
-    (grounded.primarySymptom === "odor" && !odorEvidence) ||
-    (grounded.primarySymptom === "both" && !(sweatEvidence && odorEvidence))
+    !contextualSymptomAnswer &&
+    ((grounded.primarySymptom === "sweat" && !sweatEvidence) ||
+      (grounded.primarySymptom === "odor" && !odorEvidence) ||
+      (grounded.primarySymptom === "both" && !(sweatEvidence && odorEvidence)))
   ) {
     delete grounded.primarySymptom;
   }
@@ -5320,6 +5333,9 @@ function extractConsultationSlots(
   const odor = /\bmui\b|mui co the|hoi nach/.test(text);
   const deniesSweat = /(?:khong|ko|k)\s+(?:(?:bi|co)\s+)?(?:uot|uot ao|o ao|mo hoi)/.test(text);
   const deniesOdor = /(?:khong|ko|k)\s+(?:(?:bi|co)\s+)?(?:mui|mui co the|hoi nach)/.test(text);
+  const choosesBothSymptoms = /^(?:ca\s*(?:hai|2)|hai cai|2 cai|deu bi|bi ca\s*(?:hai|2))$/u.test(
+    text,
+  );
   if (state.stage === "S2.sweat" && !isUnknownAnswer(text)) {
     if (deniesSweat || isNoAnswer(text)) slots.sweatPresent = false;
     else if (sweat && odor) slots.primarySymptom = "both";
@@ -5330,7 +5346,8 @@ function extractConsultationSlots(
     else if (sweat && odor) slots.primarySymptom = "both";
     else if (isYesAnswer(text) || odor) slots.odorPresent = true;
     else if (sweat) slots.primarySymptom = "sweat";
-  } else if (state.stage === "S2.symptom" && text === "1") slots.primarySymptom = "sweat";
+  } else if (state.stage === "S2.symptom" && choosesBothSymptoms) slots.primarySymptom = "both";
+  else if (state.stage === "S2.symptom" && text === "1") slots.primarySymptom = "sweat";
   else if (state.stage === "S2.symptom" && text === "2") slots.primarySymptom = "odor";
   else if (
     state.stage === "S2.symptom" &&

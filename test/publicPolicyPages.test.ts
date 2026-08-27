@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  appReviewPage,
   dataDeletionPage,
   privacyPolicyPage,
   termsOfServicePage,
@@ -13,11 +14,15 @@ test("public policy pages expose the Meta review essentials", () => {
   assert.match(termsOfServicePage, /Điều khoản sử dụng/u);
   assert.match(dataDeletionPage, /Yêu cầu xóa dữ liệu/u);
   assert.match(dataDeletionPage, /không quá 30 ngày/u);
+  assert.match(appReviewPage, /Stopirex Facebook Customer Care/u);
+  assert.match(appReviewPage, /Yến Nhi thích skincare/u);
 });
 
 test("public policy pages contain no test-only wording", () => {
-  for (const page of [privacyPolicyPage, termsOfServicePage, dataDeletionPage]) {
+  for (const page of [privacyPolicyPage, termsOfServicePage, dataDeletionPage, appReviewPage]) {
     assert.doesNotMatch(page, /localhost|sandbox|demo|đơn thử/iu);
-    assert.match(page, /Facebook Page Stopirex/u);
   }
+  assert.match(privacyPolicyPage, /Facebook Page Stopirex/u);
+  assert.match(termsOfServicePage, /Facebook Page Stopirex/u);
+  assert.match(dataDeletionPage, /Facebook Page Stopirex/u);
 });

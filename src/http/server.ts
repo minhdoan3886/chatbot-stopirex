@@ -33,7 +33,12 @@ import { productPage } from "./productPage.js";
 import { ordersPage } from "./ordersPage.js";
 import { pagesPage } from "./pagesPage.js";
 import { commentsPage } from "./commentsPage.js";
-import { dataDeletionPage, privacyPolicyPage, termsOfServicePage } from "./publicPolicyPages.js";
+import {
+  appReviewPage,
+  dataDeletionPage,
+  privacyPolicyPage,
+  termsOfServicePage,
+} from "./publicPolicyPages.js";
 import { OrderInboxService } from "../services/orderInbox.js";
 import { GraphMetaMessenger } from "../adapters/metaMessenger.js";
 import {
@@ -126,6 +131,10 @@ const server = createServer(async (request, response) => {
 
   if (request.method === "GET" && url.pathname === "/data-deletion") {
     return html(response, 200, dataDeletionPage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/app-review") {
+    return html(response, 200, appReviewPage);
   }
 
   if (request.method === "GET" && url.pathname === "/operations") {

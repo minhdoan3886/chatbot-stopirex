@@ -12,9 +12,9 @@ const policyStyles = `
   @media (max-width: 640px) { main { margin: 16px auto; padding: 24px 20px; } }
 `;
 
-function page(title: string, body: string): string {
+function page(title: string, body: string, language = "vi"): string {
   return `<!doctype html>
-<html lang="vi">
+<html lang="${language}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -29,6 +29,35 @@ function page(title: string, body: string): string {
 </body>
 </html>`;
 }
+
+export const appReviewPage = page(
+  "Facebook App Review",
+  `<h1>Stopirex Facebook Customer Care</h1>
+  <p class="meta">Official application information for Meta App Review.</p>
+  <p>Stopirex is a customer-care and commerce application used by authorized staff to manage conversations and comments on Facebook Pages that they administer.</p>
+
+  <h2>How the application uses Meta products</h2>
+  <ul>
+    <li>Facebook Login for Business lets a Page administrator select which managed Page to connect.</li>
+    <li>Messenger Webhooks deliver customer-initiated messages so the application can prepare and send relevant customer-care replies.</li>
+    <li>Page comment events let authorized staff monitor comments, reply publicly, continue support privately when appropriate, and protect publicly posted phone numbers or email addresses.</li>
+    <li>Each connected Page can be enabled or disabled separately by an authorized administrator.</li>
+  </ul>
+
+  <h2>Data use and customer control</h2>
+  <p>The application processes only the information required to provide customer support, manage orders requested by customers, and operate the connected Page. It does not sell personal data or use Page data for unrelated advertising.</p>
+
+  <h2>Policies</h2>
+  <ul>
+    <li><a href="/privacy-policy">Privacy Policy</a></li>
+    <li><a href="/terms">Terms of Service</a></li>
+    <li><a href="/data-deletion">Data Deletion Instructions</a></li>
+  </ul>
+
+  <h2>Reviewer test path</h2>
+  <p>Use the Meta test user or Page role supplied with the review submission, connect the Page named <strong>Yến Nhi thích skincare</strong>, and send a customer-initiated Messenger message to verify the support workflow.</p>`,
+  "en",
+);
 
 const pageContact = `Nếu cần hỗ trợ hoặc thực hiện quyền đối với dữ liệu, khách hàng có thể nhắn tin trực tiếp cho <a href="https://www.facebook.com/108631178590851">Facebook Page Stopirex</a>.`;
 

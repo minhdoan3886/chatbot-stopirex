@@ -77,7 +77,7 @@ export const conversationSkills: Readonly<Record<ConversationSkillId, Conversati
     id: "pricing-objection",
     label: "Giá và băn khoăn",
     objective:
-      "Đọc lịch sử để hiểu khách đang nêu băn khoăn mới hay phản bác luận điểm cũ. Ghi nhận đúng điểm khách vừa phản bác, dùng một góc giải thích mới có dữ kiện đã duyệt và chỉ hỏi tiếp khi câu hỏi đó giúp tư vấn; không đôi co, lặp luận điểm, gây áp lực hoặc tự tạo ưu đãi.",
+      "Đọc lịch sử để hiểu khách đang nêu băn khoăn mới hay phản bác luận điểm cũ. Ghi nhận đúng điểm khách vừa phản bác, dùng một góc giải thích mới có dữ kiện đã duyệt và chỉ hỏi tiếp khi câu hỏi đó giúp tư vấn; không đôi co, lặp luận điểm, ép chốt, gây áp lực hoặc tự tạo ưu đãi.",
     responsePattern:
       "ghi nhận đúng phản biện → một góc giá trị sử dụng đã xác minh và chưa dùng → bằng chứng/cách áp dụng liên quan → câu hỏi tư vấn hoặc một lựa chọn không gây áp lực, tùy ngữ cảnh",
     maxCharacters: 520,

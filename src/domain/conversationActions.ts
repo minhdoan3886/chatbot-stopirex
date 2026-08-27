@@ -348,7 +348,11 @@ export function reconcileConversationActions(input: {
     conflicts.push("Câu hỏi cần xác minh chính sách trước khi tiếp tục hành động mua.");
   }
 
-  const quantityPolicyQuestion = isQuantityPolicyQuestion(text);
+  // A price/ship mention is not allowed to erase a high-confidence quantity
+  // correction that the LLM grounded verbatim in an active order. Without
+  // that trusted linguistic decision, the old policy guard remains intact.
+  const quantityPolicyQuestion =
+    isQuantityPolicyQuestion(text) && !(input.collectingOrder && trustedLlmQuantity !== undefined);
   if (quantityPolicyQuestion) {
     rejectAccepted(
       accepted,

@@ -51,6 +51,45 @@ test("hợp nhất nhiều hành động theo thứ tự trả lời rồi chọ
   assert.equal(plan.hasMultipleActions, true);
 });
 
+test("LLM được sửa số lượng đơn dù cùng câu còn hỏi tổng tiền và địa chỉ giao", () => {
+  const message =
+    "Thôi lấy cho anh 1 lọ thôi. Sđt anh là 0988777666. Em đọc lại xem chốt mấy lọ, tiền bao nhiêu, ship về đâu.";
+  const plan = reconcileConversationActions({
+    customerMessage: message,
+    semantic: semantic({
+      intent: "buying",
+      topic: "order",
+      evidence: ["Thôi lấy cho anh 1 lọ thôi"],
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 1,
+          confidence: 0.99,
+          evidence: ["Thôi lấy cho anh 1 lọ thôi"],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.99,
+          evidence: ["Thôi lấy cho anh 1 lọ thôi"],
+          source: "llm",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: true,
+  });
+
+  assert.equal(plan.quantity, 1);
+  assert.equal(plan.primaryIntent, "buying");
+  assert.equal(
+    plan.rejected.some(
+      ({ action, reason }) => action.type === "select_quantity" && reason === "policy_verification_required",
+    ),
+    false,
+  );
+});
+
 test("bổ sung chủ đề chính bị thiếu khi LLM mới tạo answer action cho ý còn lại", () => {
   const plan = reconcileConversationActions({
     customerMessage:

@@ -2471,12 +2471,12 @@ test("chê giá cao dùng skill pricing-objection, nêu giá trị thật và kh
   assert.equal(result.state.lastIntent, "price_objection");
   assert.equal(result.state.activeSkill, "pricing-objection");
   assert.equal(result.state.decisionTrace?.selectedRoute, "direct_intent");
-  assert.match(result.reply, /em hiểu băn khoăn/iu);
+  assert.match(result.reply, /em hiểu.*(?:băn khoăn|cân nhắc)/iu);
   assert.match(result.reply, /nhập khẩu từ Pháp/iu);
   assert.match(result.reply, /ngăn tiết mồ hôi chuyên sâu/iu);
   assert.match(result.reply, /2–3 ngày\/lần/iu);
-  assert.match(result.reply, /miễn phí giao.*1 lọ|1 lọ.*miễn phí giao/isu);
-  assert.match(result.reply, /đơn từ 2 lọ trở lên.*miễn phí giao/isu);
+  assert.match(result.reply, /1 lọ.*285\.000đ.*30\.000đ phí giao/isu);
+  assert.match(result.reply, /combo 2 lọ.*510\.000đ.*miễn phí giao/isu);
   assert.doesNotMatch(result.reply, /dược mỹ phẩm chuẩn châu Âu|giá tốt nhất|tranh thủ|bên khác.*không/iu);
 });
 
@@ -2495,7 +2495,7 @@ test("đang chọn combo thì xử lý giá cao theo đúng ưu đãi của comb
   assert.match(result.reply, /giữ phương án đang chọn hay điều chỉnh số lượng/iu);
 });
 
-test("đơn 1 lọ được tự duyệt miễn phí giao khi khách chê giá", () => {
+test("đơn 1 lọ không tự duyệt miễn phí giao chỉ vì khách chê giá", () => {
   const chat = new DemoChatService();
   const sessionId = "selected-single-price-objection";
   chat.chat(sessionId, "Giá bao nhiêu?");
@@ -2504,8 +2504,8 @@ test("đơn 1 lọ được tự duyệt miễn phí giao khi khách chê giá",
   const result = chat.chat(sessionId, "Giá cao quá");
 
   assert.equal(result.state.selectedQuantity, 1);
-  assert.equal(result.state.freeShippingApproved, true);
-  assert.match(result.reply, /285\.000đ.*miễn phí giao|miễn phí giao.*285\.000đ/isu);
+  assert.equal(result.state.freeShippingApproved, false);
+  assert.match(result.reply, /285\.000đ.*30\.000đ phí giao/isu);
 });
 
 test("xin giảm phần trăm kèm freeship được từ chối đúng chính sách và vẫn có CTA", () => {
@@ -3619,4 +3619,193 @@ test("yêu cầu mua combo sữa tắm không bị quy đổi thành combo 2 l�
     ),
     true,
   );
+});
+
+test("kịch bản dài giữ ngữ cảnh, không lặp phản biện và cập nhật đơn theo quyết định cuối", () => {
+  const chat = new DemoChatService();
+  const sessionId = "long-context-final-quantity";
+  const context = { actionExecutionMode: "multi_action" as const };
+
+  chat.chat(
+    sessionId,
+    "Tư vấn anh lọ lăn nách với. Anh hay đi gặp khách hàng mà mồ hôi nách ướt sũng sơ mi, ngại lắm. Giá rổ sao em?",
+    {
+      slots: { primarySymptom: "sweat" },
+      intent: "price_request",
+      topic: "price",
+      confidence: 0.99,
+      evidence: ["Giá rổ sao em"],
+      knowledgeIds: ["pricing-approved-options-2026-08"],
+      groundingConfidence: 0.99,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "price",
+          confidence: 0.99,
+          evidence: ["Giá rổ sao em"],
+          source: "llm",
+        },
+      ],
+    },
+    context,
+  );
+
+  const objection = chat.chat(
+    sessionId,
+    "Lọ 30ml bé tí này mà giá đắt thế á? Anh mua chai lăn Nivea ở siêu thị to đùng cũng dùng được 3-4 tháng mà có mấy chục cành.",
+    {
+      slots: {},
+      intent: "price_objection",
+      topic: "comparison",
+      confidence: 0.99,
+      evidence: ["giá đắt thế"],
+      knowledgeIds: ["product-comparison-traditional-rollon"],
+      groundingConfidence: 0.99,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "comparison",
+          confidence: 0.99,
+          evidence: ["chai lăn Nivea ở siêu thị"],
+          source: "llm",
+        },
+      ],
+    },
+    context,
+  );
+  assert.equal(objection.state.lastIntent, "price_objection");
+  assert.match(objection.reply, /điểm khác không nằm ở.*số tháng|ngăn tiết mồ hôi chuyên sâu/isu);
+  assert.doesNotMatch(objection.reply, /dùng được khoảng 3–4 tháng|chọn mấy lọ/iu);
+
+  const usage = chat.chat(
+    sessionId,
+    "Thế sáng dậy đánh răng rửa mặt xong thì bôi cái này trước khi mặc áo đi làm đúng không? Áo anh toàn hàng đắt tiền, ố vàng là anh phốt đấy nhé.",
+    {
+      slots: {},
+      intent: "usage_guidance",
+      topic: "usage",
+      confidence: 0.99,
+      evidence: ["bôi cái này trước khi mặc áo"],
+      knowledgeIds: ["usage-application-feel-clothing"],
+      groundingConfidence: 0.99,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "usage",
+          confidence: 0.99,
+          evidence: ["bôi cái này trước khi mặc áo"],
+          source: "llm",
+        },
+      ],
+    },
+    context,
+  );
+  assert.match(usage.reply, /buổi tối/iu);
+  assert.match(usage.reply, /không.*ố vàng/isu);
+
+  const pregnancy = chat.chat(
+    sessionId,
+    "Nghe cũng hợp lý. Thế vợ anh đang bầu 5 tháng thì có dùng ké được không? Dạo này bả cũng hay bị ra mồ hôi trộm nặng mùi.",
+    {
+      slots: {},
+      intent: "safety",
+      topic: "pregnancy",
+      subject: "customer",
+      confidence: 0.99,
+      evidence: ["vợ anh đang bầu 5 tháng"],
+      knowledgeIds: ["audience-pregnancy"],
+      groundingConfidence: 0.99,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "pregnancy",
+          confidence: 0.99,
+          evidence: ["vợ anh đang bầu 5 tháng"],
+          source: "llm",
+        },
+      ],
+    },
+    context,
+  );
+  assert.match(pregnancy.reply, /mang thai.*tham khảo ý kiến bác sĩ/isu);
+  assert.doesNotMatch(pregnancy.reply, /vợ mình dùng chung.*được/iu);
+
+  const selected = chat.chat(
+    sessionId,
+    "Ok thế chốt anh combo 2 lọ luôn, vợ 1 chồng 1. Ship về chung cư HH2A Linh Đàm cho anh nhé.",
+    {
+      slots: {},
+      intent: "buying",
+      topic: "order",
+      confidence: 0.99,
+      evidence: ["chốt anh combo 2 lọ"],
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 2,
+          confidence: 0.99,
+          evidence: ["chốt anh combo 2 lọ"],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.99,
+          evidence: ["chốt anh combo 2 lọ"],
+          source: "llm",
+        },
+      ],
+    },
+    context,
+  );
+  assert.equal(selected.state.selectedQuantity, 2);
+  assert.match(
+    selected.state.orderDraft?.legacyAddress ?? "",
+    /HH2A Linh Đàm.*Phường Hoàng Liệt.*Quận Hoàng Mai.*Hà Nội/isu,
+  );
+  assert.deepEqual(selected.state.orderMissing, ["recipientName", "phone"]);
+
+  const final = chat.chat(
+    sessionId,
+    "À khoan khoan, vợ anh bả bảo sợ bầu không dám bôi lung tung đâu. Thôi lấy cho anh 1 lọ thôi. Sđt anh là 0988777666. Em đọc lại xem nãy giờ chốt cho anh mấy lọ, tiền bao nhiêu, ship về đâu đúng chưa để anh đi họp cái.",
+    {
+      slots: {},
+      intent: "buying",
+      topic: "order",
+      confidence: 0.99,
+      evidence: ["Thôi lấy cho anh 1 lọ thôi"],
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 1,
+          confidence: 0.99,
+          evidence: ["Thôi lấy cho anh 1 lọ thôi"],
+          source: "llm",
+        },
+        {
+          type: "update_order",
+          fields: { phone: "0988777666" },
+          confidence: 0.99,
+          evidence: ["Sđt anh là 0988777666"],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.99,
+          evidence: ["Thôi lấy cho anh 1 lọ thôi"],
+          source: "llm",
+        },
+      ],
+    },
+    context,
+  );
+
+  assert.equal(final.state.selectedQuantity, 1);
+  assert.equal(final.state.orderDraft?.totalVnd, 315_000);
+  assert.equal(final.state.orderDraft?.phone, "0988777666");
+  assert.equal(final.state.orderDraft?.recipientName, undefined);
+  assert.match(final.reply, /1 lọ.*315\.000đ/isu);
+  assert.match(final.reply, /HH2A Linh Đàm/iu);
+  assert.match(final.reply, /còn thiếu Tên người nhận/iu);
+  assert.match(final.reply, /họp thuận lợi/iu);
+  assert.doesNotMatch(final.reply, /combo 2 lọ|À Khoan Khoan/iu);
 });

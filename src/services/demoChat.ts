@@ -303,6 +303,11 @@ export class DemoChatService {
         semanticGrounded ||
         Boolean(semantic.unsupportedQuestions?.length)),
     );
+    const semanticAuthorityReady = Boolean(
+      semanticRoutingReady &&
+        (semantic.confidence ?? 0) >= 0.85 &&
+        hasGroundedSemanticEvidence(raw, semantic),
+    );
     const protectedApplicationConcern =
       isApplicationFeelOrClothingConcern(text) && !isPriceAndShippingPolicyQuestion(text);
     const priorOtherProductAdverseExperience = isPriorOtherProductAdverseExperience(text);
@@ -341,10 +346,24 @@ export class DemoChatService {
       session.pipeline = "4.XL băn khoăn";
       session.consultation = { ...session.consultation, stage: "S5.guidance" };
     }
+    // LLM-first routing: a strong, verbatim-grounded interpretation owns the
+    // customer's linguistic intent. Keyword detectors remain fallback signals
+    // and hard system/security guards; they must not silently replace a
+    // different intent already understood by the model.
+    const reconcilerExactIntent =
+      semanticAuthorityReady &&
+      exactIntent &&
+      semantic.intent &&
+      exactIntent !== semantic.intent &&
+      !citationProtectedConcern &&
+      !isInternalSystemProbe(text) &&
+      !isOutOfScopeAssistantProbe(text)
+        ? undefined
+        : exactIntent;
     const actionPlan = reconcileConversationActions({
       customerMessage: raw,
       semantic,
-      ...(exactIntent ? { exactIntent } : {}),
+      ...(reconcilerExactIntent ? { exactIntent: reconcilerExactIntent } : {}),
       ...(!(multiActionEnabled && semanticHasMultipleAnswerTopics) && protectedApplicationConcern
         ? { exactAnswerTopic: "effectiveness" as const }
         : {}),
@@ -369,17 +388,21 @@ export class DemoChatService {
       ) &&
       applySemanticOrderUpdates(session, actionPlan.accepted, raw);
     const exactRouteIsHardGuard = Boolean(
-      exactIntent &&
-      (!semanticRoutingReady ||
-        isCommerceGuardIntent(exactIntent) ||
-        (protectedKnownAnswerConcern &&
-          !(multiActionEnabled && semanticHasMultipleAnswerTopics && semanticRoutingReady))),
+      reconcilerExactIntent &&
+        (isInternalSystemProbe(text) ||
+          isOutOfScopeAssistantProbe(text) ||
+          citationProtectedConcern ||
+          (!semanticAuthorityReady &&
+            (!semanticRoutingReady ||
+              isCommerceGuardIntent(reconcilerExactIntent) ||
+              (protectedKnownAnswerConcern &&
+                !(multiActionEnabled && semanticHasMultipleAnswerTopics && semanticRoutingReady))))),
     );
     const effectiveExactIntent = multiActionEnabled
       ? exactRouteIsHardGuard
-        ? exactIntent
-        : (actionPlan.primaryIntent ?? exactIntent)
-      : exactIntent;
+        ? reconcilerExactIntent
+        : (actionPlan.primaryIntent ?? reconcilerExactIntent)
+      : reconcilerExactIntent;
     // In multi-action mode the Reconciler owns scope: a keyword detector may
     // propose a care issue, but only a reconciled current-customer incident is
     // allowed to open a real CSKH case.
@@ -681,6 +704,13 @@ export class DemoChatService {
     }
 
     if (isOrderRecapRequest(text) && session.selectedQuantity) {
+      // A recap may also contain the customer's final correction (for example
+      // “thôi lấy 1 lọ ... đọc lại đơn”). Commit the trusted LLM action first,
+      // then render the recap from the updated OrderDraft.
+      if (actionPlan.quantity && actionPlan.quantity !== session.selectedQuantity) {
+        selectQuantity(session, actionPlan.quantity);
+      }
+      mergeOrderData(session, raw);
       session.lastIntent = "order_support";
       session.activeSkill = "order-closing";
       session.skillReason = "Order recap đọc trực tiếp OrderDraft đã commit, không gọi bảng giá hoặc LLM.";
@@ -982,7 +1012,7 @@ export class DemoChatService {
       return this.respond(session, domesticDeliveryEtaPolicyReply());
     }
 
-    if (isHouseholdSharedUseQuestion(text)) {
+    if (!semanticRoutingReady && isHouseholdSharedUseQuestion(text)) {
       session.lastIntent = "product_effect";
       session.activeSkill = "direct-answer";
       session.skillReason = "Trả lời khả năng dùng chung cho người thân từ Knowledge đã duyệt.";
@@ -1354,7 +1384,7 @@ export class DemoChatService {
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
       const quantity = actionPlan.quantity;
-      if (effectiveExactIntent === "negotiation" || effectiveExactIntent === "price_objection") {
+      if (effectiveExactIntent === "negotiation") {
         approveSingleShipping(session);
       }
       const answer = multiActionAnswer(actionPlan.answerTopics, raw, semanticSlots);
@@ -2097,7 +2127,6 @@ export class DemoChatService {
     }
 
     if (directIntent === "price_objection" || isPriceConcern(text)) {
-      approveSingleShipping(session);
       session.lastIntent = "price_objection";
       session.signal = "CT.Giá/Ship";
       recordKnowledge(session, ["price-adjustment-france-import", "product-comparison-traditional-rollon"]);
@@ -2106,7 +2135,7 @@ export class DemoChatService {
       } catch {
         session.pipeline = "4.XL băn khoăn";
       }
-      return this.respond(session, priceObjectionReply(session));
+      return this.respond(session, priceObjectionReply(session, text));
     }
 
     if (
@@ -2916,6 +2945,18 @@ function normalizeSemanticInput(input: ConsultationSlots | SemanticUnderstanding
   return { slots: input };
 }
 
+function hasGroundedSemanticEvidence(raw: string, semantic: SemanticUnderstanding): boolean {
+  const message = normalize(raw);
+  const evidence = [
+    ...(semantic.evidence ?? []),
+    ...(semantic.actions ?? []).flatMap((action) => action.evidence),
+  ];
+  return evidence.some((item) => {
+    const grounded = normalize(item);
+    return grounded.length >= 2 && message.includes(grounded);
+  });
+}
+
 function resolveContextualSemantic(
   session: DemoSession,
   raw: string,
@@ -3219,7 +3260,7 @@ function detectDirectIntent(text: string): CustomerIntent | undefined {
     return "usage_time";
   }
   if (
-    /da nhay cam|\b(?:tre|te)\s*(?:em|e|nho)?\b|\bbe(?: trai| gai| nha|minh| bao nhieu tuoi|\s*\d+\s*tuoi)\b|duoi 12|12 tuoi|me bau|ba bau|pa pau|ba pau|mang thai|cho con bu|doi tuong.*(?:dung|su dung)|ai.*dung duoc|\ban toan\b.{0,40}\b(?:khong|ko|k)\b/.test(
+    /da nhay cam|\b(?:tre|te)\s*(?:em|e|nho)?\b|\bbe(?: trai| gai| nha|minh| bao nhieu tuoi|\s*\d+\s*tuoi)\b|duoi 12|12 tuoi|me bau|ba bau|pa pau|ba pau|mang thai|cho con bu|doi tuong.*(?:dung|su dung)|\bai\s+(?:co the\s+)?(?:dung|su dung)\s+duoc\b|\ban toan\b.{0,40}\b(?:khong|ko|k)\b/.test(
       text,
     )
   ) {
@@ -3371,7 +3412,11 @@ function isHouseholdSharedUseQuestion(value: string): boolean {
   const text = normalize(value);
   const mentionsRelative = /\b(?:vo|chong|nguoi yeu|chi gai|anh trai|nguoi nha)\b/.test(text);
   const asksSharedUse = /\b(?:dung ke|dung chung|xai ke|xai chung)\b|\bco dung duoc khong\b/.test(text);
-  return mentionsRelative && asksSharedUse;
+  const mentionsSafetyPriorityAudience =
+    /\b(?:phu nu co thai|mang thai|dang bau|me bau|ba bau|bau bi|co bau|cho con bu|duoi 12|tre em|be\s+\d+\s+tuoi)\b/.test(
+      text,
+    );
+  return mentionsRelative && asksSharedUse && !mentionsSafetyPriorityAudience;
 }
 
 function isDarkeningAndClothingQuestion(value: string): boolean {
@@ -3843,7 +3888,7 @@ function negotiationReply(
   return "Dạ em hiểu mình muốn bên em hỗ trợ thêm về giá ạ. Lần này bên em duyệt miễn phí giao cho 1 lọ, tổng còn 285.000đ. Đơn từ 2 lọ trở lên được miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex cho mỗi đơn ạ.\n\nMình muốn lấy mấy lọ ạ?";
 }
 
-function priceObjectionReply(session: DemoSession): string {
+function priceObjectionReply(session: DemoSession, customerText = ""): string {
   const single = quote(1);
   const money = (amount: number): string => `${amount.toLocaleString("vi-VN")}đ`;
   const value =
@@ -3859,13 +3904,19 @@ function priceObjectionReply(session: DemoSession): string {
   }
 
   if (session.selectedQuantity === 1) {
-    const shipping = session.freeShippingApproved
-      ? "đã được duyệt miễn phí giao"
-      : `cộng ${money(single.shippingFee.amount)} phí giao`;
+    const shipping = `cộng ${money(single.shippingFee.amount)} phí giao`;
     return `Dạ em hiểu băn khoăn của mình ạ. ${value}\n\nPhương án 1 lọ hiện là ${money(single.productPrice.amount)}, ${shipping}. Mình muốn giữ 1 lọ hay xem phương án combo tiết kiệm hơn ạ?`;
   }
 
-  return `Dạ em hiểu băn khoăn của mình ạ. ${value}\n\nLần này bên em hỗ trợ miễn phí giao cho 1 lọ; đơn từ 2 lọ trở lên được miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex cho mỗi đơn. Mình muốn chọn mấy lọ ạ?`;
+  if (isBottleLongevityQuestion(customerText) || isDetailedMechanismComparisonQuestion(customerText)) {
+    return [
+      "Dạ anh so sánh thời gian dùng như vậy là hợp lý ạ; điểm khác không nằm ở dung tích hay số tháng dùng.",
+      "Lăn thông thường thiên về khử hoặc che mùi hằng ngày, còn Stopirex là dòng ngăn tiết mồ hôi chuyên sâu, dùng buổi tối để hỗ trợ vùng nách khô thoáng hơn vào hôm sau.",
+      "Với loại anh đang dùng, giữa ngày nách có còn ướt áo không ạ?",
+    ].join("\n\n");
+  }
+
+  return `Dạ em hiểu mình cân nhắc về giá ạ. ${value}\n\n1 lọ hiện là ${money(single.productPrice.amount)} + ${money(single.shippingFee.amount)} phí giao; combo 2 lọ ${money(quote(2).total.amount)}, miễn phí giao. Điều mình lăn tăn nhất là mức giá hay hiệu quả kiểm soát mồ hôi ạ?`;
 }
 
 function productEffectTopic(text: string, semanticSlots: ConsultationSlots): PrimarySymptom | undefined {
@@ -4657,7 +4708,7 @@ function isPriceRequest(text: string): boolean {
 }
 
 function isOrderRecapRequest(text: string): boolean {
-  return /\b(?:nhac lai|xem lai|check lai|kiem tra lai|tom tat)\b.{0,40}\b(?:don|don hang|thong tin don)\b|\b(?:bao nhieu tien|bao tien)\b.{0,20}\b(?:don|don nay|don hang)\b/.test(
+  return /\b(?:nhac lai|xem lai|check lai|kiem tra lai|tom tat)\b.{0,40}\b(?:don|don hang|thong tin don)\b|\b(?:bao nhieu tien|bao tien)\b.{0,20}\b(?:don|don nay|don hang)\b|\bdoc lai\b.{0,100}\b(?:(?:chot|lay).{0,30}(?:may|bao nhieu)\s*lo|tien bao nhieu|ship ve dau)\b/.test(
     text,
   );
 }
@@ -5876,6 +5927,7 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
   const collectingOrderBeforeTurn = Boolean(session.selectedQuantity);
   const shouldObserveOrder = collectingOrderBeforeTurn || isOrderCaptureMessage(raw);
   if (shouldObserveOrder) {
+    const mayCaptureAddress = collectingOrderBeforeTurn || isOrderCaptureMessage(raw);
     const actions: OrderMutationAction[] = [];
     const phone = extractPhoneNumber(raw);
     if (phone) {
@@ -5900,7 +5952,7 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
     const singleMissingAdministrativeAddress = collectingOrderBeforeTurn
       ? extractSingleMissingAdministrativeAddress(raw, session.order)
       : undefined;
-    if (collectingOrderBeforeTurn && destination) {
+    if (mayCaptureAddress && destination) {
       if (session.order.legacyAddress) {
         rememberLocation(session, session.order.legacyAddress, session.order.legacyAddress);
       }
@@ -5911,7 +5963,7 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
         evidence: raw,
       });
     }
-    if (collectingOrderBeforeTurn && administrativeAddress && (destination || session.order.legacyAddress)) {
+    if (mayCaptureAddress && administrativeAddress && (destination || session.order.legacyAddress)) {
       actions.push({
         type: "set_address",
         address: administrativeAddress,
@@ -6022,7 +6074,7 @@ export function isPriorAddressReference(raw: string): boolean {
     /\bnhu (?:minh|toi|em|anh|chi)?\s*(?:noi|gui|nhan)?\s*(?:ban nay|luc truoc|truoc do)\b|\bquay ve\b.{0,60}\bnhu ban nay\b/.test(
       text,
     ) ||
-    /\b(?:gui|guit|giao|ship|chuyen|dung|lay)\b.{0,50}\b(?:ve|toi|den|theo)\b.{0,35}\b(?:dia chi\s+)?(?:tren|cu|truoc|vua gui|vua noi|luc truoc|truoc do)\b/.test(
+    /\b(?:gui|guit|giao|ship|chuyen|dung|lay)\b.{0,50}\b(?:ve|toi|den|theo)\b.{0,35}\b(?:tren|dia chi\s+cu|truoc|vua gui|vua noi|luc truoc|truoc do)\b/.test(
       text,
     )
   );
@@ -6182,10 +6234,18 @@ export function extractDeliveryDestination(raw: string): string | undefined {
     )?.[1]
     ?.trim();
   if (!match) return undefined;
-  const destination = match.replace(/\s+(?:nhé|nhe|ạ|a)\s*$/iu, "").trim();
+  const destination = match
+    .replace(/\s+(?:cho\s+(?:anh|chị|chi|em|mình|minh)\s+)?(?:nhé|nhe|ạ|a)\s*$/iu, "")
+    .replace(/\s+cho\s+(?:anh|chị|chi|em|mình|minh)\s*$/iu, "")
+    .trim();
   const normalized = normalize(destination);
   if (normalized === "cau giay" || normalized === "quan cau giay") {
     return "Quận Cầu Giấy, Hà Nội";
+  }
+  // “Chung cư + mã tòa + khu đô thị” is a complete Vietnamese delivery
+  // detail even when it contains no literal street/ward prefix.
+  if (/\bchung cu\b/.test(normalized) && /\d/.test(normalized)) {
+    return canonicalizeLegacyAddress(destination);
   }
   return cleanAddressCandidate(destination);
 }
@@ -6407,7 +6467,7 @@ function extractRecipientName(raw: string): string | undefined {
 function looksLikeOrderRecipientCandidate(value: string): boolean {
   if (!looksLikeRecipientName(value)) return false;
   const text = normalize(value);
-  return !/\b(?:nghe|on|the|chot|lay|chon|mua|dat|gui|giao|ship|ve|dung thu|sdt|dia chi|nhe|nha|shop)\b/.test(
+  return !/\b(?:khoan|thoi|nghe|on|the|chot|lay|chon|mua|dat|gui|giao|ship|ve|dung thu|sdt|dia chi|nhe|nha|shop)\b/.test(
     text,
   );
 }
@@ -6468,7 +6528,7 @@ function looksLikeAddress(value: string): boolean {
     return false;
   }
   const hasAddressWord =
-    /\b(so|duong|pho|ngo|ngach|hem|thon|xom|ap|to|khu|toa nha|phuong|xa|thi tran|quan|huyen|thi xa|tinh|thanh pho|ha noi|ho chi minh|hai phong|da nang|can tho|hue|nam tu liem|hoang mai|dinh cong)\b/.test(
+    /\b(so|duong|pho|ngo|ngach|hem|thon|xom|ap|to|khu|chung cu|toa nha|phuong|xa|thi tran|quan|huyen|thi xa|tinh|thanh pho|ha noi|ho chi minh|hai phong|da nang|can tho|hue|nam tu liem|hoang mai|dinh cong)\b/.test(
       normalized,
     );
   const hasStreetNumberAndName =
@@ -6501,6 +6561,7 @@ function commitLegacyAddress(
 }
 
 function canonicalizeLegacyAddress(value: string): string {
+  const normalizedValue = normalizeForComparison(value);
   const expanded = value
     .replace(/^\s*(?:sn|số\s*nhà)\s+/iu, "Số nhà ")
     .replace(/(?:^|,\s*)HN\.?\s*$/iu, ", Hà Nội")
@@ -6539,11 +6600,31 @@ function canonicalizeLegacyAddress(value: string): string {
   const hasHaiBaTrung = segments.some((segment) =>
     ["hai ba trung", "quan hai ba trung"].includes(normalizeForComparison(segment)),
   );
+  const hasLinhDam = /(?:^| )linh dam(?: |$)/.test(normalizedValue);
+  if (
+    hasLinhDam &&
+    !segments.some((segment) => normalizeForComparison(segment) === "phuong hoang liet")
+  ) {
+    segments.push("Phường Hoàng Liệt");
+  }
+  if (
+    hasLinhDam &&
+    !segments.some((segment) => normalizeForComparison(segment) === "quan hoang mai")
+  ) {
+    segments.push("Quận Hoàng Mai");
+  }
   if (hasDinhCong && !segments.some((segment) => normalizeForComparison(segment) === "phuong dinh cong")) {
     segments.push("Phường Định Công");
   }
   if (
-    (hasHaDong || hasCauGiay || hasHoangMai || hasNamTuLiem || hasThanhXuan || hasBaDinh || hasHaiBaTrung) &&
+    (hasHaDong ||
+      hasCauGiay ||
+      hasHoangMai ||
+      hasNamTuLiem ||
+      hasThanhXuan ||
+      hasBaDinh ||
+      hasHaiBaTrung ||
+      hasLinhDam) &&
     !segments.some((segment) => normalizeForComparison(segment) === "ha noi")
   ) {
     segments.push("Hà Nội");
@@ -6675,6 +6756,22 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
     session.order.legacyAddress ? `địa chỉ ${session.order.legacyAddress}` : undefined,
     session.order.deliveryNote ? `ghi chú “${session.order.deliveryNote}”` : undefined,
   ].filter((item): item is string => Boolean(item));
+  if (raw && isOrderRecapRequest(normalize(raw)) && session.selectedQuantity) {
+    const selected = quote(session.selectedQuantity);
+    const shippingFeeVnd =
+      session.selectedQuantity === 1 && session.freeShippingApproved ? 0 : selected.shippingFee.amount;
+    const totalVnd = selected.productPrice.amount + shippingFeeVnd;
+    const recap = [
+      `Dạ em đọc lại đơn: ${quantityLabel(session.selectedQuantity)}, tổng ${formatVnd(totalVnd)}${
+        shippingFeeVnd > 0 ? ` (đã gồm ${formatVnd(shippingFeeVnd)} phí giao)` : ", miễn phí giao"
+      } ạ.`,
+      session.order.phone ? `SĐT: ${session.order.phone}.` : undefined,
+      session.order.legacyAddress ? `Giao tới: ${session.order.legacyAddress}.` : undefined,
+      missing.length > 0 ? `Em còn thiếu ${missing.join(", ")}; khi tiện mình gửi bổ sung giúp em ạ.` : undefined,
+      /\b(?:di hop|vao hop|hop)\b/.test(normalize(raw)) ? "Chúc mình họp thuận lợi ạ." : undefined,
+    ].filter((item): item is string => Boolean(item));
+    return recap.join("\n");
+  }
   const acknowledgement = recorded.length
     ? `Dạ em đã ghi nhận ${recorded.join("; ")} ạ.`
     : "Dạ em đã ghi nhận thông tin vừa gửi.";

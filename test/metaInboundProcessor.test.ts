@@ -192,24 +192,24 @@ test("Meta inbound chỉ lưu dữ liệu khi công tắc gửi thật đang t�
   assert.deepEqual(context.processed, ["message-1"]);
 });
 
-test("Meta xác nhận đơn ghi vào inbox và không gửi mã demo", async () => {
+test("Meta ghi đơn vào inbox ngay khi khách gửi đủ thông tin và không gửi mã demo", async () => {
   const context = fixture({ live: true });
   await context.processor.processBatch([job({ eventId: "order-1", text: "Giá bao nhiêu?" })]);
   await context.processor.processBatch([job({ eventId: "order-2", text: "Mình lấy combo 2 lọ" })]);
-  await context.processor.processBatch([
+  const received = await context.processor.processBatch([
     job({
       eventId: "order-3",
       text: "Nguyễn Văn A, 0912345678, số 12 Đội Cấn, phường Đội Cấn, quận Ba Đình, Hà Nội",
     }),
   ]);
-  const confirmed = await context.processor.processBatch([job({ eventId: "order-4", text: "ĐỒNG Ý" })]);
 
-  assert.equal(confirmed.status, "replied");
+  assert.equal(received.status, "replied");
   assert.equal(context.inboxPushes.length, 1);
   assert.equal(context.inboxPushes[0]?.sessionId, "page-1:customer-1");
   assert.ok(context.inboxPushes[0]?.confirmedAt instanceof Date);
   assert.equal((context.inboxPushes[0]?.draft as { phone?: string })?.phone, "0912345678");
-  assert.ok(context.sent.some((reply) => /đã ghi nhận thông tin đơn/iu.test(reply)));
+  assert.ok(context.sent.some((reply) => /đã nhận đủ thông tin.*ghi nhận đơn/isu.test(reply)));
+  assert.ok(context.sent.every((reply) => !/phản hồi.*ĐỒNG Ý|phản hồi.*ĐÚNG/iu.test(reply)));
   assert.ok(context.sent.every((reply) => !/DEMO-|SPX-DEMO|đã lên đơn thành công/iu.test(reply)));
 });
 
@@ -1299,6 +1299,82 @@ test("LLM tự phân xử lại tên một từ trong đơn đang thiếu ngư�
   assert.match(response.reply, /Người nhận: Tài.*0988777666/isu);
   assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận liên quan/iu);
   assert.equal(response.state.botPaused, false);
+});
+
+test("LLM bổ sung action update_order khi đã chọn đúng luồng nhưng chỉ tiếp tục thu đơn", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "pending-order-name-with-acknowledgement";
+  chat.chat(
+    sessionId,
+    "Chốt cho anh 1 lọ. Giao về chung cư HH2A Linh Đàm, phường Hoàng Liệt, quận Hoàng Mai, Hà Nội. SĐT 0988777666.",
+    {},
+    { orderConfirmationMode: "inbox" },
+  );
+  assert.deepEqual(chat.peek(sessionId).orderMissing, ["recipientName"]);
+
+  let calls = 0;
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      calls += 1;
+      if (prompt.includes("LLM phân xử cuối cho một lượt đang thu thông tin đơn")) {
+        return JSON.stringify({
+          intent: "order_support",
+          topic: "order",
+          asksDirectAnswer: false,
+          confidence: 0.99,
+          needsClarification: false,
+          actions: [
+            {
+              type: "update_order",
+              fields: { recipientName: "Tài" },
+              confidence: 0.99,
+              evidence: ["tên Tài"],
+            },
+            {
+              type: "continue_order_collection",
+              confidence: 0.99,
+              evidence: ["tên Tài"],
+            },
+          ],
+          unsupportedQuestions: [],
+          slots: {},
+        });
+      }
+      return JSON.stringify({
+        intent: "order_support",
+        topic: "order",
+        asksDirectAnswer: false,
+        confidence: 0.99,
+        needsClarification: false,
+        actions: [
+          {
+            type: "continue_order_collection",
+            confidence: 0.99,
+            evidence: ["uh tên Tài"],
+          },
+        ],
+        unsupportedQuestions: [],
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId,
+    text: "uh tên Tài",
+    orderConfirmationMode: "inbox",
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.state.orderDraft?.recipientName, "Tài");
+  assert.deepEqual(response.state.orderMissing, []);
+  assert.equal(response.state.orderFlowStatus, "created");
+  assert.equal(response.state.orderReceived, true);
+  assert.match(response.reply, /đã nhận đủ thông tin.*ghi nhận đơn/isu);
+  assert.match(response.reply, /Người nhận: Tài.*0988777666/isu);
+  assert.doesNotMatch(response.reply, /ĐỒNG Ý|ĐÚNG|chưa có đủ thông tin/iu);
 });
 
 test("Question Coverage Gate chấp nhận câu LLM diễn đạt lại thời điểm hiệu quả khi có Knowledge", async () => {

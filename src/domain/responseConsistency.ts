@@ -6,6 +6,7 @@ export function assertReplyMatchesConversationState(input: {
   trace?: DecisionTrace;
   selectedQuantity?: SupportedOrderQuantity;
   orderId?: string;
+  orderReceived?: boolean;
   botPaused: boolean;
   freeShippingApproved: boolean;
 }): void {
@@ -28,7 +29,11 @@ export function assertReplyMatchesConversationState(input: {
   if (claimedCombo && input.selectedQuantity !== Number(claimedCombo)) {
     throw consistencyError(`reply_claims_uncommitted_quantity_${claimedCombo}`);
   }
-  if (/da (?:len|tao) don thanh cong|ma van don/.test(text) && !input.orderId) {
+  if (
+    /da (?:len|tao) don thanh cong|ma van don/.test(text) &&
+    !input.orderId &&
+    !input.orderReceived
+  ) {
     throw consistencyError("reply_claims_uncommitted_order");
   }
   if (input.botPaused && /gui.*ten nguoi nhan|gui.*sdt|gui.*dia chi/.test(text)) {

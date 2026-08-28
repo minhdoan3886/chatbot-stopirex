@@ -1568,14 +1568,16 @@ function needsPendingOrderFieldReinterpretation(
 ): boolean {
   if (!input.state.selectedQuantity || input.state.orderMissing.length === 0) return false;
   if (/[?？]/u.test(input.customerMessage)) return false;
-  const alreadyOwnsOrder =
+  const alreadyUpdatesOrder =
     (understanding.intent === "buying" || understanding.intent === "order_support") &&
-    understanding.actions?.some(
-      (action) => action.type === "update_order" || action.type === "continue_order_collection",
-    );
-  if (alreadyOwnsOrder) return false;
+    understanding.actions?.some((action) => action.type === "update_order");
+  if (alreadyUpdatesOrder) return false;
   if (understanding.actions?.some((action) => action.type === "answer_question")) return false;
+  const continuesOrderWithoutUpdatingMissingField =
+    (understanding.intent === "buying" || understanding.intent === "order_support") &&
+    understanding.actions?.some((action) => action.type === "continue_order_collection");
   return Boolean(
+    continuesOrderWithoutUpdatingMissingField ||
     understanding.intent === "knowledge_unknown" ||
       understanding.intent === "other" ||
       !understanding.intent ||

@@ -1,7 +1,8 @@
-import { retrieveKnowledgeMatches } from "../domain/knowledge.js";
-import { governCustomerResponse } from "../domain/responseGovernor.js";
+import { retrieveKnowledgeMatches, type KnowledgeMatch } from "../domain/knowledge.js";
+import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
 import {
   missingRequiredAnswerTopics,
+  replyCoversRequiredAnswerTopic,
   requiredAnswerTopics,
   type RequiredAnswerTopic,
 } from "../domain/requiredAnswerTopics.js";
@@ -13,8 +14,9 @@ import {
   type ActionRolloutComparison,
   type MultiActionRolloutMode,
 } from "../domain/actionRollout.js";
-import type { SemanticUnderstanding } from "../domain/consultation.js";
+import type { SemanticTopic, SemanticUnderstanding } from "../domain/consultation.js";
 import type { SupportedOrderQuantity } from "../domain/conversationActions.js";
+import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
 import {
   CodexLlmBridge,
@@ -27,11 +29,14 @@ import {
   DemoChatService,
   isCompoundOrderUpdateQuestion,
   isDomesticDeliveryEtaQuestion,
+  isExpressDeliveryQuestion,
   isInternalSystemProbe,
   isInternationalShippingQuestion,
   isLikelyAdministrativeFragment,
   isOutOfScopeAssistantProbe,
   isOrderCaptureMessage,
+  isOfflineStoreQuestion,
+  isPriorAddressReference,
   isQuantityShippingPolicyQuestion,
   isWholesaleDealerInquiry,
   type DemoChatResponse,
@@ -78,24 +83,54 @@ export class MetaChatBrain {
       ...(input.orderConfirmationMode ? { orderConfirmationMode: input.orderConfirmationMode } : {}),
     };
     const before = this.chat.peek(input.sessionId);
-    const fastTransition = !this.llm.enabled || isFastTransition(input.text, before);
+    // Every customer message goes through semantic interpretation when the LLM
+    // is available. Order data is still validated mechanically by DemoChat,
+    // but it must not hide product questions carried in the same message.
+    const fastTransition = !this.llm.enabled;
     let interpreted: SemanticUnderstanding = { slots: {} };
     let knowledge: ApprovedKnowledgeContext[] = [];
     let interpretationStatus: "not_run" | "interpreted" | "fallback" | "skipped" | "unavailable" = "not_run";
     let interpretationReason: string | undefined;
     if (!fastTransition) {
-      const matches = retrieveKnowledgeMatches({
+      let matches = retrieveKnowledgeMatches({
         tenantId: liveKnowledgeTenant,
-        query: contextualKnowledgeQuery(input.text, before),
+        query: knowledgeSafeQuery(contextualKnowledgeQuery(input.text, before)),
         entities: liveKnowledge,
-        limit: 3,
+        // Compound customer messages need breadth. The retriever keeps a leader
+        // for every detected concept, while the LLM remains the semantic owner.
+        limit: 6,
       });
-      knowledge = matches.map(({ entity: { id, title, content } }) => ({ id, title, content }));
-      const rawLlmResult = await this.llm.interpret({
+      knowledge = knowledgeContexts(matches);
+      let rawLlmResult = await this.llm.interpret({
         customerMessage: input.text,
         state: before,
         knowledge,
       });
+      let knowledgeRetry = false;
+      const semanticQueries = semanticKnowledgeQueries(rawLlmResult);
+      if (semanticQueries.length > 0 && needsSemanticKnowledgeExpansion(rawLlmResult)) {
+        const expandedMatches = semanticQueries.flatMap((query) =>
+          retrieveKnowledgeMatches({
+            tenantId: liveKnowledgeTenant,
+            query,
+            entities: liveKnowledge,
+            limit: 3,
+          }),
+        );
+        const mergedMatches = mergeKnowledgeMatches(matches, expandedMatches, 8);
+        const previousIds = matches.map((match) => match.entity.id).join("|");
+        const mergedIds = mergedMatches.map((match) => match.entity.id).join("|");
+        if (mergedIds !== previousIds) {
+          matches = mergedMatches;
+          knowledge = knowledgeContexts(matches);
+          rawLlmResult = await this.llm.interpret({
+            customerMessage: input.text,
+            state: before,
+            knowledge,
+          });
+          knowledgeRetry = true;
+        }
+      }
       const retrievedIds = new Set(knowledge.map((entity) => entity.id));
       const validCitations = (rawLlmResult.knowledgeIds ?? []).filter((id) => retrievedIds.has(id));
       const citationCandidates = rawLlmResult.draftReply
@@ -110,10 +145,15 @@ export class MetaChatBrain {
         : [];
       const withoutRawCitations = { ...rawLlmResult };
       delete withoutRawCitations.knowledgeIds;
-      const llmResult =
+      const groundedLlmResult =
         validCitations.length > 0
           ? { ...rawLlmResult, knowledgeIds: validCitations }
           : repairMissingKnowledgeCitations(withoutRawCitations, citationCandidates);
+      const llmResult = reconcilePendingConsultationAnswer(
+        reconcileKnowledgeBackedPopulationSafety(groundedLlmResult, matches[0]?.entity.id),
+        before,
+        input.text,
+      );
       interpreted = llmResult;
       interpretationStatus = llmResult.status;
       interpretationReason = llmResult.reason;
@@ -129,6 +169,10 @@ export class MetaChatBrain {
         confidence: llmResult.confidence,
         actionCount: llmResult.actions?.length ?? 0,
         actions: llmResult.actions?.map((action) => action.type) ?? [],
+        actionTopics:
+          llmResult.actions
+            ?.filter((action) => action.type === "answer_question")
+            .map((action) => action.topic) ?? [],
         uncertaintyCount: llmResult.uncertainties?.length ?? 0,
         retrievedKnowledge: matches.map((match) => ({
           id: match.entity.id,
@@ -138,6 +182,8 @@ export class MetaChatBrain {
         citedKnowledgeIds: llmResult.knowledgeIds ?? [],
         unsupportedQuestionCount: llmResult.unsupportedQuestions?.length ?? 0,
         groundingConfidence: llmResult.groundingConfidence,
+        knowledgeRetry,
+        semanticKnowledgeQueryCount: semanticQueries.length,
       });
     }
     const liveVariant = selectActionExecutionMode({
@@ -192,7 +238,23 @@ export class MetaChatBrain {
       }
     }
     if (fastTransition) return base;
-    const composed = this.llm.adoptInterpretedDraft({
+    if (
+      base.state.decisionTrace?.selectedRoute === "start_care" ||
+      base.state.decisionTrace?.selectedRoute === "active_care"
+    ) {
+      // A reconciled CSKH transition is already the complete, safe response.
+      // Composition and question-coverage recovery must not replace the
+      // acknowledgement with a generic knowledge/handoff fallback.
+      this.logger?.log("debug", "llm_composition", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        status: "skipped",
+        reason: "customer_care_route_locked",
+        selectedRoute: base.state.decisionTrace.selectedRoute,
+        selectedCareIssue: base.state.decisionTrace.selectedCareIssue,
+      });
+      return base;
+    }
+    let composed = this.llm.adoptInterpretedDraft({
       customerMessage: input.text,
       ...(interpreted.draftReply ? { draftReply: interpreted.draftReply } : {}),
       baseReply: base.reply,
@@ -213,6 +275,19 @@ export class MetaChatBrain {
           interpreted.actions?.some((action) => action.type === "answer_question"),
         ),
     });
+    if (composed.status !== "enhanced" && interpreted.draftReply?.trim()) {
+      composed = await this.llm.repairInterpretedDraft({
+        customerMessage: input.text,
+        rejectedDraft: interpreted.draftReply,
+        violations: [composed.reason ?? "draft_validation_failed"],
+        baseReply: base.reply,
+        state: base.state,
+        actions: base.state.decisionTrace?.actionPlan?.accepted ?? [],
+        ...(base.state.activeSkill ? { skillId: base.state.activeSkill } : {}),
+        knowledge,
+        ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
+      });
+    }
     this.logger?.log(composed.status === "enhanced" ? "debug" : "warn", "llm_composition", {
       ...(input.traceId ? { traceId: input.traceId } : {}),
       status: composed.status,
@@ -223,7 +298,7 @@ export class MetaChatBrain {
       selectedRoute: base.state.decisionTrace?.selectedRoute,
       selectedIntent: base.state.decisionTrace?.selectedIntent,
     });
-    const coverage = assessQuestionCoverage({
+    let coverage = assessQuestionCoverage({
       customerMessage: input.text,
       interpretationStatus,
       interpreted,
@@ -232,6 +307,41 @@ export class MetaChatBrain {
       orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
       candidateReply: composed.status === "enhanced" ? composed.reply : base.reply,
     });
+    if (!coverage.complete && composed.status === "enhanced") {
+      const repaired = await this.llm.repairInterpretedDraft({
+        customerMessage: input.text,
+        rejectedDraft: composed.reply,
+        violations: [
+          `missing_topics:${coverage.missingTopics.join(",")}`,
+          coverage.reason,
+        ],
+        baseReply: base.reply,
+        state: base.state,
+        actions: base.state.decisionTrace?.actionPlan?.accepted ?? [],
+        ...(base.state.activeSkill ? { skillId: base.state.activeSkill } : {}),
+        knowledge,
+        ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
+      });
+      if (repaired.status === "enhanced") {
+        const repairedCoverage = assessQuestionCoverage({
+          customerMessage: input.text,
+          interpretationStatus,
+          interpreted,
+          compositionStatus: repaired.status,
+          base,
+          orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
+          candidateReply: repaired.reply,
+        });
+        if (repairedCoverage.complete) {
+          composed = repaired;
+          coverage = repairedCoverage;
+          this.logger?.log("debug", "llm_composition_repaired", {
+            ...(input.traceId ? { traceId: input.traceId } : {}),
+            requiredTopics: coverage.requiredTopics,
+          });
+        }
+      }
+    }
     if (!coverage.complete) {
       const groundedBaseCoverage = assessQuestionCoverage({
         customerMessage: input.text,
@@ -250,6 +360,34 @@ export class MetaChatBrain {
           compositionStatus: composed.status,
         });
         return base;
+      }
+      const approvedRecovery = this.chat.approvedKnowledgeFallback(input.text, interpreted.slots);
+      if (approvedRecovery) {
+        const recoveryCoverage = assessQuestionCoverage({
+          customerMessage: input.text,
+          interpretationStatus,
+          interpreted,
+          compositionStatus: composed.status,
+          base,
+          orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
+          candidateReply: approvedRecovery.reply,
+        });
+        if (recoveryCoverage.complete) {
+          const replies = [approvedRecovery.reply];
+          const state = this.chat.replaceLatestAssistantTurns(input.sessionId, base.replies, replies);
+          this.logger?.log("warn", "question_coverage_recovered_by_approved_knowledge", {
+            ...(input.traceId ? { traceId: input.traceId } : {}),
+            requiredTopics: coverage.requiredTopics,
+            compositionStatus: composed.status,
+            knowledgeIds: approvedRecovery.knowledgeIds,
+          });
+          return {
+            ...base,
+            reply: approvedRecovery.reply,
+            replies,
+            state,
+          };
+        }
       }
       const replies = questionCoverageFallbackReplies(base.state.selectedQuantity);
       const state = this.chat.replaceLatestAssistantTurnsAndPauseForCoverage(
@@ -317,16 +455,66 @@ export class MetaChatBrain {
         ]),
       ];
     }
-    const governed = governCustomerResponse({
+    let governed = governCustomerResponse({
       replies: [composed.reply],
       answeredTopics: base.state.answeredTopics,
       previouslyAskedTopics: base.state.askedTopics,
       maxCharacters: 360,
       maxBubbles: 2,
       preserveFullText:
-        base.state.mode === "care" || Boolean(base.state.selectedQuantity) || Boolean(base.state.orderId),
+        base.state.mode === "care" ||
+        Boolean(base.state.selectedQuantity) ||
+        Boolean(base.state.orderId) ||
+        requiredAnswerTopics(input.text).length >= 2 ||
+        semanticAnswerTopics(interpreted, input.text).length >= 3,
     });
+    const governedCoverage = assessQuestionCoverage({
+      customerMessage: input.text,
+      interpretationStatus,
+      interpreted,
+      compositionStatus: composed.status,
+      base,
+      orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
+      candidateReply: governed.replies.join("\n\n"),
+    });
+    if (!governedCoverage.complete && governed.truncated) {
+      // Never trade correctness for the character budget. If compaction drops
+      // a customer topic, retain the full answer and only merge bubbles.
+      const untruncated = governCustomerResponse({
+        replies: [composed.reply],
+        answeredTopics: base.state.answeredTopics,
+        previouslyAskedTopics: base.state.askedTopics,
+        maxBubbles: 2,
+        preserveFullText: true,
+      });
+      const untruncatedCoverage = assessQuestionCoverage({
+        customerMessage: input.text,
+        interpretationStatus,
+        interpreted,
+        compositionStatus: composed.status,
+        base,
+        orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
+        candidateReply: untruncated.replies.join("\n\n"),
+      });
+      if (untruncatedCoverage.complete) governed = untruncated;
+    }
     if (governed.replies.length === 0) return base;
+    try {
+      assertReplyMatchesConversationState({
+        reply: governed.replies.join("\n\n"),
+        ...(base.state.decisionTrace ? { trace: base.state.decisionTrace } : {}),
+        ...(base.state.selectedQuantity ? { selectedQuantity: base.state.selectedQuantity } : {}),
+        ...(base.state.orderId ? { orderId: base.state.orderId } : {}),
+        botPaused: base.state.botPaused,
+        freeShippingApproved: base.state.freeShippingApproved,
+      });
+    } catch (error) {
+      this.logger?.log("warn", "llm_reply_state_mismatch", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        reason: error instanceof Error ? error.message : "response_state_mismatch",
+      });
+      return base;
+    }
     const state = this.chat.replaceLatestAssistantTurns(input.sessionId, base.replies, governed.replies);
     return {
       ...base,
@@ -337,20 +525,95 @@ export class MetaChatBrain {
   }
 }
 
+/**
+ * A description supplied in response to the bot's latest discovery question is
+ * customer data, not a new question. The model remains responsible for
+ * extracting the consultation slots; this reconciliation only prevents a
+ * mislabeled `answer_question` action from making the quality gate demand an
+ * FAQ-style answer and halt an otherwise valid consultation.
+ */
+export function reconcilePendingConsultationAnswer<T extends SemanticUnderstanding>(
+  semantic: T,
+  state: Pick<DemoChatState, "pendingQuestionTopic">,
+  customerMessage: string,
+): T {
+  const pendingTopic = state.pendingQuestionTopic;
+  if (
+    !pendingTopic ||
+    !["work_context", "symptom", "prior_product", "usage", "child_age"].includes(pendingTopic) ||
+    !inferAnsweredTopicFromMessage(customerMessage, pendingTopic).includes(pendingTopic) ||
+    ![undefined, "consultation", "other"].includes(semantic.intent) ||
+    /[?？]/u.test(customerMessage)
+  ) {
+    return semantic;
+  }
+
+  const reconciled: T = { ...semantic, asksDirectAnswer: false };
+  const remainingActions = semantic.actions?.filter((action) => action.type !== "answer_question");
+  if (remainingActions?.length) reconciled.actions = remainingActions;
+  else delete reconciled.actions;
+  delete reconciled.draftReply;
+  delete reconciled.replyTo;
+  delete reconciled.skill;
+  return reconciled;
+}
+
+export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnderstanding>(
+  semantic: T,
+  primaryRetrievedKnowledgeId?: string,
+): T {
+  if (!semantic.actions?.some((action) => action.type === "answer_question")) {
+    return semantic;
+  }
+
+  const citedPopulationTopics = [
+    ["audience-pregnancy", "pregnancy"],
+    ["audience-breastfeeding", "breastfeeding"],
+  ] as const;
+  const cited = citedPopulationTopics.filter(([knowledgeId]) => semantic.knowledgeIds?.includes(knowledgeId));
+  // A citation has already been validated against the retrieved Knowledge set
+  // (or repaired from the grounded draft). Prefer that explicit LLM choice over
+  // the first retrieval match, which can be a nearby population policy because
+  // the two approved answers intentionally share most of their wording.
+  const supported =
+    cited.length > 0
+      ? cited
+      : citedPopulationTopics.filter(([knowledgeId]) => primaryRetrievedKnowledgeId === knowledgeId);
+  if (supported.length !== 1) return semantic;
+
+  const topic = supported[0]?.[1];
+  if (!topic) return semantic;
+  const reconciled: T = { ...semantic };
+  delete reconciled.draftReply;
+  delete reconciled.replyTo;
+  reconciled.skill = "safety-first";
+  reconciled.intent = "safety";
+  reconciled.topic = topic;
+  reconciled.subject = "customer";
+  reconciled.affirmation = false;
+  // A grounded special-population safety question must be answered before any
+  // order collection. Drop simultaneous handoff/order proposals; the state
+  // planner will pause the existing order and leave it available to resume.
+  reconciled.actions = semantic.actions
+    .filter((action) => action.type === "answer_question")
+    .map((action) => (action.type === "answer_question" ? { ...action, topic } : action));
+  reconciled.unsupportedQuestions = [];
+  return reconciled;
+}
+
 type QuestionCoverageAssessment = {
   complete: boolean;
   questionCount: number;
   coveredCount: number;
   missingCount: number;
   reason: string;
-  requiredTopics: RequiredAnswerTopic[];
-  missingTopics: RequiredAnswerTopic[];
+  requiredTopics: (RequiredAnswerTopic | SemanticTopic)[];
+  missingTopics: (RequiredAnswerTopic | SemanticTopic)[];
 };
 
 export function extractCustomerQuestionClauses(value: string): string[] {
-  const parts = value.split(/[?？]+/u);
-  if (parts.length <= 1) return [];
-  return parts
+  const explicit = value
+    .split(/[?？]+/u)
     .slice(0, -1)
     .map((part) => {
       const sentences = part
@@ -359,8 +622,31 @@ export function extractCustomerQuestionClauses(value: string): string[] {
         .filter(Boolean);
       return sentences.at(-1) ?? "";
     })
-    .filter(Boolean)
-    .slice(0, 6);
+    .filter(Boolean);
+  const implicit = value
+    .split(/(?:\r?\n|(?<=[.!;])\s+)/u)
+    .map((part) => part.trim())
+    .filter((part) => part && !/[?？]/u.test(part) && looksLikeImplicitQuestionOrConcern(part));
+  return [...new Set([...explicit, ...implicit])].slice(0, 6);
+}
+
+function looksLikeImplicitQuestionOrConcern(value: string): boolean {
+  const text = value
+    .toLocaleLowerCase("vi-VN")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/gu, "d")
+    .replace(/[^a-z0-9]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!text || /(?<!\d)0\d{9}(?!\d)/u.test(value)) return false;
+  return (
+    /\b(?:bao nhieu|the nao|lam sao|tai sao|vi sao|co duoc|duoc khong|dc k|co bi|co gay|co lam|co an toan|xai sao|dung sao|gia sao|ship sao)\b/.test(
+      text,
+    ) ||
+    /\b(?:khong|ko|khum|k)\s*(?:a|ạ)?$/.test(text) ||
+    /\b(?:hang gia|fake|lo hang gia|so hang gia|da nhay cam|lo kich ung|so kich ung)\b/.test(text)
+  );
 }
 
 function assessQuestionCoverage(input: {
@@ -372,9 +658,21 @@ function assessQuestionCoverage(input: {
   orderSelectionChanged: boolean;
   candidateReply: string;
 }): QuestionCoverageAssessment {
-  const questionCount = extractCustomerQuestionClauses(input.customerMessage).length;
-  const requiredTopics = requiredAnswerTopics(input.customerMessage);
-  const missingTopics = missingRequiredAnswerTopics(input.customerMessage, input.candidateReply);
+  const explicitQuestionCount = extractCustomerQuestionClauses(input.customerMessage).length;
+  const requiredFactTopics = requiredAnswerTopics(input.customerMessage);
+  const requiredSemanticTopics = semanticAnswerTopics(input.interpreted, input.customerMessage);
+  const requiredTopics = [...new Set([...requiredFactTopics, ...requiredSemanticTopics])];
+  const questionCount = Math.max(
+    explicitQuestionCount,
+    requiredSemanticTopics.length,
+    requiredFactTopics.length,
+    requiredTopics.length,
+    input.interpreted.unsupportedQuestions?.length ?? 0,
+  );
+  const missingTopics = [
+    ...missingRequiredAnswerTopics(input.customerMessage, input.candidateReply),
+    ...requiredSemanticTopics.filter((topic) => !replyCoversSemanticTopic(topic, input.candidateReply)),
+  ].filter((topic, index, all) => all.indexOf(topic) === index);
   const enforced = questionCount >= 1;
   if (!enforced) {
     return {
@@ -417,11 +715,32 @@ function assessQuestionCoverage(input: {
   const groundedBaseCoveredCount = input.base.state.decisionTrace?.knowledgeEntityIds.length
     ? responseCoveredCount
     : 0;
+  const groundedLlmCoveredCount =
+    input.interpretationStatus === "interpreted" &&
+    input.compositionStatus === "enhanced" &&
+    (input.interpreted.knowledgeIds?.length ?? 0) > 0
+      ? actionCoveredCount
+      : 0;
+  const semanticCoveredCount = requiredSemanticTopics.filter((topic) =>
+    replyCoversSemanticTopic(topic, input.candidateReply),
+  ).length;
+  const factCoveredCount = requiredFactTopics.filter((topic) =>
+    replyCoversRequiredAnswerTopic(topic, input.candidateReply),
+  ).length;
   // The LLM is still called first for product questions. If it returns only a
   // semantic classification, a deterministic response grounded in approved KB
   // may pass — but only when the actual reply covers every customer question.
-  // This keeps timeout/multi-intent omissions fail-closed.
-  const coveredCount = Math.max(Math.min(actionCoveredCount, responseCoveredCount), groundedBaseCoveredCount);
+  // A grounded LLM draft may paraphrase the question without sharing literal
+  // words (for example "bao lâu" -> "trong tuần đầu"). Its answer action can
+  // satisfy coverage because the separate knowledge-grounding guard has already
+  // verified the cited source and factual overlap. Timeouts and uncited drafts
+  // still fail closed.
+  const coveredCount = Math.max(
+    Math.min(actionCoveredCount, responseCoveredCount),
+    groundedBaseCoveredCount,
+    groundedLlmCoveredCount,
+    semanticCoveredCount + factCoveredCount,
+  );
   const missingCount = Math.max(0, questionCount - coveredCount);
   return {
     complete: missingCount === 0,
@@ -437,6 +756,75 @@ function assessQuestionCoverage(input: {
     requiredTopics,
     missingTopics,
   };
+}
+
+function semanticAnswerTopics(semantic: SemanticUnderstanding, customerMessage: string): SemanticTopic[] {
+  const normalizeTopic = (topic: SemanticTopic, evidence: string): SemanticTopic =>
+    topic === "order" && isShippingDestinationEvidence(evidence) ? "shipping" : topic;
+  const topics = [
+    ...(semantic.asksDirectAnswer === true && semantic.topic
+      ? [normalizeTopic(semantic.topic, customerMessage)]
+      : []),
+    ...(semantic.actions ?? [])
+      .filter((action) => action.type === "answer_question")
+      .map((action) => normalizeTopic(action.topic, action.evidence.join(" "))),
+  ];
+  return topics.filter((topic, index, all) => topic !== "other" && all.indexOf(topic) === index);
+}
+
+function isShippingDestinationEvidence(value: string): boolean {
+  const text = value
+    .toLocaleLowerCase("vi-VN")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/gu, "d")
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim();
+  return (
+    /\b(?:ship|giao|van chuyen)\b/.test(text) &&
+    !/\b(?:don|don hang|ma van don|trang thai don|xac nhan don|len don)\b/.test(text)
+  );
+}
+
+function replyCoversSemanticTopic(topic: SemanticTopic, reply: string): boolean {
+  const text = reply.toLocaleLowerCase("vi-VN").normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/gu, "d");
+  switch (topic) {
+    case "price":
+      return /\b(?:gia|combo)\b|\b\d{2,3}(?:[. ]\d{3})+(?:d|đ)?\b/u.test(text);
+    case "promotion":
+      return /\b(?:qua tang|tang|uu dai|khuyen mai|giam|tiet kiem)\b/u.test(text);
+    case "shipping":
+    case "delivery":
+      return /\b(?:giao|ship|van chuyen|mien phi giao|sai gon|tp hcm|thanh pho ho chi minh)\b/u.test(text);
+    case "comparison":
+      return /\b(?:khac|giong|so voi|lan thuong|khu mui|ngan tiet|chinh hang|hang that|hang gia|bao bi|tem|nguoi gui)\b/u.test(
+        text,
+      );
+    case "effectiveness":
+    case "sweat":
+      return /\b(?:mo hoi|kho thoang|ngan tiet|hieu qua|tham|o ao|bet)\b/u.test(text);
+    case "odor":
+      return /\b(?:mui|hoi nach|khu mui|kiem soat mui)\b/u.test(text);
+    case "usage":
+      return /\b(?:dung|boi|lan|buoi toi|tan suat|lan mong)\b/u.test(text);
+    case "pregnancy":
+      return /\b(?:mang thai|me bau|phu nu dang mang thai|hoi bac si)\b/u.test(text);
+    case "breastfeeding":
+      return /\b(?:cho con bu|nuoi con bang sua me|hoi bac si)\b/u.test(text);
+    case "child_age":
+      return /\b(?:tre|tuoi|duoi 12|tu 12)\b/u.test(text);
+    case "sensitive_skin":
+    case "irritation":
+      return /\b(?:nhay cam|kich ung|ngua|rat|do da|thu tren vung nho)\b/u.test(text);
+    case "damaged_goods":
+      return /\b(?:vo|hong|be|ro ri|mop|doi hang|kiem tra)\b/u.test(text);
+    case "negative_review":
+      return /\b(?:ghi nhan|kiem tra|phan hoi|bo phan)\b/u.test(text);
+    case "order":
+      return /\b(?:don|nguoi nhan|so dien thoai|dia chi|xac nhan)\b/u.test(text);
+    case "other":
+      return true;
+  }
 }
 
 function coverageOverlap(question: string, reply: string): number {
@@ -537,10 +925,18 @@ export function isFastTransition(customerMessage: string, state: DemoChatState):
     isInternationalShippingQuestion(customerMessage) ||
     isOutOfScopeAssistantProbe(customerMessage) ||
     isWholesaleDealerInquiry(customerMessage) ||
+    isExpressDeliveryQuestion(customerMessage) ||
+    isOfflineStoreQuestion(customerMessage) ||
     isDomesticDeliveryEtaQuestion(customerMessage) ||
     isQuantityShippingPolicyQuestion(customerMessage) ||
     isOrderCaptureMessage(customerMessage) ||
     (Boolean(state.selectedQuantity) && isCompoundOrderUpdateQuestion(customerMessage))
+  ) {
+    return true;
+  }
+  if (
+    state.pendingAction === "send_authenticity_legal_summary" &&
+    /^(?:da )?(?:ok|okay|oke|duoc|dc|co|gui (?:di|minh|em|chi|anh)|vang|uh|u)(?: a| nhe)?$/.test(text)
   ) {
     return true;
   }
@@ -559,6 +955,7 @@ export function isFastTransition(customerMessage: string, state: DemoChatState):
   if (
     state.selectedQuantity &&
     state.orderMissing.length > 0 &&
+    !isPriorAddressReference(customerMessage) &&
     !/[?？]/u.test(customerMessage) &&
     !/\b(?:gia|giam|khuyen mai|uu dai|ma giam|voucher|ship|freeship|free ship|phi giao)\b/.test(text) &&
     (/(?<!\d)0\d{9}(?!\d)/u.test(customerMessage) ||
@@ -592,12 +989,88 @@ function contextualKnowledgeQuery(customerMessage: string, state: DemoChatState)
     .replace(/đ/gu, "d")
     .trim();
   const needsPriorContext =
-    customerMessage.trim().length < 55 ||
-    /^(?:the|vay|con|loai nay|cai nay|no|nhu tren|nhu vay)\b/.test(normalized);
+    /^(?:the|vay|con|loai nay|cai nay|no|nhu tren|nhu vay)\b/.test(normalized) ||
+    /^(?:da )?(?:ok|okay|oke|uh|u|duoc|dc|co|khong|ko|k|vang)(?: a| nhe)?$/.test(normalized);
   if (!needsPriorContext) return customerMessage;
   const priorCustomerTurns = state.recentTurns
     .filter((turn) => turn.role === "user")
     .slice(-2)
     .map((turn) => turn.text.replace(/(?<!\d)0\d{9}(?!\d)/gu, "[SĐT]"));
   return [...priorCustomerTurns, customerMessage].join("\n");
+}
+
+function knowledgeContexts(matches: readonly KnowledgeMatch[]): ApprovedKnowledgeContext[] {
+  return matches.map(({ entity: { id, title, content, responseGuidance } }) => ({
+    id,
+    title,
+    content,
+    ...(responseGuidance ? { responseGuidance } : {}),
+  }));
+}
+
+function semanticKnowledgeQueries(semantic: SemanticUnderstanding): string[] {
+  const topics = new Set([
+    semantic.topic,
+    ...(semantic.actions ?? [])
+      .filter((action) => action.type === "answer_question")
+      .map((action) => action.topic),
+  ]);
+  const queries = new Set<string>([
+    ...(semantic.knowledgeQueries ?? []),
+    ...(semantic.unsupportedQuestions ?? []),
+  ]);
+  if (
+    ["price_change", "price_request", "promotion_inquiry", "price_objection", "negotiation"].includes(
+      semantic.intent ?? "",
+    ) ||
+    topics.has("price") ||
+    topics.has("promotion") ||
+    topics.has("shipping")
+  ) {
+    queries.add("giá bao nhiêu combo 2 lọ phí giao miễn phí giao quà tặng");
+  }
+  if (topics.has("effectiveness") || topics.has("sweat") || topics.has("odor")) {
+    queries.add("hiệu quả giảm mồ hôi mùi cơ thể thâm nách bết dính ố áo");
+  }
+  if (topics.has("usage")) queries.add("cách dùng thời điểm tần suất lăn Stopirex");
+  if (topics.has("order")) queries.add("không đỡ không hiệu quả hoàn tiền đổi trả điều kiện 2 tuần");
+  if (topics.has("pregnancy")) queries.add("phụ nữ mang thai mẹ bầu dùng Stopirex");
+  if (topics.has("breastfeeding")) queries.add("phụ nữ cho con bú dùng Stopirex");
+  if (topics.has("child_age")) queries.add("trẻ em độ tuổi dùng Stopirex");
+  if (topics.has("irritation") || topics.has("sensitive_skin")) {
+    queries.add("da nhạy cảm kích ứng ngứa rát dùng Stopirex");
+  }
+  return [...queries].filter(Boolean).slice(0, 6);
+}
+
+function needsSemanticKnowledgeExpansion(semantic: SemanticUnderstanding): boolean {
+  return Boolean(
+    semantic.knowledgeQueries?.length ||
+    semantic.unsupportedQuestions?.length ||
+    semantic.actions?.some(
+      (action) =>
+        action.type === "handoff_to_human" &&
+        /knowledge|du lieu|dữ liệu|chua co|chưa có/iu.test(action.reason ?? ""),
+    ),
+  );
+}
+
+function knowledgeSafeQuery(value: string): string {
+  return value
+    .replace(/(?<!\d)0\d{9}(?!\d)/gu, " ")
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function mergeKnowledgeMatches(
+  primary: readonly KnowledgeMatch[],
+  expanded: readonly KnowledgeMatch[],
+  limit: number,
+): KnowledgeMatch[] {
+  return [...primary, ...expanded]
+    .filter(
+      (match, index, all) => all.findIndex((candidate) => candidate.entity.id === match.entity.id) === index,
+    )
+    .slice(0, limit);
 }

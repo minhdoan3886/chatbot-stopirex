@@ -9,6 +9,8 @@ import {
   extractCustomerQuestionClauses,
   isFastTransition,
   MetaChatBrain,
+  reconcileKnowledgeBackedPopulationSafety,
+  reconcilePendingConsultationAnswer,
 } from "../src/services/metaChatBrain.js";
 import {
   MetaInboundProcessor,
@@ -43,8 +45,8 @@ function fixture(options: {
     }
   >();
   const followupSchedules: Array<Record<string, unknown>> = [];
-  const inboxPushes: Array<Record<string, unknown>> = [];
   const followupCancellations: Array<Record<string, unknown>> = [];
+  const inboxPushes: Array<Record<string, unknown>> = [];
   let newerInbound = options.newerInbound ?? false;
   let sendAttempts = 0;
   const store: MetaInboundStore = {
@@ -300,6 +302,568 @@ test("Meta brain chỉ nhận câu trả lời AI có citation thuộc knowledge
   );
 });
 
+test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge thay vì handoff", async () => {
+  const prompts: string[] = [];
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      prompts.push(prompt);
+      return JSON.stringify({
+        summary: "Khách hỏi hiệu quả, thâm, ố áo, giá combo 2 và giao TP.HCM",
+        skill: "pricing-objection",
+        intent: "price_request",
+        topic: "price",
+        subject: "product",
+        scenario: "actual",
+        asksDirectAnswer: true,
+        confidence: 0.97,
+        needsClarification: false,
+        evidence: ["giá s zậy mua 2 chây có đc fs zìa sg khum"],
+        actions: [
+          {
+            type: "answer_question",
+            topic: "effectiveness",
+            confidence: 0.98,
+            evidence: ["mồ hôi vs thâm lém", "áo trắng có bị ố dính dính khôm"],
+          },
+          {
+            type: "answer_question",
+            topic: "price",
+            confidence: 0.98,
+            evidence: ["giá s zậy mua 2 chây"],
+          },
+          {
+            type: "answer_question",
+            topic: "shipping",
+            confidence: 0.98,
+            evidence: ["fs zìa sg khum"],
+          },
+        ],
+        uncertainties: [],
+        knowledgeIds: [
+          "effectiveness-usage-journey",
+          "usage-underarm-darkening-prevention",
+          "usage-application-feel-clothing",
+          "pricing-approved-options-2026-08",
+        ],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.97,
+        draftReply:
+          "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Dùng đúng hướng dẫn, sản phẩm không gây thâm, không bết và không gây ố vàng áo. Combo 2 lọ giá 510.000đ, miễn phí giao về TP.HCM ạ.",
+        slots: { primarySymptom: "sweat", sweatPresent: true },
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId: "dialect-compound-knowledge",
+    text: "shop uii cho dỏi xí, cái lăn ni xài êm khum dạ? nách tui cơ địa mồ hôi vs thâm lém lun chẩy ướt cả áo ớ. xài cái bôi bôi này áo trắng có bị ố dính dính khôm? giá s zậy mua 2 chây có đc fs zìa sg khum sốp",
+  });
+
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0] ?? "", /510\.000đ/u);
+  assert.match(prompts[0] ?? "", /không gây ố vàng/iu);
+  assert.equal(response.state.decisionTrace?.selectedIntent, "price_request");
+  assert.match(response.reply, /510\.000đ/u);
+  assert.match(response.reply, /miễn phí giao.*TP\.HCM/iu);
+  assert.match(response.reply, /không gây thâm/iu);
+  assert.doesNotMatch(response.reply, /chuyển bộ phận|chưa có đủ thông tin/iu);
+});
+
+test("Meta brain khóa luồng khiếu nại khi LLM chỉ trả handoff after-sales", async () => {
+  const chat = new DemoChatService();
+  const message = "Giao lâu thế? Hủy đi, bôi bị bết dính ở vùng nách, làm ăn lôm côm!";
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        summary: "Khách muốn hủy và phản ánh đơn giao lâu, sản phẩm bị bết dính",
+        skill: "after-sales-care",
+        topic: "delivery",
+        subject: "order",
+        scenario: "actual",
+        asksDirectAnswer: true,
+        confidence: 0.97,
+        needsClarification: false,
+        evidence: [message],
+        actions: [
+          {
+            type: "handoff_to_human",
+            confidence: 0.96,
+            evidence: ["Hủy đi", "bôi bị bết dính ở vùng nách"],
+            reason: "Khách muốn hủy và phản ánh bôi bị bết dính cần kiểm tra",
+          },
+        ],
+        knowledgeQueries: ["bôi bị bết dính nách", "giao hàng lâu"],
+        unsupportedQuestions: [],
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId: "production-complaint-handoff-only",
+    text: message,
+  });
+
+  assert.equal(response.state.careIssue, "complaint");
+  assert.equal(response.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(response.state.signal, "SC.Khiếu nại");
+  assert.equal(response.state.botPaused, true);
+  assert.equal(response.state.orderFlowStatus, "paused");
+  assert.equal(response.state.decisionTrace?.selectedRoute, "start_care");
+  assert.match(response.reply, /Stopirex rất xin lỗi.*chuyển bộ phận CSKH kiểm tra gấp/isu);
+  assert.match(response.reply, /phản hồi mình sớm nhất/iu);
+  assert.doesNotMatch(
+    response.reply,
+    /chưa có đủ thông tin|1–2 ngày|không bết|tin nhắn tự động|tạm dừng|automation|workflow|tag|mức khẩn/iu,
+  );
+});
+
+test("Meta brain không handoff câu địa phương hỏi cách dùng, bết và hoàn xèng", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        summary: "Khách hỏi cách dùng, bết dính, hiệu quả và hoàn tiền nếu không đỡ",
+        skill: "direct-answer",
+        intent: "usage_guidance",
+        topic: "usage",
+        subject: "product",
+        scenario: "hypothetical",
+        asksDirectAnswer: true,
+        confidence: 0.98,
+        needsClarification: false,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "usage",
+            confidence: 0.98,
+            evidence: ["xài tnao đấy"],
+          },
+          {
+            type: "answer_question",
+            topic: "usage",
+            confidence: 0.98,
+            evidence: ["bôi xong có bị bết k nhỉ"],
+          },
+          {
+            type: "answer_question",
+            topic: "effectiveness",
+            confidence: 0.98,
+            evidence: ["k đỡ có dc hoàn xèng k"],
+          },
+          {
+            type: "answer_question",
+            topic: "order",
+            confidence: 0.98,
+            evidence: ["ship về tp thái bình"],
+          },
+        ],
+        uncertainties: ["mức 1 c"],
+        knowledgeIds: [
+          "usage-general",
+          "usage-application-feel-clothing",
+          "refund-used-ineffective",
+          "pricing-approved-options-2026-08",
+          "domestic-delivery-inspection-policy",
+        ],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Dạ mình dùng Stopirex buổi tối trên da sạch, khô; lăn mỏng 2–3 lần/tuần ạ. Sản phẩm hơi ẩm nhẹ lúc mới lăn nhưng khô nhanh và không bết khi dùng đúng lượng, mình chờ khô rồi mặc áo. Nếu mình chọn 1 lọ và dùng đúng hướng dẫn đủ 2 tuần mà chưa hiệu quả, bên em hỗ trợ hoàn tiền; không cần gửi lại sản phẩm ạ. Thời gian giao dự kiến: cùng tỉnh/thành phố 1–2 ngày, nội miền 2–3 ngày, liên miền Bắc–Nam 3–5 ngày ạ.",
+        slots: { primarySymptom: "odor", odorPresent: true },
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId: "dialect-usage-refund",
+    text: "alo shop ấy, họa m thấy qc trên tóp top. lọ số tốp pi réch này xài tnao đấy? bôi xong có bị bết k nhỉ? mk bị hôi nách nặng từ hồi c3 rồ, dùng bh loại k khỏi. nếu mức 1 c mà k đỡ có dc hoàn xèng k. t ship về tp thái bình",
+  });
+
+  assert.match(response.reply, /buổi tối.*2–3 lần\/tuần/isu);
+  assert.match(response.reply, /khô nhanh.*không bết/isu);
+  assert.match(response.reply, /đúng hướng dẫn đủ 2 tuần.*hoàn tiền/isu);
+  assert.match(response.reply, /(?:nội thành|cùng tỉnh\/thành phố).*1–2 ngày/isu);
+  assert.match(response.reply, /nội miền.*2–3 ngày/isu);
+  assert.match(response.reply, /liên miền.*3–5 ngày/isu);
+  assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận liên quan/iu);
+  assert.equal(response.state.selectedQuantity, undefined);
+  assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
+});
+
+test("Meta brain vẫn trả đủ câu địa phương khi cả LLM lỗi", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () => {
+      throw new Error("provider timeout");
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId: "dialect-usage-refund-llm-failure",
+    text: "alo shop ấy, họa m thấy qc trên tóp top. lọ số tốp pi réch này xài tnao đấy? bôi xong có bị bết k nhỉ? mk bị hôi nách nặng từ hồi c3 rồ, dùng bh loại k khỏi. nếu mức 1 c mà k đỡ có dc hoàn xèng k. t ship về tp thái bình",
+  });
+
+  assert.match(response.reply, /buổi tối.*2–3 lần\/tuần/isu);
+  assert.match(response.reply, /khô nhanh.*không bết/isu);
+  assert.match(response.reply, /đúng hướng dẫn đủ 2 tuần.*hoàn tiền/isu);
+  assert.match(response.reply, /nội thành.*1–2 ngày/isu);
+  assert.match(response.reply, /nội miền.*2–3 ngày/isu);
+  assert.match(response.reply, /liên miền.*3–5 ngày/isu);
+  assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận liên quan/iu);
+  assert.equal(response.state.selectedQuantity, undefined);
+});
+
+test("citation mang thai của LLM được ưu tiên hơn retrieval cho con bú đứng đầu", () => {
+  const reconciled = reconcileKnowledgeBackedPopulationSafety(
+    {
+      status: "interpreted" as const,
+      provider: "openai" as const,
+      model: "gpt-5.4-mini",
+      latencyMs: 10,
+      slots: {},
+      skill: "direct-answer" as const,
+      intent: "consultation" as const,
+      topic: "child_age" as const,
+      subject: "customer" as const,
+      affirmation: true,
+      replyTo: "offer_usage_guidance" as const,
+      actions: [
+        {
+          type: "answer_question" as const,
+          topic: "child_age",
+          source: "llm" as const,
+          confidence: 0.98,
+          evidence: ["phụ nữ đang bầu có dùng dược k"],
+        },
+        {
+          type: "continue_order_collection" as const,
+          source: "llm" as const,
+          confidence: 0.9,
+          evidence: ["đơn combo 2 lọ đang chờ thông tin"],
+        },
+      ],
+      knowledgeIds: ["audience-pregnancy"],
+      unsupportedQuestions: [],
+      draftReply: "Dạ phụ nữ mang thai nên tham khảo ý kiến bác sĩ trước khi dùng ạ.",
+    },
+    "audience-breastfeeding",
+  );
+
+  assert.equal(reconciled.intent, "safety");
+  assert.equal(reconciled.topic, "pregnancy");
+  assert.equal(reconciled.affirmation, false);
+  assert.equal(reconciled.replyTo, undefined);
+  assert.equal(reconciled.draftReply, undefined);
+  const answerAction = reconciled.actions?.find((action) => action.type === "answer_question");
+  assert.equal(answerAction?.type === "answer_question" ? answerAction.topic : undefined, "pregnancy");
+  assert.deepEqual(
+    reconciled.actions?.map((action) => action.type),
+    ["answer_question"],
+  );
+});
+
+test("câu mô tả tình trạng trả lời câu hỏi đang chờ không bị coi là câu hỏi mới", () => {
+  const reconciled = reconcilePendingConsultationAnswer(
+    {
+      slots: { primarySymptom: "both" as const },
+      skill: "direct-answer" as const,
+      intent: "consultation" as const,
+      topic: "sweat" as const,
+      asksDirectAnswer: true,
+      replyTo: "offer_usage_guidance" as const,
+      draftReply: "Bản nháp bị gắn nhầm là câu trả lời FAQ.",
+      actions: [
+        {
+          type: "answer_question" as const,
+          topic: "sweat" as const,
+          source: "llm" as const,
+          confidence: 0.97,
+          evidence: ["mình bị cả mồ hôi làm ướt áo và mùi cơ thể"],
+        },
+      ],
+    },
+    { pendingQuestionTopic: "symptom" },
+    "Mình bị cả mồ hôi làm ướt áo và mùi cơ thể",
+  );
+
+  assert.equal(reconciled.asksDirectAnswer, false);
+  assert.deepEqual(reconciled.slots, { primarySymptom: "both" });
+  assert.equal(reconciled.actions, undefined);
+  assert.equal(reconciled.draftReply, undefined);
+  assert.equal(reconciled.replyTo, undefined);
+  assert.equal(reconciled.skill, undefined);
+});
+
+test("câu hỏi mới vẫn giữ nguyên phân loại trả lời trực tiếp", () => {
+  const semantic = {
+    slots: {},
+    skill: "direct-answer" as const,
+    intent: "consultation" as const,
+    topic: "sweat" as const,
+    asksDirectAnswer: true,
+    actions: [
+      {
+        type: "answer_question" as const,
+        topic: "sweat",
+        source: "llm" as const,
+        confidence: 0.97,
+        evidence: ["mồ hôi nhiều có dùng được không?"],
+      },
+    ],
+  } satisfies Parameters<typeof reconcilePendingConsultationAnswer>[0];
+  const reconciled = reconcilePendingConsultationAnswer(
+    semantic,
+    { pendingQuestionTopic: "symptom" },
+    "Mồ hôi nhiều có dùng được không?",
+  );
+
+  assert.equal(reconciled, semantic);
+});
+
+test("Meta tiếp tục tư vấn khi khách trả lời tình trạng sau báo giá", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "price-then-symptom-answer";
+  const price = chat.chat(sessionId, "alo e giá");
+  assert.equal(price.state.pendingQuestionTopic, "symptom");
+
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        summary: "Khách mô tả cả mồ hôi ướt áo và mùi cơ thể",
+        skill: "direct-answer",
+        intent: "consultation",
+        topic: "sweat",
+        subject: "customer",
+        scenario: "actual",
+        asksDirectAnswer: true,
+        confidence: 0.97,
+        slots: { primarySymptom: "both" },
+        actions: [
+          {
+            type: "answer_question",
+            topic: "sweat",
+            confidence: 0.97,
+            evidence: ["mồ hôi làm ướt áo và mùi cơ thể"],
+          },
+        ],
+        draftReply: "Dạ Stopirex hỗ trợ giảm mồ hôi và mùi ạ.",
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId,
+    text: "Mình bị cả mồ hôi làm ướt áo và mùi cơ thể",
+  });
+
+  assert.equal(response.state.consultationStage, "S1.context");
+  assert.equal(response.state.pendingQuestionTopic, "work_context");
+  assert.equal(response.state.activeSkill, "need-discovery");
+  assert.match(response.reply, /ngồi điều hòa/iu);
+  assert.doesNotMatch(response.reply, /chuyển bộ phận|chọn.*lọ/iu);
+});
+
+test("câu hỏi đang bầu trong lúc thu đơn vẫn dùng câu Knowledge của LLM và không đổi luồng", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "pregnancy-after-price";
+  chat.chat(sessionId, "Giá");
+  chat.chat(sessionId, "Mình lấy 2 lọ");
+  chat.chat(sessionId, "mà lăn có hết mùi ko em");
+
+  let receivedPregnancyKnowledge = false;
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      receivedPregnancyKnowledge = prompt.includes("audience-pregnancy");
+      return JSON.stringify({
+        summary: "Khách hỏi phụ nữ mang thai có dùng được Stopirex không",
+        skill: "direct-answer",
+        intent: "consultation",
+        // Reproduce the production Mini mistake: the citation and draft are
+        // pregnancy-grounded, but the structured topic/action are child_age.
+        topic: "child_age",
+        subject: "customer",
+        replyTo: "offer_usage_guidance",
+        scenario: "actual",
+        affirmation: true,
+        asksDirectAnswer: true,
+        confidence: 0.92,
+        needsClarification: false,
+        evidence: ["phụ nữ đang bầu có dùng dược k"],
+        actions: [
+          {
+            type: "answer_question",
+            topic: "child_age",
+            confidence: 0.92,
+            evidence: ["phụ nữ đang bầu có dùng dược k"],
+          },
+          {
+            type: "handoff_to_human",
+            reason: "Chưa có thông tin xác nhận",
+            confidence: 0.8,
+            evidence: ["phụ nữ đang bầu có dùng dược k"],
+          },
+          {
+            type: "continue_order_collection",
+            confidence: 0.9,
+            evidence: ["đơn combo 2 lọ đang chờ thông tin"],
+          },
+        ],
+        uncertainties: ["Chưa có thông tin xác nhận"],
+        knowledgeIds: ["audience-pregnancy"],
+        unsupportedQuestions: ["phụ nữ đang bầu có dùng dược k"],
+        draftReply:
+          "Dạ mẹ bầu nên tham khảo ý kiến bác sĩ trước khi dùng Stopirex ạ. Em chuyển bộ phận liên quan kiểm tra và hỗ trợ mình tiếp nhé.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId,
+    text: "phụ nữ đang bầu có dùng dược k",
+  });
+
+  assert.equal(receivedPregnancyKnowledge, true);
+  assert.equal(response.replies.length, 1, JSON.stringify(response.replies));
+  assert.match(response.reply, /mang thai.*tham khảo ý kiến bác sĩ/isu);
+  assert.doesNotMatch(response.reply, /chưa có thông tin|chuyển bộ phận liên quan/iu);
+  assert.doesNotMatch(response.reply, /\?/u);
+  assert.equal(response.replies.length, 1);
+  assert.equal(response.state.botPaused, false);
+  assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(response.state.orderFlowStatus, "paused");
+  assert.notEqual(response.state.pendingQuestionTopic, "work_context");
+  assert.equal(response.state.decisionTrace?.semantic.topic, "pregnancy");
+  assert.equal(
+    response.state.decisionTrace?.actionPlan?.accepted.some((action) => action.type === "handoff_to_human"),
+    false,
+  );
+});
+
+test("Meta brain vẫn cho toàn bộ tin chứa SĐT và địa chỉ qua LLM rồi mới lưu đơn", async () => {
+  const chat = new DemoChatService();
+  let prompt = "";
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (value) => {
+      prompt = value;
+      return JSON.stringify({
+        intent: "buying",
+        topic: "sensitive_skin",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "sensitive_skin",
+            confidence: 0.99,
+            evidence: ["da nhạy cảm dùng có an toàn không"],
+          },
+          { type: "select_quantity", quantity: 1, confidence: 0.99, evidence: ["Cho chị 1 lọ"] },
+          {
+            type: "update_order",
+            fields: {
+              phone: "0983425566",
+              legacyAddress: "82 Nguyễn Tuân Hà Nội",
+            },
+            confidence: 0.99,
+            evidence: ["82 Nguyễn Tuân Hà Nội, SĐT 0983425566"],
+          },
+          { type: "continue_order_collection", confidence: 0.99, evidence: ["Cho chị 1 lọ"] },
+        ],
+        knowledgeIds: ["audience-sensitive-skin"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Dạ da nhạy cảm có thể dùng Stopirex đúng hướng dẫn trên da lành, sạch và khô hoàn toàn ạ. Mình nên thử trước trên vùng nhỏ và tạm ngưng nếu da khó chịu.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const message =
+    "Cho chị 1 lọ giao về 82 Nguyễn Tuân Hà Nội, SĐT 0983425566; da nhạy cảm dùng có an toàn không?";
+
+  const response = await brain.reply({ sessionId: "pii-compound-through-llm", text: message });
+
+  assert.match(prompt, /0983425566/u);
+  assert.match(prompt, /da nhạy cảm dùng có an toàn không/iu);
+  assert.equal(response.state.selectedQuantity, 1);
+  assert.equal(response.state.orderDraft?.phone, "0983425566");
+  assert.match(response.reply, /da nhạy cảm/iu);
+  assert.doesNotMatch(response.reply, /chưa hiểu|chưa nghe rõ/iu);
+});
+
+test("LLM chuẩn hóa tiếng tự nhiên thành truy vấn Knowledge rồi hệ thống truy xuất lại", async () => {
+  const chat = new DemoChatService();
+  const prompts: string[] = [];
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      prompts.push(prompt);
+      if (prompts.length === 1) {
+        return JSON.stringify({
+          intent: "safety",
+          topic: "child_age",
+          asksDirectAnswer: true,
+          confidence: 0.98,
+          actions: [
+            {
+              type: "answer_question",
+              topic: "child_age",
+              confidence: 0.98,
+              evidence: ["bé 15 tuổi dùng được không"],
+            },
+          ],
+          knowledgeIds: [],
+          knowledgeQueries: ["trẻ từ đủ 12 tuổi sử dụng Stopirex"],
+          unsupportedQuestions: ["độ tuổi sử dụng"],
+          groundingConfidence: 0.2,
+          draftReply: "Dạ em cần kiểm tra lại độ tuổi sử dụng ạ.",
+          slots: {},
+        });
+      }
+      return JSON.stringify({
+        intent: "safety",
+        topic: "child_age",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "child_age",
+            confidence: 0.99,
+            evidence: ["bé 15 tuổi dùng được không"],
+          },
+        ],
+        knowledgeIds: ["audience-child-12-plus"],
+        knowledgeQueries: ["trẻ từ đủ 12 tuổi sử dụng Stopirex"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.99,
+        draftReply: "Dạ bé 15 tuổi có thể sử dụng Stopirex theo đúng hướng dẫn ạ.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "semantic-knowledge-query-child",
+    text: "bé 15 tuổi dùng được không",
+  });
+
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1] ?? "", /audience-child-12-plus/u);
+  assert.match(response.reply, /15 tuổi có thể sử dụng/iu);
+  assert.doesNotMatch(response.reply, /hoàn tiền|đổi trả|cần kiểm tra lại/iu);
+});
+
 test("outbox tiếp tục gửi kế hoạch đã commit khi Meta lỗi tạm thời, không chạy brain lần hai", async () => {
   const context = fixture({ live: true, failFirstSend: true });
   await assert.rejects(
@@ -376,6 +940,16 @@ test("câu hỏi mã giảm giá dùng rule nhanh, không chờ LLM", () => {
   assert.equal(isFastTransition("ko có mã giảm giá à", chat.peek("promotion-fast")), true);
 });
 
+test("uh sau đề nghị gửi hồ sơ pháp lý dùng pending action, không gọi lại LLM", () => {
+  const chat = new DemoChatService();
+  chat.chat("legal-summary-fast", "Có gì đảm bảo sản phẩm chính hãng không?");
+  const state = chat.peek("legal-summary-fast");
+
+  assert.equal(state.pendingAction, "send_authenticity_legal_summary");
+  assert.equal(isFastTransition("uh", state), true);
+  assert.equal(isFastTransition("gửi đi", state), true);
+});
+
 test("câu dò AI dùng rule nhanh, không gửi lên LLM", () => {
   const chat = new DemoChatService();
   const state = chat.peek("assistant-probe-fast");
@@ -392,7 +966,7 @@ test("câu hỏi nguy cơ trước khi dùng được chuyển qua LLM và giữ
   assert.equal(isFastTransition("Da mình mỏng, dùng có bị ngứa rát hay thâm nách không?", state), false);
 });
 
-test("câu hỏi bết dính hoặc ố áo đi qua LLM rồi được knowledge guard kiểm soát", async () => {
+test("câu hỏi bết dính hoặc ố áo giữ intent LLM và dùng Knowledge làm căn cứ", async () => {
   const chat = new DemoChatService();
   let llmCalls = 0;
   const llm = new CodexLlmBridge({
@@ -402,7 +976,18 @@ test("câu hỏi bết dính hoặc ố áo đi qua LLM rồi được knowledge
       return JSON.stringify({
         intent: "usage_guidance",
         topic: "usage",
+        asksDirectAnswer: true,
         confidence: 0.99,
+        evidence: ["ướt nhẹp", "bết dính", "ố ra áo sơ mi trắng"],
+        actions: [
+          {
+            type: "answer_question",
+            topic: "usage",
+            confidence: 0.99,
+            evidence: ["bết dính", "ố ra áo sơ mi trắng"],
+            source: "llm",
+          },
+        ],
         slots: {},
       });
     },
@@ -415,7 +1000,7 @@ test("câu hỏi bết dính hoặc ố áo đi qua LLM rồi được knowledge
   const response = await brain.reply({ sessionId: "application-feel-fast", text: question });
 
   assert.equal(llmCalls, 1);
-  assert.equal(response.state.lastIntent, "product_effect");
+  assert.equal(response.state.lastIntent, "usage_guidance");
   assert.match(response.reply, /hơi ẩm nhẹ/iu);
   assert.match(response.reply, /không bết/iu);
   assert.match(response.reply, /không gây ố vàng/iu);
@@ -545,6 +1130,75 @@ test("Meta brain dùng câu LLM grounded cho cách hỏi bôi mấy tháng là c
   assert.doesNotMatch(response.reply, /sau cạo|wax|tạm ngưng/iu);
 });
 
+test("Meta brain giữ quyền LLM cho câu nối tiếp an toàn và hàng giả", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "meta-child-safety-authenticity";
+  chat.chat(sessionId, "Chị mua cho con trai 15 tuổi, bé dùng được không?", {
+    slots: {},
+    intent: "safety",
+    topic: "child_age",
+    subject: "child",
+    age: 15,
+    confidence: 0.99,
+    needsClarification: false,
+    asksDirectAnswer: true,
+  });
+  let prompt = "";
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (value) => {
+      prompt = value;
+      return JSON.stringify({
+        intent: "safety",
+        topic: "irritation",
+        subject: "child",
+        scenario: "hypothetical",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        needsClarification: false,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "irritation",
+            confidence: 0.99,
+            evidence: ["an toàn cho da"],
+          },
+          {
+            type: "answer_question",
+            topic: "comparison",
+            confidence: 0.99,
+            evidence: ["hàng giả nhiều lắm"],
+          },
+        ],
+        knowledgeIds: [
+          "product-composition-tolerance-approved",
+          "lab-test-2025-skin-irritation",
+          "authenticity-before-purchase",
+        ],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.99,
+        draftReply:
+          "Dạ về an toàn, Stopirex có Alcohol làm dung môi trong ngưỡng an toàn của công thức và mẫu thử ghi mức kích ứng da không đáng kể; với da nhạy cảm mình nên thử trên vùng nhỏ, dùng trên da lành, sạch, khô hoàn toàn, chỉ lăn một lớp mỏng vào buổi tối, không dùng khi da trầy, đỏ, rát hoặc ngay sau cạo, nhổ, wax ạ. Về hàng chính hãng, sản phẩm bên em cung cấp là hàng chính hãng; khi nhận mình đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi giúp em nhé.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId,
+    text: "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+  });
+
+  assert.match(prompt, /product-composition-tolerance-approved/u);
+  assert.match(prompt, /authenticity-before-purchase/u);
+  assert.match(response.reply, /mức kích ứng da không đáng kể/iu);
+  assert.match(response.reply, /hàng chính hãng/iu);
+  assert.ok(response.reply.length > 360);
+  assert.doesNotMatch(response.reply, /bé 15 tuổi dùng được|mình đang hỏi cho bé|chuyển bộ phận liên quan/iu);
+  assert.equal(response.state.botPaused, false);
+});
+
 test("Question Coverage Gate chặn thu đơn khi LLM timeout làm mất câu hỏi", async () => {
   const chat = new DemoChatService();
   let llmCalls = 0;
@@ -571,6 +1225,48 @@ test("Question Coverage Gate chặn thu đơn khi LLM timeout làm mất câu h�
   assert.doesNotMatch(response.reply, /tạm.*xin thông tin|chưa xin thông tin nhận hàng/iu);
   assert.match(response.reply, /chuyển.*bộ phận liên quan/iu);
   assert.doesNotMatch(response.reply, /tên người nhận|SĐT|địa chỉ trước sáp nhập/iu);
+});
+
+test("Question Coverage Gate chấp nhận câu LLM diễn đạt lại thời điểm hiệu quả khi có Knowledge", async () => {
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        intent: "product_effect",
+        topic: "effectiveness",
+        asksDirectAnswer: true,
+        confidence: 0.98,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "effectiveness",
+            confidence: 0.98,
+            evidence: ["bao lâu thì thấy hiệu quả"],
+          },
+        ],
+        knowledgeIds: ["effectiveness-usage-journey"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.98,
+        draftReply:
+          "Dạ khi dùng đúng hướng dẫn, mình có thể bắt đầu cảm nhận vùng nách khô thoáng hơn trong tuần đầu. Mỗi lần dùng hỗ trợ đến 72 giờ; giai đoạn đầu lăn buổi tối 2–3 lần/tuần.",
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({
+    sessionId: "coverage-grounded-effectiveness-paraphrase",
+    text: "bao lâu thì thấy hiệu quả?",
+  });
+
+  assert.match(response.reply, /trong tuần đầu/iu);
+  assert.doesNotMatch(response.reply, /chưa gửi thông tin|chuyển bộ phận liên quan/iu);
+  assert.ok(response.state.decisionTrace?.knowledgeEntityIds.includes("effectiveness-usage-journey"));
+  assert.equal(
+    response.state.decisionTrace?.knowledgeEntityIds.includes("product-comparison-traditional-rollon"),
+    false,
+  );
 });
 
 test("Grounding guard bỏ nguồn gần nghĩa sai và dùng nguồn chính xác về tắm xà phòng", async () => {
@@ -663,6 +1359,14 @@ test("tin đổi combo sang 1 lọ kèm hỏi kiểm hàng và thời gian giao 
   );
 });
 
+test("cửa hàng offline và ship hỏa tốc là chính sách vận hành chạy fast path", () => {
+  const chat = new DemoChatService();
+  const state = chat.peek("online-only-fast");
+
+  assert.equal(isFastTransition("Shop có cửa hàng offline không?", state), true);
+  assert.equal(isFastTransition("Có ship hỏa tốc trong ngày không?", state), true);
+});
+
 test("phần bổ sung địa chỉ đang thu đơn dùng rule nội bộ, không gửi PII lên LLM", () => {
   const chat = new DemoChatService();
   const sessionId = "address-fast";
@@ -671,4 +1375,16 @@ test("phần bổ sung địa chỉ đang thu đơn dùng rule nội bộ, khôn
   chat.chat(sessionId, "Tai Tran 0392842288 ntt14 Nguyen Tuan Hà Nội");
 
   assert.equal(isFastTransition("thanh xuan trung thanh xuan", chat.peek(sessionId)), true);
+});
+
+test("tham chiếu địa chỉ trên có lỗi gõ phải đi qua LLM trước state reducer", () => {
+  const chat = new DemoChatService();
+  const sessionId = "prior-address-reference-llm-first";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "1 lọ");
+  chat.chat(sessionId, "Tài Test\n0900000000\n82 Nguyễn Tuân, Quận Thanh Xuân, Hà Nội");
+
+  const state = chat.peek(sessionId);
+  assert.deepEqual(state.orderMissing, ["legacyAddress"]);
+  assert.equal(isFastTransition("Uh\nGuit về địa chỉ trên cho a", state), false);
 });

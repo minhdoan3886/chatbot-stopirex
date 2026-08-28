@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { loadEnv } from "../config/env.js";
 import { verifyMetaChallenge, verifyMetaSignature } from "../adapters/metaWebhook.js";
 import { isBotAuthoredEcho, parseMetaWebhook } from "../adapters/metaEvents.js";
@@ -7,18 +7,11 @@ import { PostgresStore } from "../infrastructure/postgres.js";
 import { RedisRuntime } from "../infrastructure/redis.js";
 import { StructuredLogger } from "../services/logger.js";
 import {
+  reconcileKnowledgeBackedPopulationSafety,
+  reconcilePendingConsultationAnswer,
+} from "../services/metaChatBrain.js";
+import {
   DemoChatService,
-  isCompoundOrderUpdateQuestion,
-  isDomesticDeliveryEtaQuestion,
-  isInternalSystemProbe,
-  isInternationalShippingQuestion,
-  isLikelyAdministrativeFragment,
-  isOutOfScopeAssistantProbe,
-  isOrderCaptureMessage,
-  isPriceAndShippingPolicyQuestion,
-  isWholesaleDealerInquiry,
-  isPriceConcern,
-  isQuantityShippingPolicyQuestion,
   type DemoChatResponse,
   type DemoChatState,
 } from "../services/demoChat.js";
@@ -35,13 +28,26 @@ import { tenantId } from "../domain/types.js";
 import { openingVariants, type ConversationIdentity, type OpeningVariantId } from "../domain/sales.js";
 import { governCustomerResponse } from "../domain/responseGovernor.js";
 import { evaluateConversationQuality } from "../domain/conversationQuality.js";
+import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import { OperationsDashboardService } from "../services/operationsDashboard.js";
 import { OperationsControlBusyError, OperationsControlService } from "../services/operationsControl.js";
 import { buildProductInformationSnapshot } from "../services/productInformation.js";
 import { operationsPage } from "./operationsPage.js";
 import { productPage } from "./productPage.js";
 import { ordersPage } from "./ordersPage.js";
+import {
+  dataDeletionPage,
+  privacyPolicyPage,
+  termsOfServicePage,
+} from "./publicPolicyPages.js";
 import { OrderInboxService } from "../services/orderInbox.js";
+import { GraphMetaMessenger } from "../adapters/metaMessenger.js";
+import {
+  buildOrderTrackingNotification,
+  isOrderTrackingCarrier,
+  metaRecipientIdFromOrderSession,
+  normalizeTrackingNumber,
+} from "../services/orderTrackingNotification.js";
 
 const env = loadEnv();
 const logger = new StructuredLogger();
@@ -65,6 +71,13 @@ const operationsControl = new OperationsControlService({
   ...(redis ? { redis } : {}),
 });
 const orderInbox = postgres ? new OrderInboxService(postgres.pool) : undefined;
+const orderTrackingMessenger = env.metaPageAccessToken
+  ? new GraphMetaMessenger({
+      pageAccessToken: env.metaPageAccessToken,
+      graphVersion: env.metaGraphVersion,
+    })
+  : undefined;
+const isProductRuntime = env.metaLiveSendEnabled;
 
 const server = createServer(async (request, response) => {
   const traceId = String(request.headers["x-request-id"] ?? randomUUID());
@@ -72,28 +85,42 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
   if (request.method === "GET" && url.pathname === "/") {
+    if (isProductRuntime) {
+      response.writeHead(302, { location: "/orders" });
+      return response.end();
+    }
     return html(response, 200, demoPage);
   }
 
+  if (request.method === "GET" && url.pathname === "/privacy-policy") {
+    return html(response, 200, privacyPolicyPage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/terms") {
+    return html(response, 200, termsOfServicePage);
+  }
+
+  if (request.method === "GET" && url.pathname === "/data-deletion") {
+    return html(response, 200, dataDeletionPage);
+  }
+
   if (request.method === "GET" && url.pathname === "/operations") {
+    if (!isOperationsAuthorized(request)) return unauthorized(response);
     return html(response, 200, operationsPage);
   }
 
   if (request.method === "GET" && url.pathname === "/product") {
+    if (!isOperationsAuthorized(request)) return unauthorized(response);
     return html(response, 200, productPage);
   }
 
   if (request.method === "GET" && url.pathname === "/orders") {
-    if (!isOperationsAuthorized(request)) {
-      response.setHeader("WWW-Authenticate", 'Basic realm="Stopirex operations"');
-      return json(response, 401, { error: "unauthorized" });
-    }
+    if (!isOperationsAuthorized(request)) return unauthorized(response);
     return html(response, 200, ordersPage);
   }
 
   if (request.method === "GET" && url.pathname === "/api/orders") {
     if (!isOperationsAuthorized(request)) {
-      response.setHeader("WWW-Authenticate", 'Basic realm="Stopirex operations"');
       return json(response, 401, { error: "unauthorized" });
     }
     if (!orderInbox) {
@@ -110,17 +137,96 @@ const server = createServer(async (request, response) => {
     }
   }
 
-  // POST /api/orders/:id/completed  or  /api/orders/:id/cancelled
-  const orderStatusMatch = url.pathname.match(/^\/api\/orders\/([a-f0-9-]{36})\/(completed|cancelled)$/);
-  if (request.method === "POST" && orderStatusMatch) {
+  const orderTrackingMatch = url.pathname.match(/^\/api\/orders\/([a-f0-9-]{36})\/tracking$/);
+  if (request.method === "POST" && orderTrackingMatch) {
     if (!isOperationsAuthorized(request)) {
-      response.setHeader("WWW-Authenticate", 'Basic realm="Stopirex operations"');
       return json(response, 401, { error: "unauthorized" });
     }
     if (!orderInbox) {
       return json(response, 503, { error: "database_not_configured" });
     }
-    const [, orderId, newStatus] = orderStatusMatch as [string, string, "completed" | "cancelled"];
+    if (!orderTrackingMessenger || !env.metaLiveSendEnabled) {
+      return json(response, 503, { error: "meta_live_send_not_configured" });
+    }
+    let body: { carrier?: unknown; trackingNumber?: unknown };
+    try {
+      body = JSON.parse((await readBody(request, 4_000)).toString("utf8")) as typeof body;
+    } catch {
+      return json(response, 400, { error: "invalid_json" });
+    }
+    const carrier = isOrderTrackingCarrier(body.carrier) ? body.carrier : "spx";
+    const trackingNumber = normalizeTrackingNumber(body.trackingNumber);
+    if (!trackingNumber) {
+      return json(response, 400, { error: "invalid_tracking_number" });
+    }
+    const orderId = orderTrackingMatch[1]!;
+    const notification = buildOrderTrackingNotification({ carrier, trackingNumber });
+    try {
+      const claimed = await orderInbox.claimTrackingSend({
+        id: orderId,
+        carrier,
+        trackingNumber,
+        trackingUrl: notification.trackingUrl,
+      });
+      if (!claimed) {
+        const current = await orderInbox.findById(orderId);
+        if (!current) return json(response, 404, { error: "order_not_found" });
+        if (current.trackingSendStatus === "sent") {
+          return json(response, 409, { error: "tracking_already_sent", order: current });
+        }
+        if (current.trackingSendStatus === "sending") {
+          return json(response, 409, { error: "tracking_send_in_progress", order: current });
+        }
+        return json(response, 409, { error: "order_not_pending", order: current });
+      }
+      const recipientId = metaRecipientIdFromOrderSession(claimed.sessionId);
+      if (!recipientId) {
+        await orderInbox.markTrackingFailed(orderId, "invalid_meta_recipient");
+        return json(response, 422, { error: "invalid_meta_recipient" });
+      }
+      const sent = await orderTrackingMessenger.sendText({
+        recipientId,
+        text: notification.text,
+        idempotencyKey: `order-tracking:${orderId}`,
+      });
+      if (!sent.ok) {
+        await orderInbox.markTrackingFailed(orderId, sent.code);
+        logger.log("error", "order_tracking_send_failed", {
+          traceId,
+          orderId,
+          code: sent.code,
+          retryable: sent.retryable,
+        });
+        return json(response, sent.retryable ? 503 : 502, {
+          error: "tracking_send_failed",
+          retryable: sent.retryable,
+          traceId,
+        });
+      }
+      const updated = await orderInbox.markTrackingSent(orderId, sent.value.messageId);
+      if (!updated) throw new Error("tracking_sent_state_not_persisted");
+      logger.log("info", "order_tracking_sent", { traceId, orderId, carrier });
+      return json(response, 200, updated);
+    } catch (error) {
+      logger.log("error", "order_tracking_workflow_failed", {
+        traceId,
+        orderId,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+      return json(response, 503, { error: "tracking_workflow_unavailable", traceId });
+    }
+  }
+
+  // Hoàn tất đơn chỉ xảy ra sau khi gửi mã vận đơn thành công; API này chỉ dùng để huỷ.
+  const orderStatusMatch = url.pathname.match(/^\/api\/orders\/([a-f0-9-]{36})\/(cancelled)$/);
+  if (request.method === "POST" && orderStatusMatch) {
+    if (!isOperationsAuthorized(request)) {
+      return json(response, 401, { error: "unauthorized" });
+    }
+    if (!orderInbox) {
+      return json(response, 503, { error: "database_not_configured" });
+    }
+    const [, orderId, newStatus] = orderStatusMatch as [string, string, "cancelled"];
     let note: string | undefined;
     try {
       const body = JSON.parse((await readBody(request, 4_000)).toString("utf8")) as { note?: unknown };
@@ -128,20 +234,10 @@ const server = createServer(async (request, response) => {
     } catch {
       // note là optional, không bắt buộc
     }
-    try {
-      const updated = await orderInbox.updateStatus(orderId, newStatus, note);
-      if (!updated) return json(response, 404, { error: "order_not_found" });
-      logger.log("info", "order_inbox_status_updated", { traceId, orderId, newStatus });
-      return json(response, 200, updated);
-    } catch (error) {
-      logger.log("error", "order_inbox_status_update_failed", {
-        traceId,
-        orderId,
-        newStatus,
-        reason: error instanceof Error ? error.message : "unknown_error",
-      });
-      return json(response, 503, { error: "order_inbox_unavailable", traceId });
-    }
+    const updated = await orderInbox.updateStatus(orderId, newStatus, note);
+    if (!updated) return json(response, 404, { error: "order_not_found" });
+    logger.log("info", "order_inbox_status_updated", { traceId, orderId, newStatus });
+    return json(response, 200, updated);
   }
 
   if (request.method === "GET" && url.pathname === "/api/product-information") {
@@ -218,6 +314,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && url.pathname === "/demo/chat") {
+    if (isProductRuntime) return json(response, 404, { error: "not_found" });
     let body: {
       sessionId?: unknown;
       text?: unknown;
@@ -244,68 +341,6 @@ const server = createServer(async (request, response) => {
       const includeSources = body.includeSources === true;
       if (codexLlm.enabled) {
         const stateBefore = demoChat.peek(sessionId);
-        if (isDeterministicFastPath(body.text, stateBefore)) {
-          let result = demoChat.chat(sessionId, body.text, {}, context);
-          let quality = result.state.activeSkill
-            ? evaluateConversationQuality({
-                customerMessage: body.text,
-                baseReply: result.reply,
-                replies: result.replies,
-                skill: result.state.activeSkill,
-                ...(result.state.lastIntent ? { intent: result.state.lastIntent } : {}),
-              })
-            : undefined;
-          const blockedReasons = quality && !quality.passed ? [...quality.hardFailReasons] : [];
-          if (blockedReasons.length > 0) {
-            const blockedReplies = qualityGateFallbackReplies(result.state);
-            const blockedState = demoChat.replaceLatestAssistantTurnsAndPauseForCoverage(
-              result.sessionId,
-              result.replies,
-              blockedReplies,
-              `Quality Gate chặn phản hồi: ${blockedReasons.join(", ")}`,
-            );
-            result = {
-              ...result,
-              reply: blockedReplies.join("\n\n"),
-              replies: blockedReplies,
-              state: blockedState,
-            };
-            quality = evaluateConversationQuality({
-              customerMessage: body.text,
-              baseReply: result.reply,
-              replies: result.replies,
-              skill: "knowledge-handoff",
-              intent: "knowledge_unknown",
-            });
-          }
-          result = withTestKnowledgeSources(result, includeSources);
-          return json(response, 200, {
-            ...result,
-            ...(quality ? { quality } : {}),
-            ...(blockedReasons.length > 0 ? { qualityGate: { blocked: true, reasons: blockedReasons } } : {}),
-            llm: {
-              provider: codexLlm.provider,
-              status: "skipped",
-              model: codexLlm.model,
-              latencyMs: 0,
-              interpretation: {
-                status: "skipped",
-                latencyMs: 0,
-                reason: "deterministic_transition",
-              },
-              composition: {
-                status: "skipped",
-                latencyMs: 0,
-                reason: "deterministic_transition",
-              },
-              skill: {
-                ...(result.state.activeSkill ? { selected: result.state.activeSkill } : {}),
-                ...(result.state.skillReason ? { reason: result.state.skillReason } : {}),
-                llmCalls: 0,
-              },
-            },
-          });
-        }
         const retrievedKnowledge = retrieveApprovedKnowledge(
           contextualKnowledgeQuery(body.text, stateBefore),
         );
@@ -314,7 +349,14 @@ const server = createServer(async (request, response) => {
           state: demoChat.peek(sessionId),
           knowledge: retrievedKnowledge,
         });
-        const interpreted = attachRetrievedGrounding(interpretedRaw, retrievedKnowledge);
+        const interpreted = reconcilePendingConsultationAnswer(
+          reconcileKnowledgeBackedPopulationSafety(
+            attachRetrievedGrounding(interpretedRaw, retrievedKnowledge),
+            retrievedKnowledge[0]?.id,
+          ),
+          stateBefore,
+          body.text,
+        );
         const result = demoChat.chat(sessionId, body.text, interpreted, context);
         const composed = codexLlm.adoptInterpretedDraft({
           customerMessage: body.text,
@@ -456,6 +498,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && url.pathname === "/demo/reset") {
+    if (isProductRuntime) return json(response, 404, { error: "not_found" });
     try {
       const body = JSON.parse((await readBody(request, 20_000)).toString("utf8")) as {
         sessionId?: unknown;
@@ -507,6 +550,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && url.pathname === "/demo/free-shipping") {
+    if (isProductRuntime) return json(response, 404, { error: "not_found" });
     try {
       const body = JSON.parse((await readBody(request, 20_000)).toString("utf8")) as {
         sessionId?: unknown;
@@ -523,6 +567,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && url.pathname === "/demo/care/resume") {
+    if (isProductRuntime) return json(response, 404, { error: "not_found" });
     try {
       const body = JSON.parse((await readBody(request, 20_000)).toString("utf8")) as {
         sessionId?: unknown;
@@ -679,31 +724,48 @@ function html(response: import("node:http").ServerResponse, status: number, body
 
 function isOperationsAuthorized(request: import("node:http").IncomingMessage): boolean {
   if (env.nodeEnv !== "production") return true;
+  if (!env.adminApiKey) return false;
   const supplied = request.headers["x-admin-api-key"];
-  if (env.adminApiKey && supplied === env.adminApiKey) return true;
+  if (typeof supplied === "string" && safeSecretEquals(supplied, env.adminApiKey)) return true;
   const authorization = request.headers.authorization;
-  if (!env.adminApiKey || !authorization?.startsWith("Basic ")) return false;
+  if (!authorization?.startsWith("Basic ")) return false;
   try {
     const decoded = Buffer.from(authorization.slice(6), "base64").toString("utf8");
     const separator = decoded.indexOf(":");
-    return separator >= 0 && decoded.slice(separator + 1) === env.adminApiKey;
+    if (separator < 0) return false;
+    return safeSecretEquals(decoded.slice(separator + 1), env.adminApiKey);
   } catch {
     return false;
   }
 }
 
+function safeSecretEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function unauthorized(response: import("node:http").ServerResponse): void {
+  response.setHeader("www-authenticate", 'Basic realm="Stopirex Operations", charset="UTF-8"');
+  return json(response, 401, { error: "unauthorized" });
+}
+
 function isLocalOperationsControlAuthorized(request: import("node:http").IncomingMessage): boolean {
-  if (env.nodeEnv === "production") return false;
+  if (env.nodeEnv === "production" && !isOperationsAuthorized(request)) return false;
   const address = request.socket.remoteAddress ?? "";
-  const loopback = address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
-  if (!loopback) return false;
-  const origin = request.headers.origin;
-  if (!origin) return true;
-  try {
-    return new URL(origin).host === request.headers.host;
-  } catch {
-    return false;
-  }
+  const isPrivateOrLocal =
+    address === "127.0.0.1" ||
+    address === "::1" ||
+    address === "::ffff:127.0.0.1" ||
+    address.startsWith("172.") ||
+    address.startsWith("10.") ||
+    address.startsWith("192.168.") ||
+    address.startsWith("100.") ||
+    address.startsWith("::ffff:172.") ||
+    address.startsWith("::ffff:10.") ||
+    address.startsWith("::ffff:192.168.") ||
+    address.startsWith("::ffff:100.");
+  return isPrivateOrLocal;
 }
 
 if (process.env.NODE_ENV !== "test") {
@@ -757,22 +819,15 @@ const openApiContract = {
         },
       },
     },
-    "/demo/chat": {
+    "/api/orders/{id}/tracking": {
       post: {
-        summary: "Stateful local sandbox conversation",
-        responses: { "200": { description: "Reply and current conversation state" } },
-      },
-    },
-    "/demo/reset": {
-      post: {
-        summary: "Reset a local sandbox conversation",
-        responses: { "200": { description: "New initial state" } },
-      },
-    },
-    "/demo/free-shipping": {
-      post: {
-        summary: "Approve a one-bottle free-shipping override in the local sandbox",
-        responses: { "200": { description: "Updated conversation and order total" } },
+        summary: "Send a staff-entered shipment tracking number to the customer",
+        responses: {
+          "200": { description: "Tracking message sent and order completed" },
+          "400": { description: "Invalid tracking number" },
+          "409": { description: "Already sent or another send is in progress" },
+          "503": { description: "Meta or database unavailable" },
+        },
       },
     },
     "/webhooks/meta": {
@@ -823,7 +878,12 @@ function retrieveApprovedKnowledge(query: string) {
     query,
     entities: approvedKnowledge,
     limit: 3,
-  }).map(({ id, title, content }) => ({ id, title, content }));
+  }).map(({ id, title, content, responseGuidance }) => ({
+    id,
+    title,
+    content,
+    ...(responseGuidance ? { responseGuidance } : {}),
+  }));
 }
 
 /**
@@ -873,8 +933,8 @@ function contextualKnowledgeQuery(customerMessage: string, state: DemoChatState)
     .replace(/đ/gu, "d")
     .trim();
   const needsPriorContext =
-    customerMessage.trim().length < 55 ||
-    /^(?:the|vay|con|loai nay|cai nay|no|nhu tren|nhu vay)\b/.test(normalized);
+    /^(?:the|vay|con|loai nay|cai nay|no|nhu tren|nhu vay)\b/.test(normalized) ||
+    /^(?:da )?(?:ok|okay|oke|uh|u|duoc|dc|co|khong|ko|k|vang)(?: a| nhe)?$/.test(normalized);
   if (!needsPriorContext) return customerMessage;
   const priorCustomerTurns = state.recentTurns
     .filter((turn) => turn.role === "user")
@@ -899,67 +959,6 @@ function withTestKnowledgeSources(result: DemoChatResponse, enabled: boolean): D
   const last = replies.at(-1) ?? result.reply;
   replies[replies.length - 1] = `${last}\n\n${sourceLine}`;
   return { ...result, replies, reply: replies.join("\n\n") };
-}
-
-function isDeterministicFastPath(customerMessage: string, state: DemoChatState): boolean {
-  const text = customerMessage
-    .toLocaleLowerCase("vi-VN")
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/đ/g, "d")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (
-    isInternalSystemProbe(customerMessage) ||
-    isInternationalShippingQuestion(customerMessage) ||
-    isOutOfScopeAssistantProbe(customerMessage) ||
-    isWholesaleDealerInquiry(customerMessage) ||
-    isDomesticDeliveryEtaQuestion(customerMessage) ||
-    isPriceAndShippingPolicyQuestion(customerMessage) ||
-    isQuantityShippingPolicyQuestion(customerMessage) ||
-    isOrderCaptureMessage(customerMessage) ||
-    (Boolean(state.selectedQuantity) && isCompoundOrderUpdateQuestion(customerMessage)) ||
-    isPriceConcern(text)
-  ) {
-    return true;
-  }
-  if (
-    state.pendingAction === "choose_quantity" &&
-    /^(?:1|2|1 lo|2 lo|mot lo|hai lo|combo)(?: a| nhe| nha)?$/.test(text)
-  ) {
-    return true;
-  }
-  if (
-    state.pendingAction === "confirm_order" &&
-    /^(?:dung|dung roi|dong y|toi dong y|xac nhan dong y)$/.test(text)
-  ) {
-    return true;
-  }
-  if (
-    state.selectedQuantity &&
-    state.orderMissing.length > 0 &&
-    !/[?？]/u.test(customerMessage) &&
-    (/(?<!\d)0\d{9}(?!\d)/u.test(customerMessage) ||
-      isLikelyAdministrativeFragment(customerMessage) ||
-      /\b(?:ten nguoi nhan|sdt|so dien thoai|dia chi|phuong|xa|thi tran|quan|huyen|tinh|thanh pho)\b/.test(
-        text,
-      ))
-  ) {
-    return true;
-  }
-  if (
-    state.pipeline === "6.Đã tạo đơn" &&
-    /^(?:dung|dung roi|dong y|ok|okay|cam on|thanks)(?: a| nhe| nha)?$/.test(text)
-  ) {
-    return true;
-  }
-  if (/^(?:gia|bao gia|xin gia|gia bao nhieu|bao nhieu tien)(?: a| nhe| nha)?[?？]?$/.test(text)) {
-    return true;
-  }
-  if (/^(?:stop|huy dang ky|khong nhan nua|dung nhan)$/.test(text)) {
-    return true;
-  }
-  return false;
 }
 
 function classifyDemoChatFailure(error: unknown): {
@@ -996,6 +995,18 @@ function applyComposedReply(result: DemoChatResponse, composedReply: string): De
       result.state.mode === "care" || Boolean(result.state.selectedQuantity) || Boolean(result.state.orderId),
   });
   const replies = governed.replies.length > 0 ? governed.replies : [result.reply];
+  try {
+    assertReplyMatchesConversationState({
+      reply: replies.join("\n\n"),
+      ...(result.state.decisionTrace ? { trace: result.state.decisionTrace } : {}),
+      ...(result.state.selectedQuantity ? { selectedQuantity: result.state.selectedQuantity } : {}),
+      ...(result.state.orderId ? { orderId: result.state.orderId } : {}),
+      botPaused: result.state.botPaused,
+      freeShippingApproved: result.state.freeShippingApproved,
+    });
+  } catch {
+    return result;
+  }
   return {
     ...result,
     reply: replies.join("\n\n"),

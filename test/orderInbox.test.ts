@@ -35,7 +35,6 @@ const validDraft = {
 const savedRecord: OrderInboxRecord = {
   id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   sessionId: "session-001",
-  idempotencyKey: "turn-001",
   channel: "meta",
   recipientName: validDraft.recipientName,
   phone: validDraft.phone,
@@ -46,6 +45,7 @@ const savedRecord: OrderInboxRecord = {
   totalVnd: validDraft.totalVnd,
   paymentMethod: validDraft.paymentMethod,
   status: "pending",
+  trackingSendStatus: "not_sent",
   confirmedAt: "2026-08-18T09:00:00.000Z",
   createdAt: "2026-08-18T09:00:00.000Z",
   updatedAt: "2026-08-18T09:00:00.000Z",
@@ -72,10 +72,9 @@ test("push() trả về record khi INSERT thành công", async () => {
   assert.equal(result.quantity, 2);
   assert.equal(result.totalVnd, 560_000);
   assert.equal(result.paymentMethod, "cod");
-  assert.equal(result.idempotencyKey, savedRecord.idempotencyKey);
 });
 
-test("push() dùng ON CONFLICT đúng khóa idempotency", async () => {
+test("push() dùng khóa idempotency ổn định khi retry", async () => {
   const queries: string[] = [];
   const pool = {
     async query(text: string, _params?: unknown[]) {
@@ -92,7 +91,7 @@ test("push() dùng ON CONFLICT đúng khóa idempotency", async () => {
   });
 
   assert.equal(queries.length, 1);
-  assert.match(queries[0] ?? "", /ON CONFLICT \(session_id, idempotency_key\)/);
+  assert.match(queries[0]!, /ON CONFLICT \(session_id, idempotency_key\)/u);
   assert.equal(result.id, savedRecord.id);
   assert.equal(result.status, "pending");
 });
@@ -113,26 +112,9 @@ test("push() tự động điền channel mặc định là 'meta'", async () =>
     confirmedAt: new Date(),
   });
 
-  // Tham số thứ 3 (index 2) là channel, sau idempotency key.
+  // Tham số thứ 3 (index 2) là channel; index 1 là idempotency key.
   assert.equal(capturedParams[0]?.[2], "meta");
-});
-
-test("push() truyền idempotency key ổn định", async () => {
-  const capturedParams: unknown[][] = [];
-  const pool = {
-    async query(_text: string, params?: unknown[]) {
-      if (params) capturedParams.push(params);
-      return { rows: [savedRecord] };
-    },
-  };
-  const service = new OrderInboxService(pool as never);
-  await service.push({
-    sessionId: "session-001",
-    draft: validDraft,
-    confirmedAt: new Date("2026-08-18T09:00:00.000Z"),
-    idempotencyKey: "turn-001",
-  });
-  assert.equal(capturedParams[0]?.[1], "turn-001");
+  assert.equal(capturedParams[0]?.[1], `session-001:${capturedParams[0]?.[11]}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -145,7 +127,7 @@ test("list() trả về tổng, số pending và records", async () => {
       queryCount++;
       if (queryCount === 1) {
         // COUNT query
-        return { rows: [{ total: "3", pending: "1", completed: "1", cancelled: "1", today: "2" }] };
+        return { rows: [{ total: "3", pending: "1" }] };
       }
       // Records query
       return { rows: [savedRecord] };
@@ -157,9 +139,6 @@ test("list() trả về tổng, số pending và records", async () => {
 
   assert.equal(result.total, 3);
   assert.equal(result.pending, 1);
-  assert.equal(result.completed, 1);
-  assert.equal(result.cancelled, 1);
-  assert.equal(result.today, 2);
   assert.equal(result.records.length, 1);
   assert.equal(result.records[0]?.id, savedRecord.id);
 });
@@ -169,10 +148,7 @@ test("list() không có đơn trả về total và pending bằng 0", async () =
   const pool = {
     async query() {
       queryCount++;
-      return {
-        rows:
-          queryCount === 1 ? [{ total: "0", pending: "0", completed: "0", cancelled: "0", today: "0" }] : [],
-      };
+      return { rows: queryCount === 1 ? [{ total: "0", pending: "0" }] : [] };
     },
   };
   const service = new OrderInboxService(pool as never);
@@ -190,10 +166,7 @@ test("list() lọc theo status khi truyền filter", async () => {
     async query(text: string) {
       capturedQueries.push(text);
       return {
-        rows:
-          capturedQueries.length === 1
-            ? [{ total: "5", pending: "2", completed: "2", cancelled: "1", today: "3" }]
-            : [],
+        rows: capturedQueries.length === 1 ? [{ total: "5", pending: "2" }] : [],
       };
     },
   };
@@ -270,6 +243,73 @@ test("updateStatus() chấp nhận cả 'completed' và 'cancelled'", async () =
 
   const r2 = await service2.updateStatus(savedRecord.id, "cancelled");
   assert.equal(r2?.status, "cancelled");
+});
+
+test("claimTrackingSend() chỉ nhận đơn pending chưa gửi và lưu mã thật", async () => {
+  const queries: Array<{ text: string; params?: unknown[] }> = [];
+  const claimed = {
+    ...savedRecord,
+    trackingCarrier: "spx" as const,
+    trackingNumber: "SPXVN123456",
+    trackingUrl: "https://spx.vn/track?SPXVN123456",
+    trackingSendStatus: "sending" as const,
+  };
+  const pool = {
+    async query(text: string, params?: unknown[]) {
+      queries.push({ text, ...(params ? { params } : {}) });
+      return { rows: [claimed] };
+    },
+  };
+  const service = new OrderInboxService(pool as never);
+  const result = await service.claimTrackingSend({
+    id: savedRecord.id,
+    carrier: "spx",
+    trackingNumber: "SPXVN123456",
+    trackingUrl: "https://spx.vn/track?SPXVN123456",
+  });
+
+  assert.equal(result?.trackingSendStatus, "sending");
+  assert.match(queries[0]!.text, /tracking_sent_at IS NULL/u);
+  assert.match(queries[0]!.text, /status = 'pending'/u);
+  assert.deepEqual(queries[0]!.params, [
+    savedRecord.id,
+    "spx",
+    "SPXVN123456",
+    "https://spx.vn/track?SPXVN123456",
+  ]);
+});
+
+test("markTrackingSent() hoàn tất đơn chỉ sau khi Meta đã trả message id", async () => {
+  const sent = {
+    ...savedRecord,
+    status: "completed" as const,
+    trackingSendStatus: "sent" as const,
+    trackingMessageId: "mid.123",
+    trackingSentAt: "2026-08-24T10:00:00.000Z",
+  };
+  const captured: string[] = [];
+  const pool = {
+    async query(text: string) {
+      captured.push(text);
+      return { rows: [sent] };
+    },
+  };
+  const service = new OrderInboxService(pool as never);
+  const result = await service.markTrackingSent(savedRecord.id, "mid.123");
+
+  assert.equal(result?.status, "completed");
+  assert.equal(result?.trackingSendStatus, "sent");
+  assert.match(captured[0]!, /tracking_message_id = \$2/u);
+  assert.match(captured[0]!, /status = 'completed'/u);
+});
+
+test("markTrackingFailed() giữ đơn pending để nhân viên có thể gửi lại", async () => {
+  const failed = { ...savedRecord, trackingSendStatus: "failed" as const };
+  const pool = makePool([failed]);
+  const service = new OrderInboxService(pool as never);
+  const result = await service.markTrackingFailed(savedRecord.id, "meta_500");
+  assert.equal(result?.status, "pending");
+  assert.equal(result?.trackingSendStatus, "failed");
 });
 
 // ---------------------------------------------------------------------------

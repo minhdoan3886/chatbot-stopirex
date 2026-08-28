@@ -1,5 +1,11 @@
 export type IssueType =
-  "ineffective" | "irritation" | "missing_or_damaged" | "delivery" | "counterfeit" | "negative_review";
+  | "ineffective"
+  | "irritation"
+  | "missing_or_damaged"
+  | "delivery"
+  | "counterfeit"
+  | "negative_review"
+  | "complaint";
 export type IssuePriority = "normal" | "urgent";
 
 export type CareCaseUpdate = {
@@ -71,7 +77,7 @@ export function createCareCase(input: {
   facts?: Record<string, unknown>;
   owner?: string;
 }): CareCase {
-  const urgent = input.issue === "irritation";
+  const urgent = input.issue === "irritation" || input.issue === "complaint";
   const status = "open" as const;
   return {
     id: input.id,
@@ -240,6 +246,14 @@ export function startCareFlow(id: string, issue: IssueType, now = new Date(), in
       "C1.phone",
       "Hàng vỡ/hỏng - thiếu SĐT đặt hàng",
       "Mình gửi giúp em số điện thoại đã dùng để đặt hàng ạ.",
+    );
+  }
+  if (issue === "complaint") {
+    return immediateHandoff(
+      careCase,
+      "Khiếu nại khẩn - CSKH tiếp quản",
+      "Stopirex rất xin lỗi vì sự bất tiện này ạ. Em đã ghi nhận khiếu nại và chuyển bộ phận CSKH kiểm tra gấp. Bên em sẽ phản hồi mình sớm nhất ạ.",
+      false,
     );
   }
   if (issue === "counterfeit") {
@@ -716,7 +730,12 @@ function extractInitialCareFacts(issue: IssueType, text: string): Record<string,
   return facts;
 }
 
-function immediateHandoff(careCase: CareCase, breakpoint: string, reply: string): CareTurn {
+function immediateHandoff(
+  careCase: CareCase,
+  breakpoint: string,
+  reply: string,
+  includeReceipt = true,
+): CareTurn {
   const updated: CareCase = {
     ...careCase,
     botPaused: true,
@@ -729,7 +748,9 @@ function immediateHandoff(careCase: CareCase, breakpoint: string, reply: string)
   };
   return {
     state: { case: updated, stage: "C3.human_review", breakpoint, asked: [] },
-    reply: `${reply}\n\nMã tiếp nhận: ${updated.id}. Sale online sẽ phản hồi trước ${formatDeadline(updated.dueAt)} ạ.`,
+    reply: includeReceipt
+      ? `${reply}\n\nMã tiếp nhận: ${updated.id}. Sale online sẽ phản hồi trước ${formatDeadline(updated.dueAt)} ạ.`
+      : reply,
     pipeline: "C3.Chờ CSKH",
     needsHuman: true,
   };
@@ -770,6 +791,7 @@ function issueName(issue: IssueType): string {
   if (issue === "missing_or_damaged") return "Hàng hỏng/thiếu";
   if (issue === "delivery") return "Giao hàng";
   if (issue === "counterfeit") return "Nghi hàng giả";
+  if (issue === "complaint") return "Khiếu nại";
   return "Đánh giá xấu";
 }
 
@@ -788,6 +810,9 @@ function careOpening(issue: IssueType): string {
   }
   if (issue === "counterfeit") {
     return "Dạ em hiểu mình đang lo lắng về nguồn gốc sản phẩm. Em kiểm tra thông tin cùng mình trước nhé ạ.";
+  }
+  if (issue === "complaint") {
+    return "Stopirex rất xin lỗi vì sự bất tiện này ạ.";
   }
   return "Dạ em rất tiếc vì trải nghiệm của mình chưa được như mong đợi. Em ghi nhận vấn đề và kiểm tra cùng mình ngay ạ.";
 }
@@ -831,6 +856,8 @@ export function careQuestions(issue: IssueType): readonly string[] {
       return ["Mua ở đâu?", "Mã đơn?", "Ảnh bao bì/tem/đáy lọ?"];
     case "negative_review":
       return ["Vấn đề chính?", "Mã đơn?", "Khách muốn xử lý thế nào?"];
+    case "complaint":
+      return ["Ghi nhận khiếu nại, tạm dừng tự động và chuyển CSKH xử lý gấp"];
   }
 }
 

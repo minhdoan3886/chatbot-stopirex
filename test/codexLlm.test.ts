@@ -162,11 +162,38 @@ test("parser giữ toàn bộ actions của một tin nhắn thay vì ép còn m
   );
 
   assert.equal(parsed.summary, "Khách hỏi hiệu quả và chốt một lọ");
-  assert.deepEqual(parsed.actions?.map((action) => action.type), [
-    "answer_question",
-    "select_quantity",
-    "continue_order_collection",
-  ]);
+  assert.deepEqual(
+    parsed.actions?.map((action) => action.type),
+    ["answer_question", "select_quantity", "continue_order_collection"],
+  );
+});
+
+test("parser không làm mất số lượng khi model trả quantity dưới dạng chuỗi", () => {
+  const parsed = parseSemanticUnderstanding(
+    JSON.stringify({
+      intent: "buying",
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: "1",
+          confidence: 0.99,
+          evidence: ["chốt giùm tui mọt chai nghen"],
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.98,
+          evidence: ["chốt giùm tui mọt chai nghen"],
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(
+    parsed.actions?.map((action) =>
+      action.type === "select_quantity" ? `${action.type}:${action.quantity}` : action.type,
+    ),
+    ["select_quantity:1", "continue_order_collection"],
+  );
 });
 
 test("parser giữ nguồn knowledge, phần chưa hỗ trợ và độ tin cậy grounding", () => {
@@ -183,6 +210,22 @@ test("parser giữ nguồn knowledge, phần chưa hỗ trợ và độ tin cậ
   assert.deepEqual(parsed.knowledgeIds, ["combo-two"]);
   assert.deepEqual(parsed.unsupportedQuestions, ["Quà tặng cho 3 lọ"]);
   assert.equal(parsed.groundingConfidence, 0.91);
+});
+
+test("parser giữ truy vấn Knowledge do LLM chuẩn hóa và loại PII", () => {
+  const parsed = parseSemanticUnderstanding(
+    JSON.stringify({
+      knowledgeQueries: [
+        "an toàn cho da nhạy cảm 0983425566",
+        "kiểm tra hàng chính hãng",
+      ],
+    }),
+  );
+
+  assert.deepEqual(parsed.knowledgeQueries, [
+    "an toàn cho da nhạy cảm",
+    "kiểm tra hàng chính hãng",
+  ]);
 });
 
 test("cấu hình auto ưu tiên OpenAI API khi có key", () => {
@@ -305,8 +348,7 @@ test("prompt compact là profile riêng và production vẫn mặc định legac
 
 test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng hành động và state", () => {
   const input = {
-    customerMessage:
-      "Giá mình biết rồi, nhưng đã tiêm botox mà bị lại thì Stopirex có ăn thua không?",
+    customerMessage: "Giá mình biết rồi, nhưng đã tiêm botox mà bị lại thì Stopirex có ăn thua không?",
     state: {
       ...state,
       selectedQuantity: 1 as const,
@@ -316,9 +358,7 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
         { role: "assistant" as const, text: "Mình gửi thông tin nhận hàng giúp em nhé." },
       ],
     },
-    knowledge: [
-      { id: "effect", title: "Hiệu quả", content: "Dữ liệu đã duyệt" },
-    ],
+    knowledge: [{ id: "effect", title: "Hiệu quả", content: "Dữ liệu đã duyệt" }],
   };
   const legacy = buildInterpretPromptForDiagnostics(input, "legacy");
   const compact = buildInterpretPromptForDiagnostics(input, "compact");
@@ -339,7 +379,95 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
     assert.match(compact, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"));
   }
   assert.match(compact, /không mở đầu 'Dạ có'/u);
-  assert.match(compact, /không xin lại dữ liệu đã có/u);
+  assert.match(compact, /answer_question \+ pause_order/u);
+  assert.match(compact, /cấm xin số lượng\/Tên\/SĐT\/Địa chỉ/u);
+  assert.match(compact, /là câu trả lời, không phải câu hỏi/u);
+  assert.match(compact, /MESSAGE nhiều dòng là các tin liên tiếp/u);
+  assert.match(compact, /Bất biến số lượng/u);
+  assert.match(compact, /chai\/lọ/u);
+});
+
+test("prompt compact buộc LLM phát hành action số lượng cho tiếng địa phương và lỗi gõ", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "chốt giùm tui mọt chai nghen",
+      state,
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /select_quantity với số chuẩn và continue_order_collection/u);
+  assert.match(prompt, /chốt giùm tui mọt chai nghen/u);
+  assert.match(prompt, /evidence giữ nguyên cả cụm khách viết/u);
+});
+
+test("prompt compact không cho model tự nuốt một vế mua hoặc từ chối đang mâu thuẫn", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "chốt giùm tui mọt chai, mà thui hông lấy nữa",
+      state,
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /Bất biến mâu thuẫn mua/u);
+  assert.match(prompt, /select_quantity, continue_order_collection và decline_purchase/u);
+  assert.match(prompt, /needsClarification=true/u);
+  assert.match(prompt, /không tự chọn vế cuối/u);
+});
+
+test("prompt compact ưu tiên lời mời hướng dẫn gần nhất hơn state đơn cũ", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "gửi cho chị",
+      state: {
+        ...state,
+        selectedQuantity: 1,
+        pendingAction: "send_usage_guidance",
+        pipeline: "5.Chờ TT KH",
+        recentTurns: [
+          { role: "user", text: "Con trai chị 15 tuổi dùng được không?" },
+          {
+            role: "assistant",
+            text: "Nếu mình cần, em gửi thêm cách dùng phù hợp để bé sử dụng đúng ngay từ đầu nhé ạ.",
+          },
+        ],
+      },
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /pendingAction gần nhất thắng selectedQuantity và state đơn cũ/u);
+  assert.match(prompt, /usage_guidance \+ replyTo offer_usage_guidance/u);
+  assert.match(prompt, /affirmation=true \+ needsClarification=false/u);
+  assert.match(prompt, /cấm order_support\/continue_order_collection/u);
+});
+
+test("prompt compact giữ bé là đối tượng nhưng không kéo câu hỏi mới về child_age", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+      state: {
+        ...state,
+        customerProfile: { age: 15 },
+        answeredTopics: ["child_age"],
+        recentTurns: [
+          { role: "user", text: "Chị mua cho con trai 15 tuổi, bé dùng được không?" },
+          { role: "assistant", text: "Dạ bé 15 tuổi dùng được rồi ạ." },
+        ],
+      },
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /topic\/intent\/actions phải theo câu hỏi MỚI/u);
+  assert.match(prompt, /answer_question\(irritation\) \+ answer_question\(comparison\)/u);
+  assert.match(prompt, /Cấm topic child_age/u);
+  assert.match(prompt, /cấm lặp 'bé N tuổi dùng được'/u);
 });
 
 test("ép OpenAI nhưng thiếu key thì bridge không tự báo sẵn sàng", () => {
@@ -612,10 +740,8 @@ test("single-pass draft không được nói đã chọn combo khi state chưa t
   const bridge = new CodexLlmBridge({ enabled: true, model: "test-model" });
   const result = bridge.adoptInterpretedDraft({
     customerMessage: "2",
-    draftReply:
-      "Dạ em ghi nhận combo 2 lọ ạ. Anh/chị gửi tên và SĐT để em lên đơn nhé?",
-    baseReply:
-      "Dạ em chưa xác định được lựa chọn. Mình chọn 1 lọ hay combo 2 lọ ạ?",
+    draftReply: "Dạ em ghi nhận combo 2 lọ ạ. Anh/chị gửi tên và SĐT để em lên đơn nhé?",
+    baseReply: "Dạ em chưa xác định được lựa chọn. Mình chọn 1 lọ hay combo 2 lọ ạ?",
     state,
     skillId: "order-closing",
   });
@@ -623,6 +749,179 @@ test("single-pass draft không được nói đã chọn combo khi state chưa t
   assert.equal(result.status, "fallback");
   assert.equal(result.reason, "action_grounding_guard");
   assert.equal(result.reply.includes("ghi nhận combo"), false);
+});
+
+test("single-pass không coi giả định chọn 1 lọ để hỏi hoàn tiền là đã chốt đơn", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, model: "test-model" });
+  const draftReply =
+    "Dạ nếu mình chọn 1 lọ và dùng đúng hướng dẫn đủ 2 tuần mà chưa hiệu quả, bên em hỗ trợ hoàn tiền ạ.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "nếu mức 1 c mà k đỡ có dc hoàn xèng k",
+    draftReply,
+    baseReply: draftReply,
+    state,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft");
+  assert.equal(result.reply, draftReply);
+});
+
+test("single-pass không được xin dữ liệu đơn khi action plan đang pause_order", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const answerAction = {
+    type: "answer_question" as const,
+    topic: "effectiveness" as const,
+    confidence: 0.97,
+    evidence: ["ngồi không cũng ướt"],
+    source: "llm" as const,
+  };
+  const continueAction = {
+    type: "continue_order_collection" as const,
+    confidence: 0.9,
+    evidence: ["đơn đang dở"],
+    source: "llm" as const,
+  };
+  const pauseAction = {
+    type: "pause_order" as const,
+    reason: "answer_current_question_first",
+    confidence: 1,
+    evidence: ["ngồi không cũng ướt"],
+    source: "state" as const,
+  };
+  const pausedState: DemoChatState = {
+    ...state,
+    selectedQuantity: 1,
+    orderFlowStatus: "paused",
+    decisionTrace: {
+      semantic: {
+        intent: "product_effect",
+        topic: "sweat",
+        confidence: 0.97,
+        needsClarification: false,
+        evidence: ["ngồi không cũng ướt"],
+      },
+      ruleMatches: [],
+      conflicts: [],
+      selectedRoute: "direct_intent",
+      selectedIntent: "product_effect",
+      reason: "Ưu tiên trả lời câu hiện tại.",
+      knowledgeEntityIds: ["product-comparison-traditional-rollon"],
+      actionPlan: {
+        accepted: [answerAction, continueAction, pauseAction],
+        rejected: [],
+        conflicts: [],
+        primaryIntent: "product_effect",
+        answerTopics: ["effectiveness"],
+        shouldClarify: false,
+        hasMultipleActions: true,
+      },
+    },
+  };
+  const baseReply = "Dạ có ạ. Stopirex hỗ trợ kiểm soát mồ hôi khi mình ra nhiều mồ hôi cả lúc ngồi yên.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "lăn cái này có tốt k, a ra nhiều mồ hôi, ngồi ko cũng ướt",
+    draftReply:
+      "Dạ có ạ. Stopirex hỗ trợ kiểm soát mồ hôi khi mình ra nhiều mồ hôi cả lúc ngồi yên. Mình gửi em tên người nhận, SĐT và địa chỉ nhé?",
+    baseReply,
+    actions: [answerAction, continueAction],
+    state: pausedState,
+  });
+
+  assert.equal(result.status, "fallback");
+  assert.equal(result.reason, "action_grounding_guard");
+  assert.equal(result.reply, baseReply);
+  assert.doesNotMatch(result.reply, /tên người nhận|SĐT|địa chỉ/iu);
+});
+
+test("action grounding cho phép hướng dẫn liên hệ có điều kiện, không hiểu nhầm là đã handoff", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const draftReply =
+    "Dạ em xin thông tin chính xác đến mình ạ: Stopirex có Alcohol dùng làm dung môi trong ngưỡng an toàn của công thức, và mẫu thử ghi mức kích ứng da là ‘không đáng kể’. Khi nhận hàng, mình đối chiếu bao bì, tem và đúng tên sản phẩm; nếu không khớp thì từ chối nhận và báo em chuyển bộ phận liên quan kiểm tra ạ.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+    draftReply,
+    baseReply:
+      "Dạ với bé 15 tuổi, Stopirex có thể dùng theo đúng hướng dẫn ạ. Mẫu thử có mức kích ứng da không đáng kể.",
+    actions: [
+      {
+        type: "answer_question",
+        topic: "irritation",
+        confidence: 0.97,
+        evidence: ["an toàn cho da"],
+        source: "llm",
+      },
+      {
+        type: "answer_question",
+        topic: "comparison",
+        confidence: 0.92,
+        evidence: ["hàng giả nhiều lắm"],
+        source: "llm",
+      },
+    ],
+    state: {
+      ...state,
+      customerProfile: { age: 15 },
+      answeredTopics: ["child_age"],
+      recentTurns: [
+        { role: "user", text: "Chị mua cho con trai 15 tuổi" },
+        { role: "assistant", text: "Dạ bé 15 tuổi dùng được rồi ạ." },
+      ],
+    },
+    knowledge: [
+      {
+        id: "product-composition-tolerance-approved",
+        title: "Thành phần và độ dịu nhẹ đã được duyệt",
+        content:
+          "Stopirex có Alcohol dùng làm dung môi trong ngưỡng an toàn của công thức. Mẫu thử có mức kích ứng da không đáng kể.",
+      },
+      {
+        id: "authenticity-before-purchase",
+        title: "Xác nhận sản phẩm chính hãng trước khi mua",
+        content:
+          "Sản phẩm Stopirex bên em cung cấp là hàng chính hãng. Khi nhận hàng, khách đối chiếu bao bì, tem và đúng tên sản phẩm; nếu không khớp, khách có quyền từ chối nhận và liên hệ bên em kiểm tra.",
+      },
+    ],
+    knowledgeIds: ["product-composition-tolerance-approved", "authenticity-before-purchase"],
+    unsupportedQuestions: [],
+    groundingConfidence: 0.98,
+    knowledgeGroundingRequired: true,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft");
+  assert.match(result.reply, /báo em chuyển bộ phận liên quan kiểm tra/iu);
+});
+
+test("action grounding không để câu điều kiện khác che tuyên bố đã handoff sai state", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const baseReply = "Dạ em tư vấn cho mình ạ.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "Tư vấn giúp mình",
+    draftReply:
+      "Dạ em đã chuyển bộ phận CSKH kiểm tra rồi ạ. Nếu hàng không khớp, mình báo em để em chuyển bộ phận liên quan kiểm tra nhé.",
+    baseReply,
+    state,
+  });
+
+  assert.equal(result.status, "fallback");
+  assert.equal(result.reason, "action_grounding_guard");
+  assert.equal(result.reply, baseReply);
+});
+
+test("workflow không thay thế quyết định hội thoại trong draft của LLM", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const baseReply = "Dạ em hiểu ạ. Tình trạng của mình có kèm mùi khó chịu không ạ?";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "Mình bị mồ hôi nhiều",
+    draftReply: "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Mình chọn 1 lọ hay combo 2 lọ ạ?",
+    baseReply,
+    state,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft");
+  assert.equal(result.reply, "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Mình chọn 1 lọ hay combo 2 lọ ạ?");
 });
 
 test("single-pass chỉ nhận câu trả lời có knowledge id thật đã được truy xuất", () => {
@@ -651,7 +950,7 @@ test("single-pass chỉ nhận câu trả lời có knowledge id thật đã đ�
   assert.equal(fabricated.reason, "knowledge_grounding_guard:unknown_knowledge_id");
 });
 
-test("single-pass có Knowledge vẫn không được bỏ câu hỏi nối tiếp của workflow", () => {
+test("single-pass có Knowledge không bị workflow tự nối thêm CTA", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const baseReply =
     "Dạ 1 lọ 285.000đ + 30.000đ phí giao ạ. Để em tư vấn sát hơn, mình khó chịu vì mồ hôi, mùi hay cả hai tình trạng ạ?";
@@ -672,18 +971,17 @@ test("single-pass có Knowledge vẫn không được bỏ câu hỏi nối ti�
     knowledgeGroundingRequired: true,
   });
 
-  assert.equal(result.status, "fallback");
-  assert.equal(result.reason, "direction_guard");
-  assert.equal(result.reply, baseReply);
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft");
+  assert.equal(result.reply, "Dạ 1 lọ 285.000đ + 30.000đ phí giao ạ.");
+  assert.doesNotMatch(result.reply, /mình khó chịu vì mồ hôi, mùi hay cả hai/iu);
 });
 
 test("LLM-first giữ câu grounded đúng dù base regex đang trả sai chủ đề", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const result = bridge.adoptInterpretedDraft({
-    customerMessage:
-      "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?",
-    draftReply:
-      "Dạ một lọ Stopirex thường dùng khoảng 3–4 tháng khi mình lăn mỏng 2–3 lần/tuần ạ.",
+    customerMessage: "Một lọ lăn bé tí tẹo thế này thì bôi được mấy tháng là cạn đầy vậy shop?",
+    draftReply: "Dạ một lọ Stopirex thường dùng khoảng 3–4 tháng khi mình lăn mỏng 2–3 lần/tuần ạ.",
     baseReply:
       "Dạ mình dùng buổi tối khi da sạch, khô. Không dùng khi da trầy; nếu khó chịu thì tạm ngưng ạ.",
     state,
@@ -795,8 +1093,7 @@ test("một lượt Routing Agent trả cả semantic và draft hội thoại", 
         topic: "comparison",
         asksDirectAnswer: true,
         confidence: 0.98,
-        draftReply:
-          "Dạ điểm khác chính là cơ chế và tần suất dùng ạ. Em gửi cách dùng hay giá trước ạ?",
+        draftReply: "Dạ điểm khác chính là cơ chế và tần suất dùng ạ. Em gửi cách dùng hay giá trước ạ?",
       });
     },
   });
@@ -808,8 +1105,7 @@ test("một lượt Routing Agent trả cả semantic và draft hội thoại", 
   const composed = bridge.adoptInterpretedDraft({
     customerMessage: "Khác lăn thường ở đâu?",
     draftReply: interpreted.draftReply!,
-    baseReply:
-      "Dạ điểm khác chính là cơ chế và tần suất dùng ạ. Em gửi cách dùng hay giá trước ạ?",
+    baseReply: "Dạ điểm khác chính là cơ chế và tần suất dùng ạ. Em gửi cách dùng hay giá trước ạ?",
     state,
     skillId: "solution-guidance",
   });
@@ -884,8 +1180,26 @@ test("single-pass draft bị loại nếu làm mất giới hạn hiệu quả t
     "Dạ Stopirex hỗ trợ kiểm soát mồ hôi. Hiệu quả còn tùy cơ địa và cách dùng nên bên em không cam kết hết tuyệt đối ạ. Mình muốn xem cách dùng không ạ?";
   const result = bridge.adoptInterpretedDraft({
     customerMessage: "Có cam kết hết 100% không?",
-    draftReply:
-      "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Mình muốn xem cách dùng không ạ?",
+    draftReply: "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Mình muốn xem cách dùng không ạ?",
+    baseReply,
+    state,
+  });
+
+  assert.equal(result.status, "fallback");
+  assert.equal(result.reason, "critical_direction_guard");
+  assert.equal(result.reply, baseReply);
+});
+
+test("single-pass chặn hàm ý chỉ đơn trực tiếp mới là hàng chính hãng", () => {
+  const bridge = new CodexLlmBridge({
+    enabled: true,
+    runner: async () => "{}",
+  });
+  const baseReply =
+    "Dạ sản phẩm Stopirex bên em cung cấp là hàng chính hãng. Khi nhận, mình có thể đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi ạ.";
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "Có gì đảm bảo sản phẩm chính hãng không?",
+    draftReply: "Dạ đơn đặt trực tiếp được gửi đúng hàng chính hãng; khi nhận mình kiểm tra bao bì và tem ạ.",
     baseReply,
     state,
   });
@@ -903,8 +1217,7 @@ test("single-pass không được đổi 2–3 lần/tuần thành đơn vị kh
   const baseReply =
     "Dạ mình dùng Stopirex 2–3 lần/tuần ạ. Stopirex không dùng hương thơm để che mùi nên không làm lẫn hương Romano.";
   const result = bridge.adoptInterpretedDraft({
-    customerMessage:
-      "Thế 1 tuần bôi mấy lần? Sáng ra mình quệt thêm Romano có bị lộn mùi không?",
+    customerMessage: "Thế 1 tuần bôi mấy lần? Sáng ra mình quệt thêm Romano có bị lộn mùi không?",
     draftReply:
       "Dạ mình dùng giãn cách 2–3 ngày/lần. Stopirex không dùng hương thơm để che mùi nên không làm lẫn hương Romano.",
     baseReply,
@@ -936,12 +1249,10 @@ test("single-pass chặn lời thoái thác khi khách không hỏi cam kết tu
     enabled: true,
     runner: async () => "{}",
   });
-  const baseReply =
-    "Dạ Stopirex hỗ trợ kiểm soát mồ hôi khi mình dùng đúng hướng dẫn ạ.";
+  const baseReply = "Dạ Stopirex hỗ trợ kiểm soát mồ hôi khi mình dùng đúng hướng dẫn ạ.";
   const result = bridge.adoptInterpretedDraft({
     customerMessage: "Loại này có hiệu quả không?",
-    draftReply:
-      "Dạ Stopirex hỗ trợ kiểm soát mồ hôi, nhưng hiệu quả tùy cơ địa và bên em không cam kết ạ.",
+    draftReply: "Dạ Stopirex hỗ trợ kiểm soát mồ hôi, nhưng hiệu quả tùy cơ địa và bên em không cam kết ạ.",
     baseReply,
     state,
   });
@@ -963,6 +1274,28 @@ test("single-pass chặn câu xưng hô lặp khó hiểu", () => {
 
   assert.equal(composed.status, "fallback");
   assert.equal(composed.reason, "advisor_voice_guard");
+});
+
+test("single-pass không nối lại câu hỏi đối tượng khi lịch sử đã xác nhận bé 15 tuổi", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "liệu có an toàn cho da ko e\nhàng giả h nhiều lắm",
+    draftReply:
+      "Dạ mẫu thử Stopirex có mức kích ứng da không đáng kể. Khi nhận hàng, mình kiểm tra tem và thông tin người gửi giúp em nhé ạ.",
+    baseReply: "Dạ mình đang hỏi cho bé, phụ nữ mang thai/cho con bú hay người có da nhạy cảm ạ?",
+    state: {
+      ...state,
+      customerProfile: { age: 15 },
+      answeredTopics: ["child_age"],
+      recentTurns: [
+        { role: "user", text: "Chị mua cho con trai 15 tuổi" },
+        { role: "assistant", text: "Dạ bé 15 tuổi dùng được rồi ạ." },
+      ],
+    },
+  });
+
+  assert.equal(composed.status, "enhanced");
+  assert.doesNotMatch(composed.reply, /mình đang hỏi cho bé|phụ nữ mang thai|cho con bú/iu);
 });
 
 test("Tone guard chặn cách bác bỏ cộc lốc hoặc tranh cãi", () => {
@@ -1020,8 +1353,7 @@ test("handoff mềm về khuyến mãi không làm LLM bị bỏ qua ở lượt
 });
 
 test("commerce guard chặn LLM tự thêm giảm giá hoặc freeship", async () => {
-  const baseReply =
-    "Dạ giá hiện tại là 285.000đ/lọ. Mình muốn chọn 1 lọ trải nghiệm không ạ?";
+  const baseReply = "Dạ giá hiện tại là 285.000đ/lọ. Mình muốn chọn 1 lọ trải nghiệm không ạ?";
   const bridge = new CodexLlmBridge({
     enabled: true,
     runner: async () =>
@@ -1040,12 +1372,10 @@ test("commerce guard chặn LLM tự thêm giảm giá hoặc freeship", async (
 });
 
 test("direction guard không cho bản viết lại làm mất câu dẫn chốt bước", async () => {
-  const baseReply =
-    "Stopirex hỗ trợ kiểm soát mồ hôi khi dùng đúng cách. Mình muốn xem bảng giá không ạ?";
+  const baseReply = "Stopirex hỗ trợ kiểm soát mồ hôi khi dùng đúng cách. Mình muốn xem bảng giá không ạ?";
   const bridge = new CodexLlmBridge({
     enabled: true,
-    runner: async () =>
-      "Stopirex hỗ trợ kiểm soát mồ hôi khi dùng đúng cách.",
+    runner: async () => "Stopirex hỗ trợ kiểm soát mồ hôi khi dùng đúng cách.",
   });
 
   const result = await bridge.enhance({
@@ -1095,8 +1425,7 @@ test("Codex viết lại mở đầu bị fallback nếu làm mất lựa chọn
     enabled: true,
     runner: async () => "Dạ mình muốn tư vấn theo hướng nào trước?",
   });
-  const baseReply =
-    "Dạ mình chọn giúp em:\n1. Tư vấn tình trạng\n2. Xem bảng giá";
+  const baseReply = "Dạ mình chọn giúp em:\n1. Tư vấn tình trạng\n2. Xem bảng giá";
   const result = await bridge.enhanceOpening({
     baseReply,
     variantId: "A.choice",
@@ -1153,13 +1482,13 @@ test("Codex viết lại toàn bộ gói mở đầu nhưng không được làm
   assert.doesNotMatch(prompt, /Minh|Mai Lan/);
 });
 
-test("Codex bridge không nhận SĐT hoặc dữ liệu đơn", async () => {
+test("Codex bridge vẫn đọc toàn bộ tin chứa SĐT để không bỏ sót câu hỏi đi kèm", async () => {
   let called = false;
   const bridge = new CodexLlmBridge({
     enabled: true,
     runner: async () => {
       called = true;
-      return "Không được gọi";
+      return "Dạ em đã ghi nhận thông tin mình gửi ạ.";
     },
   });
   const result = await bridge.enhance({
@@ -1167,9 +1496,8 @@ test("Codex bridge không nhận SĐT hoặc dữ liệu đơn", async () => {
     baseReply: "Dạ em đã ghi nhận ạ.",
     state,
   });
-  assert.equal(result.status, "skipped");
-  assert.equal(result.reason, "phone_detected");
-  assert.equal(called, false);
+  assert.equal(result.status, "enhanced");
+  assert.equal(called, true);
 });
 
 test("Codex vẫn là bộ não đọc ngữ cảnh trong flow CSKH", async () => {
@@ -1313,8 +1641,7 @@ test("semantic parser nhận intent so sánh sản phẩm", () => {
 test("Codex composer fallback nếu làm mất mốc dùng giãn cách", async () => {
   const bridge = new CodexLlmBridge({
     enabled: true,
-    runner: async () =>
-      "Dạ Stopirex là dòng ngăn tiết mồ hôi chuyên sâu, khác lăn thông thường ạ.",
+    runner: async () => "Dạ Stopirex là dòng ngăn tiết mồ hôi chuyên sâu, khác lăn thông thường ạ.",
   });
   const result = await bridge.enhance({
     customerMessage: "Khác gì lăn truyền thống?",
@@ -1333,8 +1660,7 @@ test("Codex chấp nhận cách viết tự nhiên tương đương của tần 
       "Stopirex dùng buổi tối khoảng 2 đến 3 lần mỗi tuần. Mình đang dùng lăn nách hằng ngày không?",
   });
   const result = await bridge.enhanceOpening({
-    baseReply:
-      "Stopirex dùng buổi tối 2–3 lần/tuần. Mình đang dùng lăn nách hằng ngày không?",
+    baseReply: "Stopirex dùng buổi tối 2–3 lần/tuần. Mình đang dùng lăn nách hằng ngày không?",
     variantId: "C.prior",
   });
 

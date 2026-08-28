@@ -155,7 +155,8 @@ export function buildProductInformationSnapshot(tenantId: TenantId) {
     negativeReviewSteps,
     operatingRules: [
       "Chỉ dùng dữ kiện có trong kho tri thức đã duyệt.",
-      "Không tự tạo mã giảm giá, ưu đãi, freeship hoặc thời gian giao cố định.",
+      "Không tự tạo mã giảm giá, ưu đãi hoặc freeship. Thời gian giao chỉ dùng ba mốc đã duyệt: cùng tỉnh/thành phố 1–2 ngày, nội miền 2–3 ngày, liên miền Bắc–Nam 3–5 ngày.",
+      "Không có cửa hàng offline hoặc showroom; không có ship hỏa tốc. Đơn chỉ được đặt online và giao qua đơn vị vận chuyển.",
       "Được miễn phí giao cho 1 lọ khi khách mặc cả hoặc hệ thống bắt đầu follow-up; combo 2–5 lọ luôn miễn phí giao.",
       "Khi khách hỏi giá chung, chỉ hiển thị phương án 1, 2, 3 lọ và quà tặng; chỉ báo phương án 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó.",
       "Từ 6 lọ trở lên phải chuyển tư vấn viên, không tự chốt đơn.",

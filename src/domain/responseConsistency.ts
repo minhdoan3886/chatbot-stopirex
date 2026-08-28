@@ -17,13 +17,13 @@ export function assertReplyMatchesConversationState(input: {
     throw consistencyError("selected_quantity_not_committed");
   }
   if (
-    /ghi nhan\s+(?:(?:minh|anh|chi|em)\s+)?(?:lay|chon|dat)\s+(?:1|mot)\s+lo/.test(text) &&
+    /(?:ghi nhan|ghi)\s+(?:(?:minh|anh|chi|em)\s+)?(?:(?:lay|chon|dat)\s+)?(?:1|mot)\s+lo/.test(text) &&
     input.selectedQuantity !== 1
   ) {
     throw consistencyError("reply_claims_uncommitted_quantity_1");
   }
   const claimedCombo = text.match(
-    /ghi nhan\s+(?:(?:minh|anh|chi|em)\s+)?(?:lay|chon|dat)?\s*(?:combo\s+)?([2-5])\s+lo/,
+    /(?:ghi nhan|ghi)\s+(?:(?:minh|anh|chi|em)\s+)?(?:(?:lay|chon|dat)\s+)?(?:combo\s+)?([2-5])\s+lo/,
   )?.[1];
   if (claimedCombo && input.selectedQuantity !== Number(claimedCombo)) {
     throw consistencyError(`reply_claims_uncommitted_quantity_${claimedCombo}`);

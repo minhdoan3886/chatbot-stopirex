@@ -11,6 +11,10 @@ export type KnowledgeEntity = {
   type: KnowledgeType;
   title: string;
   content: string;
+  /** Phrases customers commonly use for this item. They improve retrieval but are not facts. */
+  searchAliases?: readonly string[];
+  /** Internal response constraints, kept separate from customer-facing facts. */
+  responseGuidance?: string;
   sourceRow: number;
 };
 
@@ -233,22 +237,41 @@ export function retrieveKnowledgeMatches(input: {
   const queryText = normalizeSearchText(input.query);
   const queryTerms = new Set(tokenizeForSearch(queryText));
   const queryConcepts = extractSearchConcepts(queryText);
+  const precisionQueryConcepts = new Set(
+    [...queryConcepts].filter((concept) => precisionSearchConcepts.has(concept)),
+  );
+  const hasNonPrecisionConcept = [...queryConcepts].some((concept) => !precisionSearchConcepts.has(concept));
+  const hasCompoundNonPrecisionConcept = [...queryConcepts].some(
+    (concept) => !precisionSearchConcepts.has(concept) && concept !== "usage",
+  );
+  // Precision concepts prevent broad single-topic queries from drifting. In a
+  // genuinely compound message they must not suppress the other detected
+  // concepts (for example cách dùng + bết + hoàn tiền + ship).
+  const allowsMixedPrecisionRecall =
+    hasNonPrecisionConcept &&
+    hasCompoundNonPrecisionConcept &&
+    (precisionQueryConcepts.has("price") || precisionQueryConcepts.has("general_usage"));
   const queryNgrams = characterNgrams(queryText);
-  return input.entities
+  const ranked = input.entities
     .filter((entity) => entity.tenantId === input.tenantId)
     .map((entity): KnowledgeMatch => {
-      const titleText = normalizeSearchText(entity.title);
-      const fullText = normalizeSearchText(`${entity.title} ${entity.content}`);
+      const titleText = normalizeSearchText(`${entity.title} ${(entity.searchAliases ?? []).join(" ")}`);
+      // responseGuidance deliberately stays out of the searchable corpus. Internal
+      // wording constraints must not make an otherwise unrelated article rank.
+      const fullText = normalizeSearchText(`${titleText} ${entity.content}`);
       const titleTerms = new Set(tokenizeForSearch(titleText));
       const entityTerms = new Set(tokenizeForSearch(fullText));
       const matchedTerms = [...queryTerms].filter((term) => entityTerms.has(term));
       const matchedTitleTerms = matchedTerms.filter((term) => titleTerms.has(term));
       const entityConcepts = extractSearchConcepts(fullText);
       const matchedConcepts = [...queryConcepts].filter((concept) => entityConcepts.has(concept));
+      const unmatchedExclusiveConcepts = [...entityConcepts].filter(
+        (concept) => exclusiveSearchConcepts.has(concept) && !queryConcepts.has(concept),
+      );
       const tokenCoverage = queryTerms.size > 0 ? matchedTerms.length / queryTerms.size : 0;
       const semanticSimilarity = bestTextSimilarity(
         queryNgrams,
-        [entity.title, ...entity.content.split(/[.!?;\n]+/u)].map((part) =>
+        [entity.title, ...(entity.searchAliases ?? []), ...entity.content.split(/[.!?;\n]+/u)].map((part) =>
           characterNgrams(normalizeSearchText(part)),
         ),
       );
@@ -257,7 +280,8 @@ export function retrieveKnowledgeMatches(input: {
         matchedTitleTerms.length * 2 +
         tokenCoverage * 4 +
         matchedConcepts.length * 4 +
-        semanticSimilarity * 3;
+        semanticSimilarity * 3 -
+        unmatchedExclusiveConcepts.length * 6;
       return {
         entity,
         score: Number(score.toFixed(4)),
@@ -267,18 +291,34 @@ export function retrieveKnowledgeMatches(input: {
     })
     .filter(
       (item) =>
-        item.matchedTerms.length > 0 ||
-        item.matchedConcepts.length > 0 ||
-        item.score >= 1.2,
+        (precisionQueryConcepts.size === 0 ||
+          allowsMixedPrecisionRecall ||
+          item.matchedConcepts.some((concept) => precisionQueryConcepts.has(concept))) &&
+        (item.matchedTerms.length > 0 || item.matchedConcepts.length > 0 || item.score >= 1.2),
     )
-    .sort((a, b) => b.score - a.score || a.entity.id.localeCompare(b.entity.id))
-    .slice(0, input.limit ?? 5)
-    .map((item) => ({
-      ...item,
-      entity: { ...item.entity },
-      matchedTerms: [...item.matchedTerms],
-      matchedConcepts: [...item.matchedConcepts],
-    }));
+    .sort((a, b) => b.score - a.score || a.entity.id.localeCompare(b.entity.id));
+  const strongestScore = ranked[0]?.score ?? 0;
+  const conceptLeaders = [...queryConcepts]
+    .map((concept) => ranked.find((item) => item.matchedConcepts.includes(concept)))
+    .filter((item): item is KnowledgeMatch => Boolean(item));
+  const selected = [
+    ...conceptLeaders,
+    ...ranked.filter((item) => item.score >= strongestScore * 0.55),
+    // Fill any remaining context slots by score. This matters when one very
+    // strong spelling alias would otherwise raise the relative threshold and
+    // hide another valid topic from a compound customer message.
+    ...ranked,
+  ]
+    .filter(
+      (item, index, all) => all.findIndex((candidate) => candidate.entity.id === item.entity.id) === index,
+    )
+    .slice(0, input.limit ?? 5);
+  return selected.map((item) => ({
+    ...item,
+    entity: { ...item.entity },
+    matchedTerms: [...item.matchedTerms],
+    matchedConcepts: [...item.matchedConcepts],
+  }));
 }
 
 const searchStopWords = new Set([
@@ -306,20 +346,84 @@ const searchStopWords = new Set([
   "nhe",
   "nha",
   "a",
+  "bao",
+  "nhieu",
+  "thay",
 ]);
 
 const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
-  price: ["gia", "bao nhieu tien", "bao gia", "chi phi"],
-  promotion: ["uu dai", "khuyen mai", "giam gia", "bot them", "bot dong", "tang kem", "qua tang"],
-  shipping: ["phi giao", "phi ship", "freeship", "mien phi giao", "bao ship"],
+  price: ["price", "price bao nhieu", "bao nhieu tien", "bao price", "combo"],
+  promotion: ["uu dai", "khuyen mai", "giam price", "bot them", "bot dong", "tang kem", "qua tang", "gift"],
+  shipping: [
+    "fs",
+    "ship",
+    "phi giao",
+    "phi ship",
+    "freeship",
+    "free ship",
+    "mien phi giao",
+    "bao ship",
+    "ship ve",
+  ],
+  darkening: ["tham", "tham nach", "sam nach", "sam mau"],
+  clothing: ["o ao", "ao trang", "dinh ao", "bet dinh", "bi bet", "bet k", "bet khong"],
+  pregnancy: [
+    "me bau",
+    "ba bau",
+    "dang bau",
+    "phu nu dang bau",
+    "phu nu bau",
+    "bau bi",
+    "mang thai",
+    "co bau",
+    "phu nu co thai",
+  ],
+  breastfeeding: ["cho con bu", "dang cho con bu", "nuoi con bang sua me"],
+  child_age: ["tre em", "tre duoi", "tre tu", "be may tuoi", "be bao nhieu tuoi"],
+  alcohol: ["alcohol", "co alcohol", "chua alcohol"],
+  body_area_hands_feet: ["mo hoi tay", "mo hoi chan", "long ban tay", "long ban chan"],
+  effectiveness_start: [
+    "bao lau thay hieu qua",
+    "bao lau thi thay hieu qua",
+    "sau bao lau moi thay hieu qua",
+    "khi nao thay hieu qua",
+    "may ngay thay hieu qua",
+    "may hom thi co tac dung",
+    "khi nao bat dau co tac dung",
+    "dung bao nhieu ngay thi do mo hoi",
+    "bao lau thay kho",
+  ],
+  general_usage: [
+    "cach dung nhu nao",
+    "huong dan su dung stopirex",
+    "dung stopirex nhu the nao",
+    "xai nhu nao",
+    "xai tnao",
+    "dung tnao",
+  ],
   usage: ["cach dung", "huong dan", "boi", "lan", "su dung"],
-  duration: ["dung duoc bao lau", "dung may thang", "mot lo", "thoi gian su dung"],
+  duration: ["dung duoc bao lau", "dung may thang", "thoi gian su dung"],
   sweat: ["mo hoi", "uot ao", "uot sung", "tiet mo hoi", "kho thoang"],
   odor: ["mui", "hoi nach", "khu mui", "mui co the"],
-  irritation: ["rat", "ngua", "viem", "kich ung", "cham chich", "do da"],
+  irritation: [
+    "rat",
+    "ngua",
+    "viem",
+    "kich ung",
+    "cham chich",
+    "do da",
+    "an toàn cho da",
+    "an toan cho da",
+    "độ an toàn da",
+    "do an toan da",
+  ],
   damaged: ["vo", "hong", "be", "ro ri", "mop", "do san pham"],
-  returns: ["doi tra", "tra hang", "hoan tien", "bao hanh"],
-  authenticity: ["hang gia", "chinh hang", "hang that", "fake", "nguon goc"],
+  returns: ["doi tra", "tra hang", "hoan tien", "hoan xeng", "tra tien", "bao hanh"],
+  ineffective: ["khong do", "k do", "khong khoi", "k khoi", "khong hieu qua", "khong cai thien"],
+  // Keep the accented alias as well: normalizeSearchText deliberately rewrites
+  // Vietnamese "giả" to "counterfeit" before stripping accents so it cannot
+  // be confused with "giá". The unaccented alias still covers customer typing.
+  authenticity: ["hàng giả", "hang gia", "chinh hang", "hang that", "fake", "nguon goc"],
   exercise: ["tap gym", "da bong", "the thao", "van dong", "ra mo hoi"],
   permanent: ["dut diem", "tam thoi", "dung ca doi", "ngung boi", "ra lai"],
   laboratory_chemistry: ["paraben", "kim loai nang", "asen", "thuy ngan", "hydroquinone"],
@@ -332,21 +436,42 @@ const searchConceptAliases: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
+const precisionSearchConcepts = new Set([
+  "price",
+  "pregnancy",
+  "breastfeeding",
+  "child_age",
+  "alcohol",
+  "body_area_hands_feet",
+  "effectiveness_start",
+  "general_usage",
+]);
+
+const exclusiveSearchConcepts = new Set(["pregnancy", "breastfeeding", "child_age", "body_area_hands_feet"]);
+
 function normalizeSearchText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/đ/giu, "d")
-    .toLocaleLowerCase("vi-VN")
-    .replace(/[^a-z0-9]+/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
+  return (
+    value
+      // Preserve the semantic distinction between Vietnamese "cồn" and "con".
+      // Removing accents first would otherwise rank breastfeeding content for an
+      // alcohol question.
+      .replace(/cồn/giu, " alcohol ")
+      .replace(/giá trị/giu, " value ")
+      .replace(/giả/giu, " counterfeit ")
+      .replace(/giá/giu, " price ")
+      .replace(/quà/giu, " gift ")
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .replace(/đ/giu, "d")
+      .toLocaleLowerCase("vi-VN")
+      .replace(/[^a-z0-9]+/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim()
+  );
 }
 
 function tokenizeForSearch(normalizedText: string): string[] {
-  return normalizedText
-    .split(" ")
-    .filter((term) => term.length > 1 && !searchStopWords.has(term));
+  return normalizedText.split(" ").filter((term) => term.length > 1 && !searchStopWords.has(term));
 }
 
 function extractSearchConcepts(normalizedText: string): Set<string> {

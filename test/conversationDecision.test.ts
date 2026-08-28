@@ -24,7 +24,59 @@ test("pending action hiểu câu ok theo đề nghị ngay trước đó", () =>
   assert.match(result.trace.reason, /đề nghị ngay trước/);
 });
 
-test("guardrail thương mại chặn LLM bỏ qua yêu cầu freeship", () => {
+test("lệnh mua rõ ràng ghi đè đề nghị gửi giá đang chờ", () => {
+  const result = resolveConversationDecision({
+    semantic: {
+      slots: {},
+      intent: "buying",
+      topic: "order",
+      affirmation: true,
+      confidence: 0.99,
+    },
+    pendingAction: "send_price",
+    exactIntent: "buying",
+    explicitPurchaseSelection: true,
+    optOut: false,
+    activeCare: false,
+    orderConfirmation: false,
+    collectingOrder: false,
+    affirmativeFollowup: true,
+  });
+
+  assert.equal(result.route, "direct_intent");
+  assert.equal(result.intent, "buying");
+});
+
+test("câu hỏi trực tiếp ngắt bước chọn số lượng dù LLM nhận diện đang trả lời bước đó", () => {
+  const result = resolveConversationDecision({
+    semantic: {
+      slots: {
+        primarySymptom: "sweat",
+        workContext: "rest_or_stress",
+      },
+      intent: "product_effect",
+      topic: "sweat",
+      replyTo: "choose_quantity",
+      asksDirectAnswer: true,
+      confidence: 0.97,
+      needsClarification: false,
+      evidence: ["lăn cái này có tốt k", "a ra nhiều mồ hôi", "ngồi ko cũng ướt"],
+    },
+    pendingAction: "choose_quantity",
+    optOut: false,
+    activeCare: false,
+    orderConfirmation: false,
+    collectingOrder: true,
+    orderDataCandidate: false,
+    affirmativeFollowup: false,
+  });
+
+  assert.equal(result.route, "direct_intent");
+  assert.equal(result.intent, "product_effect");
+  assert.match(result.trace.reason, /LLM xác định rõ ý định hiện tại/);
+});
+
+test("rule thương mại chỉ hậu kiểm và không được đổi intent LLM", () => {
   const result = resolveConversationDecision({
     semantic: {
       slots: {},
@@ -40,11 +92,11 @@ test("guardrail thương mại chặn LLM bỏ qua yêu cầu freeship", () => {
     affirmativeFollowup: false,
   });
 
-  assert.equal(result.intent, "negotiation");
+  assert.equal(result.intent, "consultation");
   assert.deepEqual(result.trace.conflicts, [
     "rule:negotiation ≠ semantic:consultation",
   ]);
-  assert.match(result.trace.reason, /Guardrail thương mại/);
+  assert.match(result.trace.reason, /hậu kiểm/);
 });
 
 test("LLM rất chắc chắn được quyền sửa một rule mềm nhận nhầm", () => {
@@ -66,7 +118,7 @@ test("LLM rất chắc chắn được quyền sửa một rule mềm nhận nh�
   });
 
   assert.equal(result.intent, "safety");
-  assert.match(result.trace.reason, /ghi đè/);
+  assert.match(result.trace.reason, /hậu kiểm/);
 });
 
 test("LLM là bộ định tuyến chính với rule từ khóa không thuộc guardrail", () => {
@@ -91,7 +143,7 @@ test("LLM là bộ định tuyến chính với rule từ khóa không thuộc g
   assert.match(result.trace.reason, /định tuyến chính/);
 });
 
-test("dữ liệu đơn thật được ưu tiên khi đang thu đơn", () => {
+test("state nghi là dữ liệu đơn không được đè intent LLM hiện tại", () => {
   const result = resolveConversationDecision({
     semantic: {
       slots: {},
@@ -107,8 +159,8 @@ test("dữ liệu đơn thật được ưu tiên khi đang thu đơn", () => {
     affirmativeFollowup: false,
   });
 
-  assert.equal(result.route, "order_collection");
-  assert.equal(result.intent, "order_support");
+  assert.equal(result.route, "direct_intent");
+  assert.equal(result.intent, "consultation");
 });
 
 test("đơn đang dở không được biến tin không rõ thành dữ liệu đơn", () => {
@@ -130,14 +182,14 @@ test("đơn đang dở không được biến tin không rõ thành dữ liệu 
   assert.match(result.trace.reason, /không có bằng chứng là dữ liệu đơn/);
 });
 
-test("câu hỏi mặc cả được ngắt bước thu đơn để trả lời đúng ý hiện tại", () => {
+test("câu hỏi mặc cả do LLM nhận diện được ngắt bước thu đơn", () => {
   const result = resolveConversationDecision({
     semantic: {
       slots: {},
-      intent: "order_support",
+      intent: "negotiation",
       confidence: 0.99,
     },
-    exactIntent: "negotiation",
+    exactIntent: "order_support",
     optOut: false,
     activeCare: false,
     orderConfirmation: false,

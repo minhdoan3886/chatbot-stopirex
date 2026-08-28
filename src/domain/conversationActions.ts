@@ -50,9 +50,11 @@ export type RejectedConversationAction = {
     | "conflicting_purchase_decision"
     | "invalid_order_update"
     | "wrong_product_attribution"
+    | "non_current_care_scenario"
     | "unverifiable_purchase_condition"
     | "inapplicable_return_logistics"
-    | "inapplicable_recurrence_statistic";
+    | "inapplicable_recurrence_statistic"
+    | "llm_authority_conflict";
 };
 
 export type ConversationActionPlan = {
@@ -81,9 +83,27 @@ export function reconcileConversationActions(input: {
 }): ConversationActionPlan {
   const raw = input.customerMessage;
   const text = normalize(raw);
-  const candidates: ConversationAction[] = (input.semantic.actions ?? []).map(
-    (action) => ({ ...action, source: action.source ?? "llm" }) as ConversationAction,
-  );
+  const llmOwnsCurrentTurn = semanticAuthorityReady(input.semantic);
+  const candidates: ConversationAction[] = (input.semantic.actions ?? []).map((action) => {
+    const candidate = { ...action, source: action.source ?? "llm" } as ConversationAction;
+    if (candidate.type === "record_fact" && typeof candidate.value === "string") {
+      const orderField = canonicalOrderUpdateField(candidate.field);
+      if (orderField) {
+        return {
+          type: "update_order",
+          fields: groundedOrderUpdateFields({ [orderField]: candidate.value }, raw),
+          confidence: candidate.confidence,
+          evidence: candidate.evidence,
+          source: candidate.source,
+        };
+      }
+    }
+    if (candidate.type !== "update_order" || candidate.source !== "llm") return candidate;
+    return {
+      ...candidate,
+      fields: groundedOrderUpdateFields(candidate.fields, raw),
+    };
+  });
 
   if (
     (input.semantic.unsupportedQuestions?.length ?? 0) > 0 &&
@@ -95,7 +115,7 @@ export function reconcileConversationActions(input: {
     });
   }
 
-  if (input.exactAnswerTopic) {
+  if (input.exactAnswerTopic && !llmOwnsCurrentTurn) {
     for (let index = candidates.length - 1; index >= 0; index -= 1) {
       const candidate = candidates[index];
       if (candidate?.type === "answer_question" && candidate.topic !== input.exactAnswerTopic) {
@@ -111,17 +131,27 @@ export function reconcileConversationActions(input: {
   }
 
   if (input.optOut) candidates.push(baseAction("stop_bot", "guardrail", [raw]));
+  const semanticHandoffCareIssue = inferCareIssueFromSemanticHandoff(input.semantic, candidates, raw);
+  const reconciledCareIssue = input.detectedCareIssue ?? semanticHandoffCareIssue;
   const currentCareScope =
-    input.detectedCareIssue === "irritation"
+    reconciledCareIssue === "irritation"
       ? input.careScenario === "actual" && input.semantic.subject !== "product"
       : input.careScenario !== "hypothetical" && input.careScenario !== "past";
-  if (input.detectedCareIssue && currentCareScope) {
+  if (reconciledCareIssue && currentCareScope) {
+    const llmHandoff = candidates.find(
+      (action): action is Extract<ConversationAction, { type: "handoff_to_human" }> =>
+        action.type === "handoff_to_human" && action.source === "llm",
+    );
     candidates.push({
-      ...baseAction("start_customer_care", "guardrail", [raw]),
-      issue: input.detectedCareIssue,
+      ...baseAction(
+        "start_customer_care",
+        input.detectedCareIssue ? "guardrail" : "state",
+        input.detectedCareIssue ? [raw] : (llmHandoff?.evidence ?? [raw]),
+      ),
+      issue: reconciledCareIssue,
     });
     if (
-      input.detectedCareIssue === "irritation" &&
+      reconciledCareIssue === "irritation" &&
       !candidates.some((action) => action.type === "answer_question")
     ) {
       candidates.push({
@@ -131,16 +161,58 @@ export function reconcileConversationActions(input: {
     }
   }
 
-  const explicitQuantity = extractExplicitPurchaseQuantity(text);
-  if (explicitQuantity) {
+  const conditionalRefundPolicyQuestion = isConditionalRefundQuantityQuestion(text);
+  const explicitQuantity = conditionalRefundPolicyQuestion
+    ? undefined
+    : extractExplicitPurchaseQuantity(text);
+  const trustedLlmQuantity = trustedLlmPurchaseQuantity({
+    raw,
+    semantic: input.semantic,
+    candidates,
+    collectingOrder: input.collectingOrder,
+  });
+  const llmProposedQuantity = candidates.some(
+    (action) => action.type === "select_quantity" && action.source === "llm",
+  );
+  if (
+    explicitQuantity &&
+    !llmProposedQuantity &&
+    (!llmOwnsCurrentTurn ||
+      input.semantic.intent === "buying" ||
+      input.semantic.intent === "order_support" ||
+      Boolean(reconciledCareIssue && currentCareScope))
+  ) {
     candidates.push({
       ...baseAction("select_quantity", "guardrail", [quantityEvidence(raw)]),
       quantity: explicitQuantity,
     });
     candidates.push(baseAction("continue_order_collection", "state", [quantityEvidence(raw)]));
+  } else if (
+    trustedLlmQuantity &&
+    !candidates.some((action) => action.type === "continue_order_collection")
+  ) {
+    // The LLM owns natural-language interpretation. Once a high-confidence,
+    // verbatim-grounded quantity survives the linguistic trust gate, state may
+    // complete the mechanical order action without requiring canonical words.
+    candidates.push(baseAction("continue_order_collection", "state", [quantityEvidence(raw)]));
   }
 
-  const answerTopic = inferredAnswerTopic(input.semantic, input.exactIntent, text);
+  const answerTopic = inferredAnswerTopic(
+    input.semantic,
+    llmOwnsCurrentTurn ? undefined : input.exactIntent,
+    text,
+  );
+  if (!llmOwnsCurrentTurn) {
+    for (const line of batchedMessageLines(raw)) {
+      const topic = inferredBatchedLineAnswerTopic(line.normalized);
+      if (topic && !candidates.some((action) => action.type === "answer_question" && action.topic === topic)) {
+        candidates.push({
+          ...baseAction("answer_question", "state", [line.raw]),
+          topic,
+        });
+      }
+    }
+  }
   const mandatoryConditionalEffectAnswer =
     Boolean(explicitQuantity) &&
     /(?:^|\b)neu\b/.test(text) &&
@@ -153,14 +225,21 @@ export function reconcileConversationActions(input: {
       }
     }
   }
-  if (answerTopic && !hasAction(candidates, "answer_question")) {
+  if (
+    answerTopic &&
+    !candidates.some((action) => action.type === "answer_question" && action.topic === answerTopic)
+  ) {
     candidates.push({
-      ...baseAction("answer_question", input.exactIntent ? "guardrail" : "state", [raw]),
+      ...baseAction(
+        "answer_question",
+        llmOwnsCurrentTurn ? "llm" : input.exactIntent ? "guardrail" : "state",
+        input.semantic.evidence?.length ? input.semantic.evidence : [raw],
+      ),
       topic: answerTopic,
     });
   }
 
-  if (input.exactIntent === "decline_purchase") {
+  if (input.exactIntent === "decline_purchase" && !llmOwnsCurrentTurn) {
     candidates.push(baseAction("decline_purchase", "guardrail", [raw]));
   }
   if (input.collectingOrder && answerTopic && !hasAction(candidates, "pause_order")) {
@@ -172,6 +251,21 @@ export function reconcileConversationActions(input: {
 
   const accepted: ConversationAction[] = [];
   const rejected: RejectedConversationAction[] = [];
+  const llmReportedPurchaseConflict =
+    candidates.some(
+      (action) =>
+        action.type === "select_quantity" &&
+        action.source === "llm" &&
+        action.confidence >= 0.85 &&
+        hasGroundedEvidence(action, raw),
+    ) &&
+    candidates.some(
+      (action) =>
+        action.type === "decline_purchase" &&
+        action.source === "llm" &&
+        action.confidence >= 0.85 &&
+        hasGroundedEvidence(action, raw),
+    );
   for (const candidate of deduplicate(candidates)) {
     // A quantity mentioned inside a product/policy question is an entity, not a
     // purchase decision. Only an explicit buying verb may create a selection;
@@ -187,6 +281,7 @@ export function reconcileConversationActions(input: {
     if (
       candidate.type === "continue_order_collection" &&
       !explicitQuantity &&
+      !trustedLlmQuantity &&
       !input.collectingOrder
     ) {
       rejected.push({ action: candidate, reason: "policy_verification_required" });
@@ -213,15 +308,38 @@ export function reconcileConversationActions(input: {
       continue;
     }
     if (
+      candidate.type === "start_customer_care" &&
+      (input.careScenario === "hypothetical" || input.careScenario === "past")
+    ) {
+      rejected.push({ action: candidate, reason: "non_current_care_scenario" });
+      continue;
+    }
+    if (
       input.conditionalNoIrritationPurchase &&
       (candidate.type === "select_quantity" || candidate.type === "continue_order_collection")
     ) {
       rejected.push({ action: candidate, reason: "unverifiable_purchase_condition" });
       continue;
     }
-    const rejection = validateAction(candidate, text);
-    if (rejection) rejected.push({ action: candidate, reason: rejection });
-    else accepted.push(candidate);
+    const rejection = validateAction(candidate, text, raw, trustedLlmQuantity);
+    if (rejection) {
+      rejected.push({ action: candidate, reason: rejection });
+      continue;
+    }
+    const isOrderExecution =
+      candidate.type === "select_quantity" ||
+      candidate.type === "update_order" ||
+      candidate.type === "continue_order_collection";
+    const semanticAllowsOrderExecution =
+      input.semantic.intent === "buying" ||
+      input.semantic.intent === "order_support" ||
+      Boolean(reconciledCareIssue && currentCareScope) ||
+      (input.semantic.intent === "decline_purchase" && llmReportedPurchaseConflict);
+    if (llmOwnsCurrentTurn && isOrderExecution && !semanticAllowsOrderExecution) {
+      rejected.push({ action: candidate, reason: "llm_authority_conflict" });
+      continue;
+    }
+    accepted.push(candidate);
   }
 
   const conflicts: string[] = [];
@@ -229,8 +347,8 @@ export function reconcileConversationActions(input: {
     (action): action is Extract<ConversationAction, { type: "start_customer_care" }> =>
       action.type === "start_customer_care",
   );
-  const safetyCare = care?.issue === "irritation";
-  if (safetyCare) {
+  const interruptingCare = Boolean(care && care.issue !== "ineffective");
+  if (interruptingCare) {
     const hadPurchaseAction = accepted.some(
       (action) => action.type === "select_quantity" || action.type === "continue_order_collection",
     );
@@ -240,13 +358,23 @@ export function reconcileConversationActions(input: {
       (action) => action.type === "select_quantity" || action.type === "continue_order_collection",
       "safety_precedence",
     );
-    if ((hadPurchaseAction || input.collectingOrder) && !hasAction(accepted, "pause_order")) {
+    if (
+      (hadPurchaseAction || input.collectingOrder || Boolean(explicitQuantity)) &&
+      !hasAction(accepted, "pause_order")
+    ) {
       accepted.push({
         ...baseAction("pause_order", "guardrail", [raw]),
-        reason: "active_irritation_requires_safety_first",
+        reason:
+          care?.issue === "irritation"
+            ? "active_irritation_requires_safety_first"
+            : "customer_care_incident_requires_human_first",
       });
     }
-    conflicts.push("An toàn/kích ứng được ưu tiên; hành động mua bị tạm dừng.");
+    conflicts.push(
+      care?.issue === "irritation"
+        ? "An toàn/kích ứng được ưu tiên; hành động mua bị tạm dừng."
+        : "Sự cố CSKH được ưu tiên; hành động mua bị tạm dừng.",
+    );
   }
 
   const unsupportedAudience =
@@ -275,7 +403,11 @@ export function reconcileConversationActions(input: {
     conflicts.push("Câu hỏi cần xác minh chính sách trước khi tiếp tục hành động mua.");
   }
 
-  const quantityPolicyQuestion = isQuantityPolicyQuestion(text);
+  // A price/ship mention is not allowed to erase a high-confidence quantity
+  // correction that the LLM grounded verbatim in an active order. Without
+  // that trusted linguistic decision, the old policy guard remains intact.
+  const quantityPolicyQuestion =
+    isQuantityPolicyQuestion(text) && !(input.collectingOrder && trustedLlmQuantity !== undefined);
   if (quantityPolicyQuestion) {
     rejectAccepted(
       accepted,
@@ -284,6 +416,15 @@ export function reconcileConversationActions(input: {
       "policy_verification_required",
     );
     conflicts.push("Số lượng nằm trong câu hỏi giá/ship; chưa phải quyết định mua.");
+  }
+  if (conditionalRefundPolicyQuestion) {
+    rejectAccepted(
+      accepted,
+      rejected,
+      (action) => action.type === "select_quantity" || action.type === "continue_order_collection",
+      "policy_verification_required",
+    );
+    conflicts.push("Số lượng nằm trong giả định hoàn tiền; chưa phải quyết định mua.");
   }
 
   const hasDecline = hasAction(accepted, "decline_purchase");
@@ -315,6 +456,15 @@ export function reconcileConversationActions(input: {
     : input.priorOtherProductAdverseExperience && input.exactIntent
       ? input.exactIntent
       : primaryIntent(accepted, input.semantic.intent, input.exactIntent);
+  const trustedLinguisticDecision =
+    Boolean(selected && selected.quantity === trustedLlmQuantity) ||
+    accepted.some(
+      (action) =>
+        action.type === "decline_purchase" &&
+        action.source === "llm" &&
+        action.confidence >= 0.85 &&
+        hasGroundedEvidence(action, raw),
+    );
 
   return {
     accepted,
@@ -326,9 +476,17 @@ export function reconcileConversationActions(input: {
     ...(resolvedPrimaryIntent ? { primaryIntent: resolvedPrimaryIntent } : {}),
     shouldClarify:
       conflicts.some((conflict) => conflict.includes("vừa có tín hiệu mua")) ||
-      input.semantic.needsClarification === true,
+      (input.semantic.needsClarification === true && !trustedLinguisticDecision),
     hasMultipleActions: accepted.filter((action) => action.type !== "pause_order").length > 1,
   };
+}
+
+function isConditionalRefundQuantityQuestion(text: string): boolean {
+  return (
+    /\bneu\b.{0,45}\b(?:mua|lay|dung)\b.{0,25}\b(?:1|mot)\s*(?:lo|chai)\b/.test(text) &&
+    /\b(?:khong|ko|k)\s*(?:do|khoi|het|hieu qua|cai thien)\b/.test(text) &&
+    /\b(?:hoan tien|hoan xeng|tra tien|tra hang|doi tra)\b/.test(text)
+  );
 }
 
 function isUsedIneffectiveRefundQuestion(text: string): boolean {
@@ -348,6 +506,42 @@ function isRecurrenceStatisticMechanismQuestion(text: string): boolean {
 
 function handoffText(action: Extract<ConversationAction, { type: "handoff_to_human" }>): string {
   return normalize(`${action.reason ?? ""} ${action.evidence.join(" ")}`);
+}
+
+/**
+ * Complete the workflow action when the LLM has already made a grounded,
+ * high-confidence after-sales handoff but omitted `start_customer_care`.
+ * This consumes the model's structured decision; it does not re-interpret the
+ * customer's slang with a growing keyword dictionary.
+ */
+function inferCareIssueFromSemanticHandoff(
+  semantic: SemanticUnderstanding,
+  actions: readonly ConversationAction[],
+  raw: string,
+): IssueType | undefined {
+  const handoff = actions.find(
+    (action): action is Extract<ConversationAction, { type: "handoff_to_human" }> =>
+      action.type === "handoff_to_human" &&
+      action.source === "llm" &&
+      action.confidence >= 0.85 &&
+      hasGroundedEvidence(action, raw),
+  );
+  const inAfterSalesScope =
+    semantic.skill === "after-sales-care" &&
+    semantic.scenario === "actual" &&
+    (semantic.confidence ?? 0) >= 0.8 &&
+    (semantic.subject === "order" ||
+      semantic.topic === "order" ||
+      semantic.topic === "delivery" ||
+      semantic.intent === "order_support");
+  if (!handoff || !inAfterSalesScope) return undefined;
+
+  const modelExplanation = handoffText(handoff);
+  if (/khieu nai|phan anh|buc xuc|khong hai long|complaint/.test(modelExplanation)) {
+    return "complaint";
+  }
+  if (semantic.topic === "delivery" || semantic.topic === "order") return "delivery";
+  return undefined;
 }
 
 function handoffMentionsPhysicalReturn(
@@ -373,17 +567,23 @@ function isQuantityPolicyQuestion(text: string): boolean {
 function validateAction(
   action: ConversationAction,
   text: string,
+  raw: string,
+  trustedLlmQuantity: SupportedOrderQuantity | undefined,
 ): RejectedConversationAction["reason"] | undefined {
   if (action.source === "llm" && action.confidence < 0.65) return "low_confidence";
   if (action.source === "llm" && action.evidence.length === 0) return "missing_evidence";
   if (action.type === "select_quantity") {
     if (![1, 2, 3, 4, 5].includes(action.quantity)) return "unsupported_quantity";
-    if (!explicitQuantityAppears(text, action.quantity)) return "missing_evidence";
+    const trustedLinguisticSelection =
+      action.source === "llm" && action.quantity === trustedLlmQuantity && hasGroundedEvidence(action, raw);
+    if (!explicitQuantityAppears(text, action.quantity) && !trustedLinguisticSelection) {
+      return "missing_evidence";
+    }
+  }
+  if (action.type === "decline_purchase" && action.source === "llm" && !hasGroundedEvidence(action, raw)) {
+    return "missing_evidence";
   }
   if (action.type === "update_order" && Object.keys(action.fields).length === 0) {
-    return "invalid_order_update";
-  }
-  if (action.type === "update_order" && action.source === "llm") {
     return "invalid_order_update";
   }
   if (
@@ -403,13 +603,113 @@ function validateAction(
   return undefined;
 }
 
+function trustedLlmPurchaseQuantity(input: {
+  raw: string;
+  semantic: SemanticUnderstanding;
+  candidates: readonly ConversationAction[];
+  collectingOrder: boolean;
+}): SupportedOrderQuantity | undefined {
+  const semanticConfidence = input.semantic.confidence ?? 0;
+  if (semanticConfidence < 0.85) return undefined;
+
+  const groundedDecline = input.candidates.some(
+    (action) =>
+      action.type === "decline_purchase" &&
+      action.source === "llm" &&
+      action.confidence >= 0.85 &&
+      hasGroundedEvidence(action, input.raw),
+  );
+  const semanticSupportsPurchase =
+    input.semantic.intent === "buying" ||
+    (input.collectingOrder && input.semantic.intent === "order_support") ||
+    (input.semantic.intent === "decline_purchase" && groundedDecline);
+  if (!semanticSupportsPurchase) return undefined;
+
+  const quantities = input.candidates
+    .filter(
+      (action): action is Extract<ConversationAction, { type: "select_quantity" }> =>
+        action.type === "select_quantity" &&
+        action.source === "llm" &&
+        action.confidence >= 0.85 &&
+        [1, 2, 3, 4, 5].includes(action.quantity) &&
+        hasGroundedEvidence(action, input.raw),
+    )
+    .map((action) => action.quantity)
+    .filter((quantity, index, all) => all.indexOf(quantity) === index);
+  return quantities.length === 1 ? quantities[0] : undefined;
+}
+
+function hasGroundedEvidence(action: ConversationAction, raw: string): boolean {
+  const normalizedMessage = normalizeEvidence(raw);
+  return action.evidence.some((evidence) => {
+    const normalizedEvidence = normalizeEvidence(evidence);
+    return (
+      normalizedEvidence.split(" ").filter(Boolean).length >= 2 &&
+      normalizedMessage.includes(normalizedEvidence)
+    );
+  });
+}
+
+function normalizeEvidence(value: string): string {
+  return normalize(value)
+    .replace(/[^a-z0-9\s]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function canonicalOrderUpdateField(
+  field: string,
+): "recipientName" | "phone" | "legacyAddress" | "deliveryNote" | undefined {
+  return ["recipientName", "phone", "legacyAddress", "deliveryNote"].includes(field)
+    ? (field as "recipientName" | "phone" | "legacyAddress" | "deliveryNote")
+    : undefined;
+}
+
+function groundedOrderUpdateFields(
+  fields: Record<string, string>,
+  customerMessage: string,
+): Record<string, string> {
+  const allowed = new Set(["recipientName", "phone", "legacyAddress", "deliveryNote"]);
+  const normalizedMessage = normalize(customerMessage);
+  const digitGroups: string[] = [...(customerMessage.match(/\d+/gu) ?? [])];
+  return Object.fromEntries(
+    Object.entries(fields).filter(([field, rawValue]) => {
+      if (!allowed.has(field)) return false;
+      const value = rawValue.trim();
+      if (!value) return false;
+      if (field === "phone") {
+        return /^0\d{9}$/u.test(value) && digitGroups.includes(value);
+      }
+      const normalizedValue = normalize(value);
+      if (!normalizedValue || !normalizedMessage.includes(normalizedValue)) return false;
+      if (field === "recipientName") {
+        return value.length <= 50 && /^[\p{L}\s]+$/u.test(value) && value.trim().split(/\s+/u).length <= 6;
+      }
+      if (field === "legacyAddress") {
+        return (
+          value.length <= 160 &&
+          /\d|\b(?:duong|pho|ngo|thon|phuong|xa|quan|huyen|tinh|ha noi)\b/u.test(normalizedValue)
+        );
+      }
+      return value.length <= 160;
+    }),
+  );
+}
+
 function inferredAnswerTopic(
   semantic: SemanticUnderstanding,
   exactIntent: CustomerIntent | undefined,
   text: string,
 ): SemanticTopic | undefined {
   if (exactIntent === "product_effect") return "effectiveness";
-  if (semantic.asksDirectAnswer === true && semantic.topic) return semantic.topic;
+  if (
+    semantic.asksDirectAnswer === true &&
+    semantic.topic &&
+    semantic.intent !== "buying" &&
+    semantic.intent !== "decline_purchase"
+  ) {
+    return semantic.topic;
+  }
   if (/neu.*(?:dung nhu|hieu qua|co tac dung|giam|do|het)/.test(text)) {
     return "effectiveness";
   }
@@ -422,7 +722,9 @@ function inferredAnswerTopic(
     return "usage";
   }
   if (intent === "safety") {
-    if (/mang thai|me bau|co bau/.test(text)) return "pregnancy";
+    if (/mang thai|me bau|ba bau|dang bau|phu nu bau|bau bi|co bau/.test(text)) {
+      return "pregnancy";
+    }
     if (/cho con bu|dang bu/.test(text)) return "breastfeeding";
     if (/duoi 12|\b(?:be|tre)\b.*\b(?:tuoi|dung)\b/.test(text)) return "child_age";
     if (/nhay cam/.test(text)) return "sensitive_skin";
@@ -432,6 +734,33 @@ function inferredAnswerTopic(
   if (intent === "product_comparison") return "comparison";
   if (intent === "knowledge_unknown") return "other";
   if (intent === "authenticity_question") return "order";
+  return undefined;
+}
+
+function batchedMessageLines(raw: string): Array<{ raw: string; normalized: string }> {
+  const lines = raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+  return lines.map((line) => ({ raw: line, normalized: normalize(line) }));
+}
+
+/**
+ * Backup only for an explicit topic that the LLM omitted from a multi-message
+ * batch. The model remains the primary router; these deliberately narrow
+ * patterns prevent one short conversational question from disappearing.
+ */
+function inferredBatchedLineAnswerTopic(text: string): SemanticTopic | undefined {
+  const asksOncePerDay =
+    /\b(?:1|mot)\s+ngay\b.*\b(?:chi\s+)?(?:lan|boi|dung|su dung)\b.*\b(?:1|mot)\s+lan\b/.test(text) ||
+    /\b(?:lan|boi|dung|su dung)\b.*\b(?:1|mot)\s+lan\b.*\b(?:1|mot)\s+ngay\b/.test(text);
+  if (asksOncePerDay) return "usage";
+
+  const comparesDailyRollOn =
+    /\bgiong\b.*\blan khu mui\b|\blan khu mui\b.*\bgiong\b/.test(text) &&
+    /\b(?:giam|kiem soat|ngan)\b.*\bmo hoi\b|\bmo hoi\b.*\b(?:giam|kiem soat|ngan)\b/.test(text);
+  if (comparesDailyRollOn) return "comparison";
   return undefined;
 }
 
@@ -445,17 +774,30 @@ function primaryIntent(
     (action): action is Extract<ConversationAction, { type: "start_customer_care" }> =>
       action.type === "start_customer_care",
   );
-  if (care) return care.issue === "ineffective" ? "ineffective" : "safety";
+  if (care) {
+    if (care.issue === "ineffective") return "ineffective";
+    return care.issue === "irritation" ? "safety" : "order_support";
+  }
+  if (semanticIntent && semanticIntent !== "other") return semanticIntent;
   if (hasAction(actions, "decline_purchase")) return "decline_purchase";
   if (hasAction(actions, "select_quantity")) return "buying";
   // LLM là bộ định tuyến hội thoại chính. `exactIntent` đến từ rule từ khóa
   // chỉ được dùng khi model không đưa ra được một intent có nghĩa.
-  return semanticIntent && semanticIntent !== "other" ? semanticIntent : exactIntent;
+  return exactIntent;
+}
+
+function semanticAuthorityReady(semantic: SemanticUnderstanding): boolean {
+  return Boolean(
+    semantic.intent &&
+      semantic.intent !== "other" &&
+      (semantic.confidence ?? 0) >= 0.65 &&
+      semantic.needsClarification !== true,
+  );
 }
 
 function extractExplicitPurchaseQuantity(text: string): SupportedOrderQuantity | undefined {
   const numeric = text.match(
-    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|chi|em))?\s*(?:combo\s*)?([1-5])\s+lo\b/,
+    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:combo\s*)?([1-5])\s+lo\b/,
   )?.[1];
   if (numeric) return Number(numeric) as SupportedOrderQuantity;
   const words: ReadonlyArray<[RegExp, SupportedOrderQuantity]> = [
@@ -467,14 +809,14 @@ function extractExplicitPurchaseQuantity(text: string): SupportedOrderQuantity |
     if (pattern.test(text) && /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)\b/.test(text)) return quantity;
   }
   if (
-    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|chi|em))?\s*(?:2|hai)\s+lo\b|\b(?:lay|chon|chot|mua)\s+combo\b/.test(
+    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:2|hai)\s+lo\b|\b(?:lay|chon|chot|mua)\s+combo\b/.test(
       text,
     )
   ) {
     return 2;
   }
   if (
-    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|chi|em))?\s*(?:1|mot)\s+lo\b/.test(text)
+    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:1|mot)\s+lo\b/.test(text)
   ) {
     return 1;
   }

@@ -90,7 +90,7 @@ export function inferAnsweredTopicFromMessage(
   ) {
     topics.push("work_context");
   }
-  if (/mo hoi|uot|o ao|mui|hoi nach|ca hai/.test(text)) {
+  if (/mo hoi|uot|o ao|mui|hoi nach|ca hai|ca\s*2|hai cai|2 cai|deu bi/.test(text)) {
     topics.push("symptom");
   }
   if (/lan thuong|hang ngay|chuyen sau|gian cach|chua tung dung/.test(text)) {
@@ -201,6 +201,24 @@ function keepOnlyLastQuestion(blocks: string[]): string[] {
 function mergeToBubbleLimit(blocks: string[], maxBubbles: number): string[] {
   if (blocks.length <= maxBubbles) return blocks;
   if (maxBubbles <= 1) return [blocks.join("\n\n")];
+  if (maxBubbles === 2) {
+    // Preserve paragraph order but choose the boundary that produces the most
+    // balanced Messenger bubbles. Keeping only the first paragraph separate
+    // made a short greeting consume bubble 1 and merged every useful answer
+    // into one oversized bubble 2.
+    let best: [string, string] | undefined;
+    let bestLongest = Number.POSITIVE_INFINITY;
+    for (let index = 1; index < blocks.length; index += 1) {
+      const left = blocks.slice(0, index).join("\n\n");
+      const right = blocks.slice(index).join("\n\n");
+      const longest = Math.max(left.length, right.length);
+      if (longest < bestLongest) {
+        best = [left, right];
+        bestLongest = longest;
+      }
+    }
+    return best ?? [blocks.join("\n\n")];
+  }
   const leading = blocks.slice(0, maxBubbles - 1);
   const tail = blocks.slice(maxBubbles - 1).join("\n\n");
   return [...leading, tail];

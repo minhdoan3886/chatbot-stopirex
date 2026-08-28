@@ -81,9 +81,10 @@ usage vẫn được đếm nhưng không được cộng chi phí.
 `LLM_PROVIDER=codex`; đặt `hybrid` để bật failover. Codex CLI cần các biến `CODEX_CLI_PATH`,
 `CODEX_LLM_MODEL` và `CODEX_LLM_TIMEOUT_MS` như trong `.env.example`.
 
-LLM được đọc các lượt Sale và CSKH để hiểu ngữ cảnh. SĐT/địa chỉ không được gửi
-sang LLM; giá, chính sách, an toàn và thao tác đơn vẫn phải qua guardrail và flow
-xác định trước.
+LLM được đọc toàn bộ lượt Sale và CSKH, kể cả tin có SĐT/địa chỉ, để hiểu đúng
+ngữ cảnh và không bỏ sót câu hỏi đi kèm. Tin chứa PII không được lưu trong cache
+prompt; truy vấn Knowledge do LLM chuẩn hóa luôn loại SĐT/email. Giá, chính sách,
+an toàn và thao tác đơn vẫn phải qua guardrail và bộ kiểm tra xác định trước.
 
 PostgreSQL và Redis local:
 

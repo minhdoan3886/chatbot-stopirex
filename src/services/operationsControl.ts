@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { execFile, spawn } from "node:child_process";
 import { Resolver } from "node:dns/promises";
 import { mkdir, open, readFile } from "node:fs/promises";
@@ -132,7 +133,7 @@ export class OperationsControlService {
             `http://127.0.0.1:${this.dependencies.env.metaGatewayPort}/webhooks/meta`,
             { signal: AbortSignal.timeout(1_500) },
           );
-          return response.ok || response.status === 403;
+          return response.ok || response.status === 403 || response.status === 404;
         } catch {
           return false;
         }
@@ -644,16 +645,18 @@ export function createLocalProcessRuntime(projectRoot: string): ProcessRuntime {
       await mkdir(logDirectory, { recursive: true });
       const log = await open(path.join(logDirectory, logName), "a");
       try {
-        const child = spawn(
-          process.execPath,
-          ["--env-file-if-exists=.env", "--import", "tsx", entrypoint],
-          {
-            cwd: projectRoot,
-            detached: true,
-            env: process.env,
-            stdio: ["ignore", log.fd, log.fd],
-          },
-        );
+        const jsEntrypoint = entrypoint.replace(/^src\//, "dist/src/").replace(/\.ts$/, ".js");
+        const entry = fs.existsSync(path.join(projectRoot, jsEntrypoint)) ? jsEntrypoint : entrypoint;
+        const isTs = entry.endsWith(".ts");
+        const args = isTs
+          ? ["--env-file-if-exists=.env", "--import", "tsx", entry]
+          : ["--env-file-if-exists=.env", entry];
+        const child = spawn(process.execPath, args, {
+          cwd: projectRoot,
+          detached: true,
+          env: process.env,
+          stdio: ["ignore", log.fd, log.fd],
+        });
         await new Promise<void>((resolve, reject) => {
           child.once("spawn", resolve);
           child.once("error", reject);
@@ -734,10 +737,12 @@ async function stopMatchingProcesses(marker: string): Promise<void> {
 }
 
 async function listProcesses(): Promise<Array<{ pid: number; command: string }>> {
-  const output = await new Promise<string>((resolve, reject) => {
-    execFile("ps", ["-axo", "pid=,command="], { maxBuffer: 2_000_000 }, (error, stdout) => {
-      if (error) reject(error);
-      else resolve(stdout);
+  const output = await new Promise<string>((resolve) => {
+    execFile("ps", ["-o", "pid,args"], { maxBuffer: 2_000_000 }, (err, stdout) => {
+      if (!err && stdout) return resolve(stdout);
+      execFile("ps", ["-axo", "pid=,command="], { maxBuffer: 2_000_000 }, (error, out) => {
+        resolve(out || "");
+      });
     });
   });
   return output

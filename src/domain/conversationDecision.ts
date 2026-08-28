@@ -4,7 +4,12 @@ import type { IssueType } from "./customerCare.js";
 import type { ConversationActionPlan } from "./conversationActions.js";
 import type { ActionExecutionMode } from "./actionRollout.js";
 
-export type PendingAction = "send_usage_guidance" | "send_price" | "choose_quantity" | "confirm_order";
+export type PendingAction =
+  | "send_usage_guidance"
+  | "send_price"
+  | "send_authenticity_legal_summary"
+  | "choose_quantity"
+  | "confirm_order";
 
 export type DecisionRoute =
   | "opt_out"
@@ -72,6 +77,7 @@ export type ResolveConversationDecisionInput = {
   orderConfirmation: boolean;
   collectingOrder: boolean;
   orderDataCandidate?: boolean;
+  explicitPurchaseSelection?: boolean;
   affirmativeFollowup: boolean;
 };
 
@@ -85,6 +91,12 @@ export type ConversationDecision = {
 export function resolveConversationDecision(input: ResolveConversationDecisionInput): ConversationDecision {
   const semanticConfidence = clampConfidence(
     input.semantic.confidence ?? (input.semantic.intent && input.semantic.intent !== "other" ? 0.82 : 0),
+  );
+  const semanticReady = Boolean(
+    input.semantic.intent &&
+      input.semantic.intent !== "other" &&
+      semanticConfidence >= 0.65 &&
+      input.semantic.needsClarification !== true,
   );
   // `careScenario` is grounded from the customer's actual wording. When it is
   // available it must win over the LLM label in both directions: this prevents
@@ -186,7 +198,8 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
     input.careIssue === "missing_or_damaged" ||
     input.careIssue === "delivery" ||
     input.careIssue === "counterfeit" ||
-    input.careIssue === "negative_review";
+    input.careIssue === "negative_review" ||
+    input.careIssue === "complaint";
   if (criticalCare && careScenario !== "hypothetical") {
     return decision(
       "start_care",
@@ -197,15 +210,30 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
     );
   }
 
-  if (input.orderConfirmation) {
+  if (
+    input.orderConfirmation &&
+    (!semanticReady || input.semantic.intent === "buying" || input.semantic.intent === "order_support")
+  ) {
     return decision("order_confirmation", "Khách xác nhận đơn đã đủ dữ liệu.", baseTrace, "buying");
   }
 
   const pendingAction = input.pendingAction;
+  const expectedPendingReplyTo = pendingAction ? pendingReplyTo(pendingAction) : undefined;
+  const expectedPendingIntent = input.pendingAction ? pendingIntent(input.pendingAction) : undefined;
+  const directQuestionInterruptsPendingAction = Boolean(
+    semanticReady &&
+      input.semantic.intent &&
+      input.semantic.intent !== expectedPendingIntent &&
+      input.semantic.intent !== "buying" &&
+      input.semantic.intent !== "order_support",
+  );
   const pendingMatches =
     pendingAction !== undefined &&
+    !directQuestionInterruptsPendingAction &&
+    !input.explicitPurchaseSelection &&
     (input.affirmativeFollowup ||
-      input.semantic.replyTo === pendingReplyTo(pendingAction) ||
+      (expectedPendingReplyTo !== undefined &&
+        input.semantic.replyTo === expectedPendingReplyTo) ||
       (pendingAction === "send_usage_guidance" && input.semantic.intent === "usage_guidance"));
   if (pendingMatches && pendingAction) {
     return decision(
@@ -222,6 +250,33 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
       "Guardrail tri thức đã duyệt giữ đúng chủ đề khách hỏi; LLM không được đổi sang luồng khác.",
       baseTrace,
       input.exactIntent,
+    );
+  }
+
+  // The LLM owns conversational routing. State, keyword detectors and pending
+  // workflow steps may supply context, but they cannot replace a confident
+  // current-turn intent. A genuine order-data turn remains an execution route
+  // only when the LLM itself classified it as buying/order support.
+  if (semanticReady) {
+    if (
+      input.collectingOrder &&
+      input.orderDataCandidate &&
+      (input.semantic.intent === "buying" || input.semantic.intent === "order_support")
+    ) {
+      return decision(
+        "order_collection",
+        "LLM xác định đây là dữ liệu đơn hiện tại; workflow chỉ xác thực và ghi dữ liệu.",
+        baseTrace,
+        input.semantic.intent,
+      );
+    }
+    return decision(
+      "direct_intent",
+      conflicts.length
+        ? "LLM là bộ máy định tuyến chính; rule và state mâu thuẫn chỉ được ghi nhận để hậu kiểm."
+        : "LLM xác định rõ ý định hiện tại với độ tin cậy đạt ngưỡng và điều hướng hội thoại.",
+      baseTrace,
+      input.semantic.intent,
     );
   }
 
@@ -276,40 +331,10 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
     );
   }
 
-  const semanticReady =
-    input.semantic.intent &&
-    input.semantic.intent !== "other" &&
-    semanticConfidence >= 0.65 &&
-    input.semantic.needsClarification !== true;
-  const exactConflictsWithSemantic =
-    input.exactIntent && semanticReady && input.exactIntent !== input.semantic.intent;
-  const commerceGuardConflict =
-    exactConflictsWithSemantic && input.exactIntent !== undefined && isCommerceGuardIntent(input.exactIntent);
-  const semanticConsistencyConflict =
-    exactConflictsWithSemantic &&
-    input.exactIntent !== undefined &&
-    (input.exactIntentKind === "hard" || isSemanticConsistencyGuardIntent(input.exactIntent));
-
-  if (semanticReady && !commerceGuardConflict && !semanticConsistencyConflict) {
-    return decision(
-      "direct_intent",
-      conflicts.length
-        ? "LLM là bộ máy định tuyến chính và được quyền ghi đè rule từ khoá mềm; rule chỉ giữ vai trò fallback."
-        : "LLM xác định rõ ý định hiện tại với độ tin cậy đạt ngưỡng và điều hướng hội thoại.",
-      baseTrace,
-      input.semantic.intent,
-    );
-  }
   if (input.exactIntent) {
     return decision(
       "direct_intent",
-      commerceGuardConflict
-        ? "Guardrail thương mại giữ quyền kiểm soát yêu cầu giá, giảm giá hoặc ưu đãi; LLM không được tự thay đổi chính sách."
-        : semanticConsistencyConflict
-          ? "Semantic consistency guard từ chối intent LLM mâu thuẫn với tín hiệu ngữ nghĩa rõ ràng trong chính câu khách."
-          : exactConflictsWithSemantic
-            ? "LLM chưa đủ điều kiện sử dụng; dùng rule miền làm phương án dự phòng."
-            : "Dùng rule dự phòng có độ chính xác cao vì LLM chưa đưa ra ý định đủ tin cậy.",
+      "LLM chưa đưa ra intent đủ tin cậy; dùng rule miền làm phương án dự phòng.",
       baseTrace,
       input.exactIntent,
     );
@@ -355,14 +380,16 @@ function decision(
 function pendingIntent(action: PendingAction): CustomerIntent {
   if (action === "send_usage_guidance") return "usage_guidance";
   if (action === "send_price") return "price_request";
+  if (action === "send_authenticity_legal_summary") return "authenticity_question";
   return "buying";
 }
 
-function pendingReplyTo(action: PendingAction): SemanticUnderstanding["replyTo"] {
+function pendingReplyTo(action: PendingAction): SemanticUnderstanding["replyTo"] | undefined {
   if (action === "send_usage_guidance") return "offer_usage_guidance";
   if (action === "send_price") return "offer_price";
   if (action === "choose_quantity") return "choose_quantity";
-  return "confirm_order";
+  if (action === "confirm_order") return "confirm_order";
+  return undefined;
 }
 
 function careRuleKind(issue: IssueType): "hard" | "soft" {

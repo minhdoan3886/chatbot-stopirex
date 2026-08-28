@@ -63,3 +63,10 @@ test("câu hỏi mới không bị coi là câu trả lời cho chủ đề đan
     ["quantity"],
   );
 });
+
+test("cách nói cả 2 được nhận diện là câu trả lời cho chủ đề triệu chứng", () => {
+  assert.deepEqual(
+    inferAnsweredTopicFromMessage("cả 2", "symptom"),
+    ["symptom"],
+  );
+});

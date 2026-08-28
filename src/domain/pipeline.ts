@@ -31,6 +31,7 @@ export const signalTags = [
   "SC.Giao hàng",
   "SC.Hàng giả",
   "SC.Đánh giá",
+  "SC.Khiếu nại",
 ] as const;
 
 export type SignalTag = (typeof signalTags)[number];

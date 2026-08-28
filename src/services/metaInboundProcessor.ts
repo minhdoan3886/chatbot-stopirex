@@ -15,7 +15,11 @@ import type { OrderDraft } from "../domain/orders.js";
 import type { PushOrderInboxInput } from "./orderInbox.js";
 
 export type FollowupCoordinator = {
-  cancelConversation(input: { tenantId: string; conversationId: string; reason: string }): Promise<number>;
+  cancelConversation(input: {
+    tenantId: string;
+    conversationId: string;
+    reason: string;
+  }): Promise<number>;
   scheduleCycle(input: FollowupCycleSchedule): Promise<{ cycleId: string; created: boolean }>;
 };
 
@@ -76,7 +80,9 @@ export class MetaInboundProcessor {
     if (
       jobs.some(
         (job) =>
-          job.tenantId !== first.tenantId || job.pageId !== first.pageId || job.senderId !== first.senderId,
+          job.tenantId !== first.tenantId ||
+          job.pageId !== first.pageId ||
+          job.senderId !== first.senderId,
       )
     ) {
       throw new Error("meta_batch_scope_mismatch");
@@ -204,7 +210,11 @@ export class MetaInboundProcessor {
       return { status: "paused", replyCount: dispatched.count };
     }
 
-    this.options.chat.restoreSession(sessionId, conversation.runtimeState, this.context());
+    this.options.chat.restoreSession(
+      sessionId,
+      conversation.runtimeState,
+      this.context(),
+    );
     const text = batchMessages(
       contentJobs.map((job) => ({
         id: job.eventId,
@@ -270,7 +280,21 @@ export class MetaInboundProcessor {
       committed.outbound,
       committed.stateVersion,
     );
-    if (dispatched.lastMessageId && isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)) {
+    if (result.state.botPaused) {
+      this.options.logger.log("warn", "customer_automation_suppressed_for_human_review", {
+        traceId: first.traceId,
+        tenantId: first.tenantId,
+        pageId: first.pageId,
+        conversationId: conversation.conversationId,
+        pipeline: result.state.pipeline,
+        signal: result.state.signal,
+        humanStatus: "paused",
+      });
+    }
+    if (
+      dispatched.lastMessageId &&
+      isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)
+    ) {
       await this.scheduleFollowup({
         tenantId: first.tenantId,
         pageId: first.pageId,
@@ -280,7 +304,7 @@ export class MetaInboundProcessor {
       });
     }
     return {
-      status: dispatched.suppressed ? "paused" : "replied",
+      status: result.state.botPaused || dispatched.suppressed ? "paused" : "replied",
       replyCount: dispatched.count,
     };
   }
@@ -315,11 +339,16 @@ export class MetaInboundProcessor {
       draft.customerConfirmedAt instanceof Date
         ? draft.customerConfirmedAt
         : new Date(draft.customerConfirmedAt);
+    if (Number.isNaN(confirmedAt.getTime())) throw new Error("invalid_order_confirmation_timestamp");
     await this.options.orderInbox.push({
       sessionId: input.sessionId,
       channel: "meta",
       draft,
       confirmedAt,
+    });
+    this.options.logger.log("info", "order_inbox_recorded", {
+      sessionId: input.sessionId,
+      confirmedAt: confirmedAt.toISOString(),
     });
   }
 
@@ -389,21 +418,19 @@ export class MetaInboundProcessor {
     };
   }
 
-  private async scheduleFollowup(input: Omit<FollowupCycleSchedule, "anchorSentAt">): Promise<void> {
+  private async scheduleFollowup(
+    input: Omit<FollowupCycleSchedule, "anchorSentAt">,
+  ): Promise<void> {
     if (!this.options.followups) return;
     const scheduled = await this.options.followups.scheduleCycle({
       ...input,
       anchorSentAt: new Date(),
     });
-    this.options.logger.log(
-      "info",
-      scheduled.created ? "followup_cycle_scheduled" : "followup_cycle_exists",
-      {
-        conversationId: input.conversationId,
-        cycleId: scheduled.cycleId,
-        anchorOutboundMessageId: input.anchorOutboundMessageId,
-      },
-    );
+    this.options.logger.log("info", scheduled.created ? "followup_cycle_scheduled" : "followup_cycle_exists", {
+      conversationId: input.conversationId,
+      cycleId: scheduled.cycleId,
+      anchorOutboundMessageId: input.anchorOutboundMessageId,
+    });
   }
 
   private async markProcessed(jobs: readonly MetaInboundJob[]): Promise<void> {

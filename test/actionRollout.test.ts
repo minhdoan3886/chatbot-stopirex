@@ -4,6 +4,7 @@ import {
   compareActionRollout,
   selectActionExecutionMode,
 } from "../src/domain/actionRollout.js";
+import type { SemanticUnderstanding } from "../src/domain/consultation.js";
 import { DemoChatService } from "../src/services/demoChat.js";
 import { evaluateActionRolloutGate } from "../src/services/operationsDashboard.js";
 
@@ -29,16 +30,39 @@ test("shadow luôn giữ legacy, canary phân bổ ổn định theo phiên", ()
   );
 });
 
-test("comparison phát hiện legacy bỏ mất hành động mua trong câu đa ý", () => {
+test("comparison xác nhận hai biến thể cùng giữ hành động mua và candidate trả đủ đa ý", () => {
   const legacyChat = new DemoChatService();
   const candidateChat = new DemoChatService();
   const semantic = {
     slots: {},
-    intent: "product_effect" as const,
+    intent: "buying" as const,
     topic: "effectiveness" as const,
     asksDirectAnswer: true,
     confidence: 0.99,
-  };
+    evidence: ["nếu đúng như lời nói", "cho mình 1 lọ"],
+    actions: [
+      {
+        type: "answer_question" as const,
+        topic: "effectiveness" as const,
+        confidence: 0.98,
+        evidence: ["nếu đúng như lời nói"],
+        source: "llm" as const,
+      },
+      {
+        type: "select_quantity" as const,
+        quantity: 1,
+        confidence: 0.99,
+        evidence: ["cho mình 1 lọ"],
+        source: "llm" as const,
+      },
+      {
+        type: "continue_order_collection" as const,
+        confidence: 0.98,
+        evidence: ["cho mình 1 lọ"],
+        source: "llm" as const,
+      },
+    ],
+  } satisfies SemanticUnderstanding;
   const text = "Nếu đúng như lời nói thì cho mình 1 lọ";
   const legacy = legacyChat.chat("compare", text, semantic, {
     actionExecutionMode: "legacy",
@@ -53,8 +77,9 @@ test("comparison phát hiện legacy bỏ mất hành động mua trong câu đa
     candidate,
   });
 
-  assert.equal(result.intentMismatch, true);
-  assert.equal(result.pipelineMismatch, true);
+  assert.equal(result.intentMismatch, false);
+  assert.equal(result.pipelineMismatch, false);
+  assert.equal(result.replyMismatch, true);
   assert.equal(result.candidateHasMultipleActions, true);
 });
 
@@ -81,4 +106,3 @@ test("quality gate chỉ pass khi đủ mẫu và các tỷ lệ dưới ngưỡ
     "collecting",
   );
 });
-

@@ -256,6 +256,42 @@ test("Meta parser tách text/image/read và registry fail closed", () => {
   assert.throws(() => registry.resolve("unknown"), /unregistered_page/);
 });
 
+test("Meta parser bỏ thẻ cập nhật vận chuyển dạng template nhưng vẫn nhận ảnh thật", () => {
+  const events = parseMetaWebhook({
+    object: "page",
+    entry: [
+      {
+        id: "p1",
+        messaging: [
+          {
+            sender: { id: "u1" },
+            timestamp: 1,
+            message: {
+              mid: "shipping-update-card",
+              attachments: [{ type: "template", payload: {} }],
+            },
+          },
+          {
+            sender: { id: "u1" },
+            timestamp: 2,
+            message: {
+              mid: "real-photo",
+              attachments: [
+                { type: "image", payload: { url: "https://example.test/customer-photo.jpg" } },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.eventId, "real-photo");
+  assert.equal(events[0]?.kind, "image");
+  assert.equal(events[0]?.attachmentUrl, "https://example.test/customer-photo.jpg");
+});
+
 test("Meta parser đánh dấu echo để webhook không tự trả lời chính bot", () => {
   const [event] = parseMetaWebhook({
     object: "page",

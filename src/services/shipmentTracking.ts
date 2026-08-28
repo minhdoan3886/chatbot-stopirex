@@ -5,6 +5,7 @@ export function trackingUrl(
   carrier: ShipmentTracking["carrier"],
   trackingNumber: string,
 ): string {
+  if (carrier === "viettel_post") return "";
   if (carrier === "spx") {
     return `https://spx.vn/track?${encodeURIComponent(trackingNumber)}`;
   }

@@ -627,9 +627,10 @@ test("chat sandbox nhớ ngữ cảnh và tạo đơn sau xác nhận ĐỒNG Ý
   assert.match(created.reply, /đã lên đơn thành công/);
   assert.match(created.reply, /Thanh toán khi nhận hàng \(COD\)/);
   assert.match(created.reply, /Địa chỉ trước sáp nhập/);
-  assert.match(created.reply, /Shopee Express/);
-  assert.match(created.reply, /SPX-DEMO-/);
-  assert.match(created.reply, /https:\/\/spx\.vn\/track\?SPX-DEMO-/);
+  assert.match(created.reply, /Viettel Post/);
+  assert.match(created.reply, /VTP-DEMO-/);
+  assert.match(created.reply, /website hoặc ứng dụng Viettel Post.*nhập mã/isu);
+  assert.doesNotMatch(created.reply, /https?:\/\/|Link tra cứu/iu);
   assert.match(created.reply, /quyền từ chối nhận hàng/);
   assert.match(created.reply, /không phát sinh giao hàng thật/);
 });

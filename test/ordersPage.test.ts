@@ -16,5 +16,7 @@ test("script trang đơn hàng hợp lệ và chỉ hoàn tất sau khi gửi v�
 test("trang production không còn lối vào chat thử hay nhãn demo", () => {
   assert.doesNotMatch(ordersPage, /Chat thử|DEMO-|localhost|sandbox/iu);
   assert.match(ordersPage, /Nhập mã vận đơn thật/u);
+  assert.match(ordersPage, /Viettel Post/u);
+  assert.doesNotMatch(ordersPage, /Mở trang tra cứu/u);
   assert.match(ordersPage, /Đã gửi vận đơn/u);
 });

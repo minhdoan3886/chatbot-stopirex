@@ -30,7 +30,7 @@ export interface SapoAdapter {
 }
 
 export type ShipmentTracking = {
-  carrier: "spx" | "ghn" | "ghtk" | "other";
+  carrier: "viettel_post" | "spx" | "ghn" | "ghtk" | "other";
   trackingNumber: string;
   trackingUrl: string;
   status: string;

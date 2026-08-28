@@ -249,9 +249,8 @@ test("claimTrackingSend() chỉ nhận đơn pending chưa gửi và lưu mã th
   const queries: Array<{ text: string; params?: unknown[] }> = [];
   const claimed = {
     ...savedRecord,
-    trackingCarrier: "spx" as const,
-    trackingNumber: "SPXVN123456",
-    trackingUrl: "https://spx.vn/track?SPXVN123456",
+    trackingCarrier: "viettel_post" as const,
+    trackingNumber: "VTP123456789",
     trackingSendStatus: "sending" as const,
   };
   const pool = {
@@ -263,9 +262,8 @@ test("claimTrackingSend() chỉ nhận đơn pending chưa gửi và lưu mã th
   const service = new OrderInboxService(pool as never);
   const result = await service.claimTrackingSend({
     id: savedRecord.id,
-    carrier: "spx",
-    trackingNumber: "SPXVN123456",
-    trackingUrl: "https://spx.vn/track?SPXVN123456",
+    carrier: "viettel_post",
+    trackingNumber: "VTP123456789",
   });
 
   assert.equal(result?.trackingSendStatus, "sending");
@@ -273,9 +271,9 @@ test("claimTrackingSend() chỉ nhận đơn pending chưa gửi và lưu mã th
   assert.match(queries[0]!.text, /status = 'pending'/u);
   assert.deepEqual(queries[0]!.params, [
     savedRecord.id,
-    "spx",
-    "SPXVN123456",
-    "https://spx.vn/track?SPXVN123456",
+    "viettel_post",
+    "VTP123456789",
+    null,
   ]);
 });
 

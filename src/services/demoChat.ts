@@ -69,7 +69,6 @@ import {
 } from "../domain/responseGovernor.js";
 import { InMemoryCareCaseRepository } from "./careCaseRepository.js";
 import { createDemoProductCatalog, demoCommerceEffectiveAt } from "../config/demoCommerce.js";
-import { trackingUrl } from "./shipmentTracking.js";
 import type { FollowupStage } from "../domain/followup.js";
 
 const demoTenant = tenantId("local-demo");
@@ -779,7 +778,7 @@ export class DemoChatService {
       session.lastIntent = "buying";
       if (session.orderConfirmationMode === "sandbox") {
         session.orderId = `DEMO-${randomUUID().slice(0, 8).toUpperCase()}`;
-        session.trackingNumber = `SPX-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
+        session.trackingNumber = `VTP-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
       }
       return this.respond(session, [orderCreatingReply(session), orderCreatedReply(session)]);
     }
@@ -1565,7 +1564,7 @@ export class DemoChatService {
       session.lastIntent = "buying";
       if (session.orderConfirmationMode === "sandbox") {
         session.orderId = `DEMO-${randomUUID().slice(0, 8).toUpperCase()}`;
-        session.trackingNumber = `SPX-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
+        session.trackingNumber = `VTP-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
       }
       return this.respond(session, [orderCreatingReply(session), orderCreatedReply(session)]);
     }
@@ -6828,7 +6827,7 @@ function orderCreatedReply(session: DemoSession): string {
       "Bộ phận bán hàng sẽ kiểm tra và lên đơn trên hệ thống, sau đó gửi lại mã đơn cho mình ạ.",
     ].join("\n");
   }
-  const trackingNumber = session.trackingNumber ?? "SPX-DEMO";
+  const trackingNumber = session.trackingNumber ?? "VTP-DEMO";
   return [
     "Dạ em đã lên đơn thành công rồi ạ ✅",
     "",
@@ -6839,9 +6838,9 @@ function orderCreatedReply(session: DemoSession): string {
     `Người nhận: ${order.recipientName} – ${order.phone}`,
     `Địa chỉ trước sáp nhập: ${order.legacyAddress}`,
     "",
-    "Dạ em gửi mình mã vận đơn để mình tiện theo dõi tiến độ giao hàng trên Shopee Express ạ:",
+    "Dạ em gửi mình mã vận đơn Viettel Post để mình theo dõi tiến độ giao hàng ạ:",
     `Mã vận đơn thử: ${trackingNumber}`,
-    `🔗 Link tra cứu: ${trackingUrl("spx", trackingNumber)}`,
+    "Mình mở website hoặc ứng dụng Viettel Post, chọn mục tra cứu vận đơn và nhập mã trên giúp em nhé.",
     "",
     "Khi nhận hàng, mình nhớ kiểm tra kỹ thông tin người gửi và sản phẩm. Nếu không đúng thông tin từ Stopirex thì mình hoàn toàn có quyền từ chối nhận hàng ạ.",
     "",

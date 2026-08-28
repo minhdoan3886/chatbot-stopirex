@@ -154,7 +154,7 @@ const server = createServer(async (request, response) => {
     } catch {
       return json(response, 400, { error: "invalid_json" });
     }
-    const carrier = isOrderTrackingCarrier(body.carrier) ? body.carrier : "spx";
+    const carrier = isOrderTrackingCarrier(body.carrier) ? body.carrier : "viettel_post";
     const trackingNumber = normalizeTrackingNumber(body.trackingNumber);
     if (!trackingNumber) {
       return json(response, 400, { error: "invalid_tracking_number" });
@@ -166,7 +166,7 @@ const server = createServer(async (request, response) => {
         id: orderId,
         carrier,
         trackingNumber,
-        trackingUrl: notification.trackingUrl,
+        ...(notification.trackingUrl ? { trackingUrl: notification.trackingUrl } : {}),
       });
       if (!claimed) {
         const current = await orderInbox.findById(orderId);

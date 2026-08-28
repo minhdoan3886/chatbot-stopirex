@@ -158,10 +158,10 @@ function renderRows(){
   document.getElementById('orderRows').innerHTML=rows.length?rows.map(r=>{
     const id=esc(r.id);
     const trackingState=r.trackingSendStatus??'not_sent';
-    const carrierOption=value=>'<option value="'+value+'"'+(r.trackingCarrier===value?' selected':'')+'>'+value.toUpperCase()+'</option>';
+    const carrierOption=(value,label)=>'<option value="'+value+'"'+((r.trackingCarrier??'viettel_post')===value?' selected':'')+'>'+label+'</option>';
     const actionCell=r.status==='pending'
       ?'<div class="tracking-controls" data-tracking-order-id="'+id+'">'
-       +'<select aria-label="Đơn vị vận chuyển">'+carrierOption('spx')+carrierOption('ghn')+carrierOption('ghtk')+'</select>'
+       +'<select aria-label="Đơn vị vận chuyển">'+carrierOption('viettel_post','Viettel Post')+'</select>'
        +'<input aria-label="Mã vận đơn" maxlength="80" autocomplete="off" placeholder="Nhập mã vận đơn thật" value="'+esc(r.trackingNumber??'')+'">'
        +(trackingState==='failed'?'<span class="tracking-error" style="grid-column:1/3">Lần gửi trước chưa thành công. Kiểm tra và gửi lại.</span>':'')
        +'<button class="btn btn-send" data-order-action="send-tracking">Gửi mã vận đơn cho khách</button>'
@@ -169,7 +169,7 @@ function renderRows(){
        +'</div>'
       :r.trackingSentAt
         ?'<div class="tracking-result"><b>'+esc(r.trackingNumber??'—')+'</b>'
-         +(r.trackingUrl?'<span class="sub"><a href="'+esc(r.trackingUrl)+'" target="_blank" rel="noopener">Mở trang tra cứu</a></span>':'')
+         +'<span class="sub">Viettel Post · khách tự nhập mã để tra cứu</span>'
          +'<span class="sub">Đã gửi '+esc(fullTime(r.trackingSentAt))+'</span></div>'
         :r.note?'<span class="sub">'+esc(r.note)+'</span>':'';
     return '<tr id="row-'+esc(r.id)+'">'

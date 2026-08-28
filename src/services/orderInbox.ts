@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import type { OrderDraft } from "../domain/orders.js";
+import type { OrderTrackingCarrier } from "./orderTrackingNotification.js";
 
 export type OrderInboxStatus = "pending" | "completed" | "cancelled";
 export type TrackingSendStatus = "not_sent" | "sending" | "sent" | "failed";
@@ -19,7 +20,7 @@ export type OrderInboxRecord = {
   paymentMethod?: "cod" | "bank_transfer";
   status: OrderInboxStatus;
   note?: string;
-  trackingCarrier?: "spx" | "ghn" | "ghtk";
+  trackingCarrier?: OrderTrackingCarrier;
   trackingNumber?: string;
   trackingUrl?: string;
   trackingSendStatus: TrackingSendStatus;
@@ -219,9 +220,9 @@ export class OrderInboxService {
   /** Giữ quyền gửi để hai thao tác đồng thời không gửi trùng cho khách. */
   async claimTrackingSend(input: {
     id: string;
-    carrier: "spx" | "ghn" | "ghtk";
+    carrier: OrderTrackingCarrier;
     trackingNumber: string;
-    trackingUrl: string;
+    trackingUrl?: string;
   }): Promise<OrderInboxRecord | undefined> {
     const result = await this.pool.query<OrderInboxRecord>(
       `UPDATE order_inbox
@@ -236,7 +237,7 @@ export class OrderInboxService {
          AND tracking_sent_at IS NULL
          AND tracking_send_status IN ('not_sent', 'failed')
        RETURNING ${orderInboxReturningColumns}`,
-      [input.id, input.carrier, input.trackingNumber, input.trackingUrl],
+      [input.id, input.carrier, input.trackingNumber, input.trackingUrl ?? null],
     );
     return result.rows[0];
   }

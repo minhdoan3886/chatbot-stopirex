@@ -18,6 +18,8 @@ import type {
   SemanticSubject,
   SemanticTopic,
   SemanticUnderstanding,
+  SemanticNewAngle,
+  SemanticNextStep,
 } from "../domain/consultation.js";
 import type { ConversationAction, ConversationActionType } from "../domain/conversationActions.js";
 import { assertKnowledgeAnswerGrounded, KnowledgeGroundingError } from "../domain/knowledge.js";
@@ -203,7 +205,7 @@ export class CodexLlmBridge {
 
   constructor(options: CodexLlmOptions) {
     this.provider = options.provider ?? "codex";
-    this.promptProfile = options.promptProfile ?? "legacy";
+    this.promptProfile = options.promptProfile ?? "compact";
     const apiKey = options.apiKey?.trim();
     this.enabled =
       options.enabled && (this.provider !== "openai" || Boolean(apiKey) || Boolean(options.runner));
@@ -1417,12 +1419,12 @@ function buildInterpretPrompt(input: {
     "Nếu khách nói dùng/gửi/giao về địa chỉ trên, địa chỉ cũ hoặc địa chỉ vừa gửi (kể cả lỗi gõ như 'guit'), phải đọc HISTORY và hiểu đây là order_support + continue_order_collection, needsClarification=false. Không chép lại PII từ HISTORY vào update_order, không coi là câu hỏi chính sách giao hàng và không handoff; State Reducer sẽ khôi phục địa chỉ đã lưu.",
     "SĐT chỉ hợp lệ khi có đúng 10 chữ số và bắt đầu bằng 0. Nếu số chưa đủ, không đưa phone vào update_order; ghi uncertainties và chỉ xin lại SĐT, vẫn giữ các trường hợp lệ khác.",
     "Schema:",
-    '{"summary":"một câu tóm tắt đủ ý","skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"answer_question","topic":"effectiveness","confidence":0.97,"evidence":["nếu đúng như lời nói"]},{"type":"update_order","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"confidence":0.99,"evidence":["giá trị nguyên văn"]},{"type":"select_quantity","quantity":1,"confidence":0.99,"evidence":["cho mình 1 lọ"]},{"type":"continue_order_collection","confidence":0.95,"evidence":["cho mình 1 lọ"]}],"uncertainties":[],"knowledgeIds":["id-trong-kho"],"knowledgeQueries":["truy vấn tri thức chuẩn hóa không chứa PII"],"unsupportedQuestions":[],"groundingConfidence":0.95,"draftReply":"1–2 đoạn ngắn, tối đa 240 ký tự","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":true,"confidence":0.95,"needsClarification":false,"age":13,"evidence":["cụm từ căn cứ"],"asksDirectAnswer":true,"priceFromVnd":245000,"priceToVnd":285000,"discountAmountVnd":75000,"workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}',
+    '{"summary":"một câu tóm tắt đủ ý","skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"answer_question","topic":"effectiveness","confidence":0.97,"evidence":["nếu đúng như lời nói"]},{"type":"update_order","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"confidence":0.99,"evidence":["giá trị nguyên văn"]},{"type":"select_quantity","quantity":1,"confidence":0.99,"evidence":["cho mình 1 lọ"]},{"type":"continue_order_collection","confidence":0.95,"evidence":["cho mình 1 lọ"]}],"uncertainties":[],"knowledgeIds":["id-trong-kho"],"knowledgeQueries":["truy vấn tri thức chuẩn hóa không chứa PII"],"unsupportedQuestions":[],"groundingConfidence":0.95,"draftReply":"theo ngân sách ký tự và bubble của skill đã chọn","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":true,"confidence":0.95,"needsClarification":false,"age":13,"evidence":["cụm từ căn cứ"],"asksDirectAnswer":true,"priceFromVnd":245000,"priceToVnd":285000,"discountAmountVnd":75000,"workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}',
     "Action type hợp lệ: stop_bot, start_customer_care(issue), handoff_to_human(reason), answer_question(topic), record_fact(field,value), select_quantity(quantity 1|2|3|4|5), update_order(fields), continue_order_collection, pause_order(reason), decline_purchase.",
     "Quy tắc draftReply: trả lời đúng câu khách vừa hỏi trước; không nhắc lại dữ kiện đã nói; không hỏi lại chủ đề đã có trong Dữ liệu đã có/lịch sử; không lộ intent, pipeline, rule hay trạng thái nội bộ.",
     "draftReply chỉ được dùng sự thật trong Kho tri thức được duyệt. Không có dữ liệu thì nói cần kiểm tra và chuyển bộ phận liên quan; tuyệt đối không bịa giá, ưu đãi, freeship, công dụng hoặc chính sách.",
     "Mọi handoff trong câu gửi khách phải nói 'em chuyển bộ phận liên quan'; không gọi tên nhân viên, sale online, CSKH hoặc bộ phận kinh doanh. Tên route cụ thể chỉ dùng trong dữ liệu nội bộ.",
-    "Tone voice của nhân viên tư vấn bán hàng: đơn giản, dễ hiểu, tích cực, tự nhiên và đủ tự tin; không giảng giải như chuyên gia. Trả lời thẳng ngay câu đầu, dùng từ phổ thông; tối đa 240 ký tự, 1–2 đoạn và không quá một câu hỏi.",
+    "Tone voice của nhân viên tư vấn bán hàng: đơn giản, dễ hiểu, tích cực, tự nhiên và đủ tự tin; không giảng giải như chuyên gia. Trả lời thẳng ngay câu đầu, dùng từ phổ thông; theo ngân sách ký tự/bubble của skill đã chọn và không quá một câu hỏi.",
     "Không nhắc lại nguyên câu khách, không viết nhiều lớp giải thích và không dùng câu phòng thủ dài. Chỉ giữ kết luận, một lý do ngắn và hướng dẫn cần thiết.",
     "Ví dụ: 'em là AI à?', 'đây có phải chatbot không?' hoặc 'đang nói chuyện với người hay bot?' => intent bot_identity, asksDirectAnswer true. Chỉ trả lời đúng câu hỏi về danh tính; không kéo về câu hỏi tình trạng.",
     "Ví dụ: '245k giờ lên 285k' => intent price_change, asksDirectAnswer true, priceFromVnd 245000, priceToVnd 285000.",
@@ -1517,21 +1519,22 @@ function buildCompactInterpretPrompt(input: {
     "ĐỐI THOẠI: hiểu tiếng địa phương, viết tắt và lỗi chính tả theo toàn câu. MESSAGE nhiều dòng là các tin liên tiếp: trả lời đủ từng ý. Một câu không có dấu hỏi vẫn có thể là câu hỏi/xác nhận. Khách mô tả tình trạng để đáp lời bot là câu trả lời, không phải câu hỏi. Với Có/Không, trả lời đúng cực tính ngay câu đầu.",
     "NGỮ CẢNH: pendingAction gần nhất thắng selectedQuantity và state đơn cũ khi MESSAGE đang trả lời lời mời gần nhất. Nếu pendingAction=send_usage_guidance và khách nói gửi/ok thì dùng usage_guidance + replyTo offer_usage_guidance + affirmation=true + needsClarification=false; cấm order_support/continue_order_collection.",
     "ĐỐI TƯỢNG: giữ người dùng đã xác nhận, nhưng topic/intent/actions phải theo câu hỏi MỚI. Cấm topic child_age hoặc cấm lặp 'bé N tuổi dùng được' nếu khách đang hỏi an toàn, hàng giả hay vấn đề khác.",
-    "PHẢN BIỆN: đọc ARGUMENT_MEMORY. Không lặp luận điểm đã dùng hoặc vừa bị khách phản bác. pricing-objection phải ghi nhận → dùng một góc mới có trong KNOWLEDGE → hỏi tối đa một câu đào sâu; không ép chốt. Nếu chi phí/thời gian đã bị phản bác, chuyển sang cơ chế, cách dùng hoặc bằng chứng đã duyệt.",
+    "PHẢN BIỆN: đọc CONVERSATION_MEMORY. Không lặp luận điểm đã dùng hoặc vừa bị khách phản bác. pricing-objection phải ghi nhận → dùng một góc mới có trong KNOWLEDGE → hỏi tối đa một câu đào sâu; không ép chốt. Nếu chi phí/thời gian đã bị phản bác, chuyển sang cơ chế, cách dùng hoặc bằng chứng đã duyệt.",
     "ACTION: mỗi ý có nghĩa cần action riêng, confidence và evidence nguyên văn. Ưu tiên an toàn/chuyển người → answer_question → record_fact → select_quantity/update_order → continue_order_collection. Không tự tạo đơn, freeship, hoàn tiền hay nói đã thực hiện việc chưa có trong state.",
     "Bất biến số lượng: khi khách thật sự chốt/mua 1–5 chai/lọ, kể cả lỗi gõ, phải có select_quantity với số chuẩn và continue_order_collection; evidence giữ nguyên cả cụm khách viết. Câu hỏi giả định 'mua mà không đỡ có hoàn tiền không' không phải chốt mua.",
     "Bất biến mâu thuẫn mua: nếu cùng MESSAGE vừa chốt số lượng vừa từ chối, xuất select_quantity, continue_order_collection và decline_purchase với evidence riêng, needsClarification=true và không tự chọn vế cuối.",
     "ĐƠN HÀNG: update_order.fields chỉ chứa recipientName, phone, legacyAddress, deliveryNote xuất hiện trong MESSAGE. Nhận từng phần, không hỏi lại trường đã có. Tên một từ hợp lệ. phone phải đúng 10 số bắt đầu 0; số sai chỉ xin lại phone và vẫn lưu các trường hợp lệ khác. Câu dùng/gửi về địa chỉ trên dùng state đã lưu, không chép PII từ HISTORY.",
     "Nếu đơn đang dở nhưng khách hỏi việc khác: answer_question + pause_order, giữ đơn nhưng draftReply chỉ trả lời việc mới; cấm xin số lượng/Tên/SĐT/Địa chỉ trong lượt đó.",
     "AN TOÀN/KHIẾU NẠI: đỏ-rát-ngứa thật phải start_customer_care + answer_question + pause_order và không chốt. Khiếu nại/sự cố đơn/dọa phản ánh phải start_customer_care(issue complaint) + handoff_to_human, không bán hàng. Xác định đúng sản phẩm gây sự cố; phản ứng với sản phẩm khác chỉ là băn khoăn trước mua.",
-    "SỰ THẬT CỐT LÕI: Stopirex có Alcohol làm dung môi trong ngưỡng an toàn; có mùi dược tính nhẹ, bay nhanh; hỗ trợ kiểm soát mồ hôi khi dùng đúng, cần duy trì và không chữa khỏi vĩnh viễn. Không tự thêm tỷ lệ, cam kết 100% hoặc tuyên bố ngoài KNOWLEDGE.",
+    "HẬU KIỂM CỨNG: không bịa giá/ưu đãi/chính sách/công dụng, không lộ PII hoặc dữ liệu nội bộ, không tạo hành động đơn hàng sai, không đưa hướng dẫn an toàn trái KNOWLEDGE. Mọi dữ kiện sản phẩm cụ thể chỉ lấy từ KNOWLEDGE của lượt hiện tại.",
     "Tin sai/chưa xác nhận: ghi nhận trung tính → nêu dữ kiện đúng đã duyệt → giải đáp nỗi lo. Không tranh cãi, không nói khách sai, không tự dùng 'tùy cơ địa' nếu khách không hỏi cam kết tuyệt đối.",
-    "OUTPUT đã được API ràng buộc bằng Structured Outputs. Điền đủ schema, không đổi tên trường. draftReply là lời khách sẽ thấy; mọi trường khác là dữ liệu nội bộ.",
+    "OUTPUT đã được API ràng buộc bằng Structured Outputs. Điền đủ schema, không đổi tên trường. answeredQuestions/newAngle/rejectedArguments/nextStep là kế hoạch kiểm chứng ngắn, không phải chuỗi suy nghĩ. draftReply là lời khách sẽ thấy; mọi trường khác là dữ liệu nội bộ.",
+    "CTA: chỉ đặt câu hỏi hoặc lời mời tiếp theo khi nextStep là ask_discovery, offer_guidance hoặc collect_order. Với answer_only/none/handoff, kết thúc sau nội dung cần trả lời; workflow không được tự chèn CTA.",
     `SCHEMA CONTRACT: ${compactSemanticSchema}`,
     "Ví dụ liên quan tới tin hiện tại:",
     ...compactExamplesFor(input.customerMessage, input.state),
     `STATE: ${JSON.stringify(state)}`,
-    `ARGUMENT_MEMORY: ${JSON.stringify(promptArgumentMemory(input.state))}`,
+    `CONVERSATION_MEMORY: ${JSON.stringify(promptArgumentMemory(input.state))}`,
     `KNOWLEDGE: ${JSON.stringify(input.knowledge ?? [])}`,
     `HISTORY: ${JSON.stringify(promptConversationMemory(input.state))}`,
     `MESSAGE: ${JSON.stringify(input.customerMessage)}`,
@@ -1626,7 +1629,7 @@ function isGroundedPendingOrderFieldInterpretation(
 }
 
 const compactSemanticSchema =
-  '{"summary":"string","skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"stop_bot|start_customer_care|handoff_to_human|answer_question|record_fact|select_quantity|update_order|continue_order_collection|pause_order|decline_purchase","topic":"string?","field":"string?","value":"unknown?","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"quantity":1,"issue":"string?","reason":"string?","confidence":0.95,"evidence":["string"]}],"uncertainties":["string"],"knowledgeIds":["knowledge-id"],"knowledgeQueries":["truy vấn chuẩn hóa không chứa PII"],"unsupportedQuestions":["phần chưa có dữ liệu"],"groundingConfidence":0.95,"draftReply":"string","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":"boolean?","confidence":0.95,"needsClarification":false,"age":"number?","evidence":["string"],"asksDirectAnswer":true,"priceFromVnd":"number?","priceToVnd":"number?","discountAmountVnd":"number?","workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}';
+  '{"summary":"string","skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"stop_bot|start_customer_care|handoff_to_human|answer_question|record_fact|select_quantity|update_order|continue_order_collection|pause_order|decline_purchase","topic":"string?","field":"string?","value":"unknown?","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"quantity":1,"issue":"string?","reason":"string?","confidence":0.95,"evidence":["string"]}],"uncertainties":["string"],"knowledgeIds":["knowledge-id"],"knowledgeQueries":["truy vấn chuẩn hóa không chứa PII"],"unsupportedQuestions":["phần chưa có dữ liệu"],"answeredQuestions":["ý đã trả lời"],"newAngle":"duration_or_cost|mechanism|usage|evidence|authenticity|after_sales|null","rejectedArguments":["duration_or_cost|mechanism|usage|evidence|authenticity|after_sales"],"nextStep":"answer_only|ask_discovery|offer_guidance|collect_order|handoff|none","groundingConfidence":0.95,"draftReply":"string","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":"boolean?","confidence":0.95,"needsClarification":false,"age":"number?","evidence":["string"],"asksDirectAnswer":true,"priceFromVnd":"number?","priceToVnd":"number?","discountAmountVnd":"number?","workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}';
 
 function promptConversationMemory(state: DemoChatState): DemoChatState["recentTurns"] {
   return state.recentTurns.slice(-10).map((turn) => ({
@@ -1640,8 +1643,17 @@ type PromptArgumentId =
 
 function promptArgumentMemory(state: DemoChatState): {
   currentGoal: string | null;
+  activeSubject: string | null;
   usedArguments: PromptArgumentId[];
   rejectedArguments: PromptArgumentId[];
+  answeredQuestions: string[];
+  openQuestions: string[];
+  orderDraft: {
+    selectedQuantity: number | null;
+    missingFields: string[];
+    flowStatus: string | null;
+    lastChangedFields: string[];
+  };
   latestAssistantTurn: string | null;
 } {
   const recent = state.recentTurns.slice(-10);
@@ -1653,8 +1665,8 @@ function promptArgumentMemory(state: DemoChatState): {
     .slice(-2)
     .map((turn) => normalizePromptText(turn.text))
     .join(" ");
-  const usedArguments = new Set<PromptArgumentId>();
-  const rejectedArguments = new Set<PromptArgumentId>();
+  const usedArguments = new Set<PromptArgumentId>(state.conversationMemory?.usedArguments ?? []);
+  const rejectedArguments = new Set<PromptArgumentId>(state.conversationMemory?.rejectedArguments ?? []);
 
   for (const text of assistantText) {
     if (/3\s*[-–]?\s*4\s*thang|chi phi|tinh ra|thoi gian dung/u.test(text)) {
@@ -1682,9 +1694,30 @@ function promptArgumentMemory(state: DemoChatState): {
 
   const latestAssistantTurn = recent.filter((turn) => turn.role === "assistant").at(-1)?.text ?? null;
   return {
-    currentGoal: state.pendingAction ?? state.pendingQuestionTopic ?? state.consultationStage ?? null,
+    currentGoal:
+      state.conversationMemory?.currentGoal ??
+      state.pendingAction ??
+      state.pendingQuestionTopic ??
+      state.consultationStage ??
+      null,
+    activeSubject: state.conversationMemory?.activeSubject ?? null,
     usedArguments: [...usedArguments],
     rejectedArguments: [...rejectedArguments],
+    answeredQuestions: [
+      ...new Set([...(state.conversationMemory?.answeredQuestions ?? []), ...state.answeredTopics]),
+    ].slice(-12),
+    openQuestions: [
+      ...new Set([
+        ...(state.conversationMemory?.openQuestions ?? []),
+        ...(state.pendingQuestionTopic ? [state.pendingQuestionTopic] : []),
+      ]),
+    ].slice(-8),
+    orderDraft: {
+      selectedQuantity: state.selectedQuantity ?? null,
+      missingFields: [...state.orderMissing],
+      flowStatus: state.orderFlowStatus ?? null,
+      lastChangedFields: [...(state.orderTransactionTrace?.changedFields ?? [])],
+    },
     latestAssistantTurn: latestAssistantTurn ? redactPromptPii(latestAssistantTurn).slice(0, 300) : null,
   };
 }
@@ -1855,6 +1888,44 @@ export function parseSemanticUnderstanding(raw: string): SemanticUnderstanding {
       .filter(Boolean)
       .slice(0, 5);
     if (unsupportedQuestions.length > 0) result.unsupportedQuestions = unsupportedQuestions;
+  }
+  if (Array.isArray(parsed.answeredQuestions)) {
+    const answeredQuestions = parsed.answeredQuestions
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    if (answeredQuestions.length > 0) result.answeredQuestions = [...new Set(answeredQuestions)];
+  }
+  const newAngles: readonly SemanticNewAngle[] = [
+    "duration_or_cost",
+    "mechanism",
+    "usage",
+    "evidence",
+    "authenticity",
+    "after_sales",
+  ];
+  if (newAngles.includes(parsed.newAngle as SemanticNewAngle)) {
+    result.newAngle = parsed.newAngle as SemanticNewAngle;
+  }
+  if (Array.isArray(parsed.rejectedArguments)) {
+    const rejectedArguments = parsed.rejectedArguments.filter((item): item is SemanticNewAngle =>
+      newAngles.includes(item as SemanticNewAngle),
+    );
+    if (rejectedArguments.length > 0) {
+      result.rejectedArguments = [...new Set(rejectedArguments)].slice(0, 6);
+    }
+  }
+  const nextSteps: readonly SemanticNextStep[] = [
+    "answer_only",
+    "ask_discovery",
+    "offer_guidance",
+    "collect_order",
+    "handoff",
+    "none",
+  ];
+  if (nextSteps.includes(parsed.nextStep as SemanticNextStep)) {
+    result.nextStep = parsed.nextStep as SemanticNextStep;
   }
   if (validConfidence(parsed.groundingConfidence)) {
     result.groundingConfidence = parsed.groundingConfidence;
@@ -2678,8 +2749,10 @@ function resolveProviderMode(value: string | undefined, apiKey: string | undefin
 }
 
 function resolvePromptProfile(value: string | undefined): LlmPromptProfile {
-  const normalized = value?.trim().toLocaleLowerCase("en") || "legacy";
-  if (normalized === "legacy" || normalized === "compact") return normalized;
+  const normalized = value?.trim().toLocaleLowerCase("en") || "compact";
+  // Legacy remains available only through the diagnostics helper for prompt-size
+  // comparisons. Runtime always uses the compact, retrieval-driven profile.
+  if (normalized === "legacy" || normalized === "compact") return "compact";
   throw new Error("LLM_PROMPT_PROFILE phải là legacy hoặc compact");
 }
 

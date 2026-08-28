@@ -10,6 +10,8 @@ import {
   type PrimarySymptom,
   type SemanticTopic,
   type SemanticUnderstanding,
+  type SemanticNewAngle,
+  type SemanticNextStep,
 } from "../domain/consultation.js";
 import {
   resolveConversationDecision,
@@ -117,6 +119,17 @@ type DemoSession = {
   responseGovernorTruncated: boolean;
   customerProfile: CustomerProfileMemory;
   locationMemory: LocationMemory;
+  conversationMemory: ConversationMemory;
+};
+
+export type ConversationMemory = {
+  currentGoal?: string;
+  activeSubject?: "customer" | "child" | "product" | "order";
+  usedArguments: SemanticNewAngle[];
+  rejectedArguments: SemanticNewAngle[];
+  answeredQuestions: string[];
+  openQuestions: string[];
+  nextStep?: SemanticNextStep;
 };
 
 export type CustomerProfileMemory = {
@@ -199,6 +212,7 @@ export type DemoChatState = {
   responseGovernorTruncated: boolean;
   customerProfile?: CustomerProfileMemory;
   locationMemory?: LocationMemory;
+  conversationMemory?: ConversationMemory;
 };
 
 export type DemoChatResponse = {
@@ -260,6 +274,7 @@ export class DemoChatService {
 
     if (isReset(text)) return this.reset(session.id);
     rememberTurn(session, { role: "user", text: raw });
+    rememberSemanticPlan(session, semantic);
     session.answeredTopics = [
       ...new Set([
         ...session.answeredTopics,
@@ -298,8 +313,8 @@ export class DemoChatService {
     );
     const semanticAuthorityReady = Boolean(
       semanticRoutingReady &&
-        (semantic.confidence ?? 0) >= 0.85 &&
-        hasGroundedSemanticEvidence(raw, semantic),
+      (semantic.confidence ?? 0) >= 0.85 &&
+      hasGroundedSemanticEvidence(raw, semantic),
     );
     const protectedApplicationConcern =
       isApplicationFeelOrClothingConcern(text) && !isPriceAndShippingPolicyQuestion(text);
@@ -381,9 +396,9 @@ export class DemoChatService {
       applySemanticOrderUpdates(session, actionPlan.accepted, raw);
     const exactRouteIsHardGuard = Boolean(
       reconcilerExactIntent &&
-        (isInternalSystemProbe(text) ||
-          isOutOfScopeAssistantProbe(text) ||
-          (!semanticAuthorityReady && protectedKnownAnswerConcern)),
+      (isInternalSystemProbe(text) ||
+        isOutOfScopeAssistantProbe(text) ||
+        (!semanticAuthorityReady && protectedKnownAnswerConcern)),
     );
     const effectiveExactIntent = multiActionEnabled
       ? exactRouteIsHardGuard
@@ -2428,6 +2443,14 @@ export class DemoChatService {
         ...(candidate.locationMemory ?? {}),
         history: [...(candidate.locationMemory?.history ?? [])].slice(-8),
       },
+      conversationMemory: {
+        ...base.conversationMemory,
+        ...(candidate.conversationMemory ?? {}),
+        usedArguments: [...(candidate.conversationMemory?.usedArguments ?? [])].slice(-8),
+        rejectedArguments: [...(candidate.conversationMemory?.rejectedArguments ?? [])].slice(-8),
+        answeredQuestions: [...(candidate.conversationMemory?.answeredQuestions ?? [])].slice(-12),
+        openQuestions: [...(candidate.conversationMemory?.openQuestions ?? [])].slice(-8),
+      },
       answeredTopics: [...(candidate.answeredTopics ?? [])],
       askedTopics: [...(candidate.askedTopics ?? [])],
     };
@@ -2605,6 +2628,13 @@ function stateOf(session: DemoSession): DemoChatState {
       ...session.locationMemory,
       history: [...(session.locationMemory.history ?? [])],
     },
+    conversationMemory: {
+      ...session.conversationMemory,
+      usedArguments: [...session.conversationMemory.usedArguments],
+      rejectedArguments: [...session.conversationMemory.rejectedArguments],
+      answeredQuestions: [...session.conversationMemory.answeredQuestions],
+      openQuestions: [...session.conversationMemory.openQuestions],
+    },
   };
 }
 
@@ -2693,6 +2723,12 @@ function newSession(id: string, context: DemoChatContext = {}): DemoSession {
     responseGovernorTruncated: false,
     customerProfile: {},
     locationMemory: {},
+    conversationMemory: {
+      usedArguments: [],
+      rejectedArguments: [],
+      answeredQuestions: [],
+      openQuestions: [],
+    },
   };
 }
 
@@ -2931,6 +2967,44 @@ function extractAgeMention(normalizedText: string, allowBareNumber = false): num
 function rememberTurn(session: DemoSession, turn: { role: "user" | "assistant"; text: string }): void {
   session.history.push(turn);
   if (session.history.length > 12) session.history.splice(0, session.history.length - 12);
+}
+
+function rememberSemanticPlan(session: DemoSession, semantic: SemanticUnderstanding): void {
+  if (semantic.intent) session.conversationMemory.currentGoal = semantic.intent;
+  if (semantic.subject) session.conversationMemory.activeSubject = semantic.subject;
+  if (semantic.nextStep) session.conversationMemory.nextStep = semantic.nextStep;
+  if (semantic.newAngle) {
+    session.conversationMemory.usedArguments = [
+      ...new Set([...session.conversationMemory.usedArguments, semantic.newAngle]),
+    ].slice(-8);
+  }
+  if (semantic.rejectedArguments?.length) {
+    session.conversationMemory.rejectedArguments = [
+      ...new Set([...session.conversationMemory.rejectedArguments, ...semantic.rejectedArguments]),
+    ].slice(-8);
+  }
+  if (semantic.answeredQuestions?.length) {
+    session.conversationMemory.answeredQuestions = [
+      ...new Set([
+        ...session.conversationMemory.answeredQuestions,
+        ...semantic.answeredQuestions.map((item) => item.trim()).filter(Boolean),
+      ]),
+    ].slice(-12);
+  }
+  if (semantic.unsupportedQuestions?.length) {
+    session.conversationMemory.openQuestions = [
+      ...new Set([
+        ...session.conversationMemory.openQuestions,
+        ...semantic.unsupportedQuestions.map((item) => item.trim()).filter(Boolean),
+      ]),
+    ].slice(-8);
+  }
+  if (semantic.answeredQuestions?.length && session.conversationMemory.openQuestions.length) {
+    const answered = new Set(semantic.answeredQuestions.map((item) => normalize(item)));
+    session.conversationMemory.openQuestions = session.conversationMemory.openQuestions.filter(
+      (item) => !answered.has(normalize(item)),
+    );
+  }
 }
 
 function groundSemanticSlots(session: DemoSession, proposed: ConsultationSlots): ConsultationSlots {
@@ -5274,9 +5348,7 @@ function extractConsultationSlots(
   const odor = /\bmui\b|mui co the|hoi nach/.test(text);
   const deniesSweat = /(?:khong|ko|k)\s+(?:(?:bi|co)\s+)?(?:uot|uot ao|o ao|mo hoi)/.test(text);
   const deniesOdor = /(?:khong|ko|k)\s+(?:(?:bi|co)\s+)?(?:mui|mui co the|hoi nach)/.test(text);
-  const choosesBothSymptoms = /^(?:ca\s*(?:hai|2)|hai cai|2 cai|deu bi|bi ca\s*(?:hai|2))$/u.test(
-    text,
-  );
+  const choosesBothSymptoms = /^(?:ca\s*(?:hai|2)|hai cai|2 cai|deu bi|bi ca\s*(?:hai|2))$/u.test(text);
   if (state.stage === "S2.sweat" && !isUnknownAnswer(text)) {
     if (deniesSweat || isNoAnswer(text)) slots.sweatPresent = false;
     else if (sweat && odor) slots.primarySymptom = "both";
@@ -6490,16 +6562,10 @@ function canonicalizeLegacyAddress(value: string): string {
     ["hai ba trung", "quan hai ba trung"].includes(normalizeForComparison(segment)),
   );
   const hasLinhDam = /(?:^| )linh dam(?: |$)/.test(normalizedValue);
-  if (
-    hasLinhDam &&
-    !segments.some((segment) => normalizeForComparison(segment) === "phuong hoang liet")
-  ) {
+  if (hasLinhDam && !segments.some((segment) => normalizeForComparison(segment) === "phuong hoang liet")) {
     segments.push("Phường Hoàng Liệt");
   }
-  if (
-    hasLinhDam &&
-    !segments.some((segment) => normalizeForComparison(segment) === "quan hoang mai")
-  ) {
+  if (hasLinhDam && !segments.some((segment) => normalizeForComparison(segment) === "quan hoang mai")) {
     segments.push("Quận Hoàng Mai");
   }
   if (hasDinhCong && !segments.some((segment) => normalizeForComparison(segment) === "phuong dinh cong")) {
@@ -6656,7 +6722,9 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
       } ạ.`,
       session.order.phone ? `SĐT: ${session.order.phone}.` : undefined,
       session.order.legacyAddress ? `Giao tới: ${session.order.legacyAddress}.` : undefined,
-      missing.length > 0 ? `Em còn thiếu ${missing.join(", ")}; khi tiện mình gửi bổ sung giúp em ạ.` : undefined,
+      missing.length > 0
+        ? `Em còn thiếu ${missing.join(", ")}; khi tiện mình gửi bổ sung giúp em ạ.`
+        : undefined,
       /\b(?:di hop|vao hop|hop)\b/.test(normalize(raw)) ? "Chúc mình họp thuận lợi ạ." : undefined,
     ].filter((item): item is string => Boolean(item));
     return recap.join("\n");

@@ -12,6 +12,10 @@
     "knowledgeIds",
     "knowledgeQueries",
     "unsupportedQuestions",
+    "answeredQuestions",
+    "newAngle",
+    "rejectedArguments",
+    "nextStep",
     "groundingConfidence",
     "draftReply",
     "confidence",
@@ -190,6 +194,27 @@
       "type": "array",
       "maxItems": 5,
       "items": { "type": "string" }
+    },
+    "answeredQuestions": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "type": "string" }
+    },
+    "newAngle": {
+      "type": ["string", "null"],
+      "enum": ["duration_or_cost", "mechanism", "usage", "evidence", "authenticity", "after_sales", null]
+    },
+    "rejectedArguments": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "enum": ["duration_or_cost", "mechanism", "usage", "evidence", "authenticity", "after_sales"]
+      }
+    },
+    "nextStep": {
+      "type": "string",
+      "enum": ["answer_only", "ask_discovery", "offer_guidance", "collect_order", "handoff", "none"]
     },
     "groundingConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
     "draftReply": { "type": "string", "maxLength": 1000 },

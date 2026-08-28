@@ -337,9 +337,17 @@ test("OpenAI-compatible runner gửi Responses request tới OPENAI_BASE_URL", a
     ).includes("update_order"),
     true,
   );
+  const schema = format?.schema as {
+    required?: string[];
+    properties?: Record<string, unknown>;
+  };
+  for (const field of ["answeredQuestions", "newAngle", "rejectedArguments", "nextStep"]) {
+    assert.equal(schema.required?.includes(field), true);
+    assert.equal(Boolean(schema.properties?.[field]), true);
+  }
 });
 
-test("prompt compact là profile riêng và production vẫn mặc định legacy", () => {
+test("prompt compact là profile production mặc định", () => {
   const production = CodexLlmBridge.fromEnvironment({
     LLM_PROVIDER: "codex",
     LLM_ENABLED: "true",
@@ -351,9 +359,16 @@ test("prompt compact là profile riêng và production vẫn mặc định legac
     CODEX_LLM_MODEL: "gpt-codex-test",
     LLM_PROMPT_PROFILE: "compact",
   });
+  const deprecatedLegacy = CodexLlmBridge.fromEnvironment({
+    LLM_PROVIDER: "codex",
+    LLM_ENABLED: "true",
+    CODEX_LLM_MODEL: "gpt-codex-test",
+    LLM_PROMPT_PROFILE: "legacy",
+  });
 
-  assert.equal(production.promptProfile, "legacy");
+  assert.equal(production.promptProfile, "compact");
   assert.equal(shadow.promptProfile, "compact");
+  assert.equal(deprecatedLegacy.promptProfile, "compact");
 });
 
 test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng hành động và state", () => {
@@ -395,6 +410,48 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
   assert.match(compact, /MESSAGE nhiều dòng là các tin liên tiếp/u);
   assert.match(compact, /Bất biến số lượng/u);
   assert.match(compact, /chai\/lọ/u);
+  assert.match(compact, /CONVERSATION_MEMORY/u);
+  assert.match(compact, /answeredQuestions\/newAngle\/rejectedArguments\/nextStep/u);
+  assert.match(compact, /chỉ đặt câu hỏi hoặc lời mời tiếp theo khi nextStep/u);
+  assert.doesNotMatch(compact, /SỰ THẬT CỐT LÕI/u);
+});
+
+test("prompt compact gửi bộ nhớ ngữ nghĩa và trạng thái đơn có cấu trúc", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "Nivea cũng dùng lâu thế thì khác gì?",
+      state: {
+        ...state,
+        selectedQuantity: 1,
+        orderFlowStatus: "paused",
+        orderMissing: ["phone"],
+        orderTransactionTrace: {
+          acceptedActions: [],
+          changedFields: ["quantity"],
+          conflicts: [],
+        },
+        conversationMemory: {
+          currentGoal: "resolve_price_objection",
+          activeSubject: "customer",
+          usedArguments: ["duration_or_cost"],
+          rejectedArguments: ["duration_or_cost"],
+          answeredQuestions: ["price_comparison"],
+          openQuestions: ["difference_in_mechanism"],
+          nextStep: "ask_discovery",
+        },
+      },
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /"currentGoal":"resolve_price_objection"/u);
+  assert.match(prompt, /"activeSubject":"customer"/u);
+  assert.match(prompt, /"rejectedArguments":\["duration_or_cost"\]/u);
+  assert.match(prompt, /"openQuestions":\["difference_in_mechanism"\]/u);
+  assert.match(prompt, /"selectedQuantity":1/u);
+  assert.match(prompt, /"missingFields":\["phone"\]/u);
+  assert.match(prompt, /"lastChangedFields":\["quantity"\]/u);
 });
 
 test("prompt compact buộc LLM phát hành action số lượng cho tiếng địa phương và lỗi gõ", () => {
@@ -1157,9 +1214,9 @@ test("Routing Agent nhận catalog skill nhưng vẫn chỉ gọi model một l�
   assert.match(prompt, /Chọn đúng một skill chính/);
   assert.match(prompt, /không mô phỏng nhiều agent hoặc nhiều bước gọi model/);
   assert.match(prompt, /trả lời đúng cực tính ngay câu đầu/);
-  assert.match(prompt, /xác định đúng sản phẩm gây ra sự cố/);
-  assert.match(prompt, /trả lời trực tiếp → giải thích đúng cơ chế liên quan/);
-  assert.match(prompt, /Không tự dùng 'tùy cơ địa'/);
+  assert.match(prompt, /xác định đúng sản phẩm gây sự cố/iu);
+  assert.match(prompt, /trả lời đúng cực tính ngay câu đầu/iu);
+  assert.match(prompt, /không tự dùng 'tùy cơ địa'/iu);
 });
 
 test("single-pass draft bị loại nếu làm mất chỉ dẫn chuyển người", () => {
@@ -1686,6 +1743,22 @@ test("semantic parser nhận intent so sánh sản phẩm", () => {
   assert.equal(result.asksDirectAnswer, true);
 });
 
+test("semantic parser nhận kế hoạch kiểm chứng ngắn, không phải chain-of-thought", () => {
+  const result = parseSemanticUnderstanding(
+    JSON.stringify({
+      answeredQuestions: ["so sánh giá", "cơ chế"],
+      newAngle: "mechanism",
+      rejectedArguments: ["duration_or_cost"],
+      nextStep: "ask_discovery",
+    }),
+  );
+
+  assert.deepEqual(result.answeredQuestions, ["so sánh giá", "cơ chế"]);
+  assert.equal(result.newAngle, "mechanism");
+  assert.deepEqual(result.rejectedArguments, ["duration_or_cost"]);
+  assert.equal(result.nextStep, "ask_discovery");
+});
+
 test("Codex composer fallback nếu làm mất mốc dùng giãn cách", async () => {
   const bridge = new CodexLlmBridge({
     enabled: true,
@@ -1734,7 +1807,7 @@ test("prompt hiểu ý nhận các lượt chat gần nhất", async () => {
   });
   assert.match(prompt, /Mình làm cả ngày và sợ bị mùi/);
   assert.match(prompt, /usage_time/);
-  assert.match(prompt, /replyTo offer_price/);
+  assert.match(prompt, /CONVERSATION_MEMORY/);
 });
 
 test("semantic parser chỉ nhận giá trị nằm trong schema", () => {

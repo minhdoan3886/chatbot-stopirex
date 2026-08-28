@@ -90,6 +90,7 @@
           "quantity",
           "issue",
           "reason",
+          "fields",
           "confidence",
           "evidence"
         ],
@@ -103,6 +104,7 @@
               "answer_question",
               "record_fact",
               "select_quantity",
+              "update_order",
               "continue_order_collection",
               "pause_order",
               "decline_purchase"
@@ -144,10 +146,22 @@
               "delivery",
               "counterfeit",
               "negative_review",
+              "complaint",
               null
             ]
           },
           "reason": { "type": ["string", "null"] },
+          "fields": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["recipientName", "phone", "legacyAddress", "deliveryNote"],
+            "properties": {
+              "recipientName": { "type": ["string", "null"] },
+              "phone": { "type": ["string", "null"] },
+              "legacyAddress": { "type": ["string", "null"] },
+              "deliveryNote": { "type": ["string", "null"] }
+            }
+          },
           "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
           "evidence": {
             "type": "array",
@@ -178,7 +192,7 @@
       "items": { "type": "string" }
     },
     "groundingConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "draftReply": { "type": "string", "maxLength": 600 },
+    "draftReply": { "type": "string", "maxLength": 1000 },
     "topic": {
       "type": ["string", "null"],
       "enum": [

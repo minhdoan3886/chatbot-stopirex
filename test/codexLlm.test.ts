@@ -215,17 +215,11 @@ test("parser giữ nguồn knowledge, phần chưa hỗ trợ và độ tin cậ
 test("parser giữ truy vấn Knowledge do LLM chuẩn hóa và loại PII", () => {
   const parsed = parseSemanticUnderstanding(
     JSON.stringify({
-      knowledgeQueries: [
-        "an toàn cho da nhạy cảm 0983425566",
-        "kiểm tra hàng chính hãng",
-      ],
+      knowledgeQueries: ["an toàn cho da nhạy cảm 0983425566", "kiểm tra hàng chính hãng"],
     }),
   );
 
-  assert.deepEqual(parsed.knowledgeQueries, [
-    "an toàn cho da nhạy cảm",
-    "kiểm tra hàng chính hãng",
-  ]);
+  assert.deepEqual(parsed.knowledgeQueries, ["an toàn cho da nhạy cảm", "kiểm tra hàng chính hãng"]);
 });
 
 test("cấu hình auto ưu tiên OpenAI API khi có key", () => {
@@ -273,6 +267,7 @@ test("cấu hình hybrid cho phép tách timeout OpenAI và Codex dự phòng", 
 test("OpenAI-compatible runner gửi Responses request tới OPENAI_BASE_URL", async () => {
   let requestPath = "";
   let authorization = "";
+  let requestBody: Record<string, unknown> = {};
   const bridge = new CodexLlmBridge({
     enabled: true,
     provider: "openai",
@@ -285,6 +280,7 @@ test("OpenAI-compatible runner gửi Responses request tới OPENAI_BASE_URL", a
       const request = input instanceof Request ? input : new Request(input, init);
       requestPath = new URL(request.url).pathname;
       authorization = request.headers.get("authorization") ?? "";
+      requestBody = JSON.parse(await request.text()) as Record<string, unknown>;
       return Response.json({
         id: "resp_agentrouter_test",
         object: "response",
@@ -327,6 +323,20 @@ test("OpenAI-compatible runner gửi Responses request tới OPENAI_BASE_URL", a
   assert.equal(result.intent, "other");
   assert.equal(requestPath, "/v1/responses");
   assert.equal(authorization, "Bearer ak-test-not-a-real-key");
+  assert.equal((requestBody.text as { verbosity?: string }).verbosity, "low");
+  const format = (requestBody.text as { format?: Record<string, unknown> }).format;
+  assert.equal(format?.type, "json_schema");
+  assert.equal(format?.strict, true);
+  assert.equal(
+    (
+      (
+        format?.schema as {
+          properties?: { actions?: { items?: { properties?: { type?: { enum?: string[] } } } } };
+        }
+      ).properties?.actions?.items?.properties?.type?.enum ?? []
+    ).includes("update_order"),
+    true,
+  );
 });
 
 test("prompt compact là profile riêng và production vẫn mặc định legacy", () => {
@@ -1262,6 +1272,20 @@ test("single-pass chặn lời thoái thác khi khách không hỏi cam kết tu
   assert.equal(result.reply, baseReply);
 });
 
+test("production cho phép LLM giữ draft khi chỉ vi phạm guard giọng văn mềm", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "{}" });
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "Loại này có hiệu quả không?",
+    draftReply: "Dạ Stopirex hỗ trợ kiểm soát mồ hôi, nhưng hiệu quả tùy cơ địa và bên em không cam kết ạ.",
+    baseReply: "Dạ Stopirex hỗ trợ kiểm soát mồ hôi khi mình dùng đúng hướng dẫn ạ.",
+    state,
+    softStylePolicy: "warn",
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reason, "single_pass_draft_soft_warning:advisor_voice_guard");
+});
+
 test("single-pass chặn câu xưng hô lặp khó hiểu", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const composed = bridge.adoptInterpretedDraft({
@@ -1329,6 +1353,30 @@ test("prompt giữ 5 lượt hội thoại và che PII trước khi gửi LLM", 
   assert.match(prompt, /lượt-2/);
   assert.match(prompt, /\[SĐT ĐÃ ẨN\]/u);
   assert.doesNotMatch(prompt, /0987654321/);
+});
+
+test("prompt compact ghi nhớ luận điểm đã dùng và vừa bị khách phản bác", () => {
+  const prompt = buildInterpretPromptForDiagnostics(
+    {
+      customerMessage: "Lăn siêu thị cũng dùng 3-4 tháng mà có mấy chục nghìn thôi",
+      state: {
+        ...state,
+        recentTurns: [
+          {
+            role: "assistant",
+            text: "Một lọ Stopirex dùng khoảng 3-4 tháng nên tính theo thời gian sẽ dễ cân nhắc hơn ạ.",
+          },
+          { role: "user", text: "Lăn siêu thị cũng dùng 3-4 tháng mà có mấy chục nghìn thôi" },
+        ],
+      },
+      knowledge: [],
+    },
+    "compact",
+  );
+
+  assert.match(prompt, /"usedArguments":\["duration_or_cost"\]/u);
+  assert.match(prompt, /"rejectedArguments":\["duration_or_cost"\]/u);
+  assert.match(prompt, /Không lặp luận điểm đã dùng hoặc vừa bị khách phản bác/u);
 });
 
 test("handoff mềm về khuyến mãi không làm LLM bị bỏ qua ở lượt tư vấn sau", async () => {

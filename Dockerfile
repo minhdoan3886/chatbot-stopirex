@@ -12,6 +12,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/config ./config
 COPY --from=build /app/migrations ./migrations
 RUN mkdir -p /app/work/runtime && chown -R node:node /app
 USER node

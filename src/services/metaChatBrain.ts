@@ -16,6 +16,7 @@ import {
 } from "../domain/actionRollout.js";
 import type { SemanticTopic, SemanticUnderstanding } from "../domain/consultation.js";
 import type { SupportedOrderQuantity } from "../domain/conversationActions.js";
+import { conversationSkills } from "../domain/chatSkills.js";
 import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
 import {
@@ -274,6 +275,7 @@ export class MetaChatBrain {
           interpreted.knowledgeIds?.length &&
           interpreted.actions?.some((action) => action.type === "answer_question"),
         ),
+      softStylePolicy: "warn",
     });
     if (composed.status !== "enhanced" && interpreted.draftReply?.trim()) {
       composed = await this.llm.repairInterpretedDraft({
@@ -311,10 +313,7 @@ export class MetaChatBrain {
       const repaired = await this.llm.repairInterpretedDraft({
         customerMessage: input.text,
         rejectedDraft: composed.reply,
-        violations: [
-          `missing_topics:${coverage.missingTopics.join(",")}`,
-          coverage.reason,
-        ],
+        violations: [`missing_topics:${coverage.missingTopics.join(",")}`, coverage.reason],
         baseReply: base.reply,
         state: base.state,
         actions: base.state.decisionTrace?.actionPlan?.accepted ?? [],
@@ -342,7 +341,19 @@ export class MetaChatBrain {
         }
       }
     }
-    if (!coverage.complete) {
+    if (!coverage.complete && composed.status === "enhanced") {
+      // Coverage is advisory after the LLM has already passed all hard claim,
+      // commerce, action and state guards. Do not replace a relevant answer
+      // with a generic workflow sentence merely because a lexical topic check
+      // could not prove every clause was covered.
+      this.logger?.log("warn", "question_coverage_soft_warning", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        requiredTopics: coverage.requiredTopics,
+        missingTopics: coverage.missingTopics,
+        reason: coverage.reason,
+      });
+    }
+    if (!coverage.complete && composed.status !== "enhanced") {
       const groundedBaseCoverage = assessQuestionCoverage({
         customerMessage: input.text,
         interpretationStatus,
@@ -455,13 +466,17 @@ export class MetaChatBrain {
         ]),
       ];
     }
+    const activeSkill = base.state.activeSkill ? conversationSkills[base.state.activeSkill] : undefined;
+    const responseCharacterBudget = activeSkill?.maxCharacters ?? 360;
+    const responseBubbleBudget = activeSkill?.maxBubbles ?? 2;
     let governed = governCustomerResponse({
       replies: [composed.reply],
       answeredTopics: base.state.answeredTopics,
       previouslyAskedTopics: base.state.askedTopics,
-      maxCharacters: 360,
-      maxBubbles: 2,
+      maxCharacters: responseCharacterBudget,
+      maxBubbles: responseBubbleBudget,
       preserveFullText:
+        responseCharacterBudget > 360 ||
         base.state.mode === "care" ||
         Boolean(base.state.selectedQuantity) ||
         Boolean(base.state.orderId) ||

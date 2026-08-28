@@ -398,7 +398,14 @@ export class CodexLlmBridge {
     const cached = cacheAllowed ? this.cache.get(prompt) : undefined;
     if (cached) {
       try {
-        return this.interpretResult(parseSemanticUnderstanding(cached), "interpreted", startedAt, "cache");
+        const understanding = parseSemanticUnderstanding(cached);
+        const repaired = await this.reinterpretPendingOrderFieldIfNeeded(input, understanding);
+        return this.interpretResult(
+          repaired.understanding,
+          "interpreted",
+          startedAt,
+          repaired.reinterpreted ? "pending_order_field_reinterpreted" : "cache",
+        );
       } catch {
         this.cache.delete(prompt);
       }
@@ -408,7 +415,13 @@ export class CodexLlmBridge {
       const raw = (await this.run(prompt, "interpret")).trim();
       const understanding = parseSemanticUnderstanding(raw);
       if (cacheAllowed) remember(this.cache, prompt, raw);
-      return this.interpretResult(understanding, "interpreted", startedAt);
+      const repaired = await this.reinterpretPendingOrderFieldIfNeeded(input, understanding);
+      return this.interpretResult(
+        repaired.understanding,
+        "interpreted",
+        startedAt,
+        repaired.reinterpreted ? "pending_order_field_reinterpreted" : undefined,
+      );
     } catch (error) {
       return this.interpretResult({ slots: {} }, "fallback", startedAt, llmFailureReason(error));
     }
@@ -637,6 +650,31 @@ export class CodexLlmBridge {
       model: this.model,
       provider: this.provider,
     };
+  }
+
+  private async reinterpretPendingOrderFieldIfNeeded(
+    input: {
+      customerMessage: string;
+      state: DemoChatState;
+      knowledge?: readonly ApprovedKnowledgeContext[];
+    },
+    understanding: SemanticUnderstanding,
+  ): Promise<{ understanding: SemanticUnderstanding; reinterpreted: boolean }> {
+    if (!needsPendingOrderFieldReinterpretation(input, understanding)) {
+      return { understanding, reinterpreted: false };
+    }
+    try {
+      const raw = (
+        await this.run(buildPendingOrderFieldReinterpretPrompt(input, understanding), "interpret")
+      ).trim();
+      const repaired = parseSemanticUnderstanding(raw);
+      if (!isGroundedPendingOrderFieldInterpretation(input, repaired)) {
+        return { understanding, reinterpreted: false };
+      }
+      return { understanding: repaired, reinterpreted: true };
+    } catch {
+      return { understanding, reinterpreted: false };
+    }
   }
 
   private interpretResult(
@@ -1489,6 +1527,91 @@ function buildCompactInterpretPrompt(input: {
   ].join("\n");
 }
 
+function buildPendingOrderFieldReinterpretPrompt(
+  input: {
+    customerMessage: string;
+    state: DemoChatState;
+  },
+  previous: SemanticUnderstanding,
+): string {
+  return [
+    "Bạn là LLM phân xử cuối cho một lượt đang thu thông tin đơn Stopirex. Không dùng công cụ.",
+    "Trả về duy nhất một JSON object đúng compactSemanticSchema, không markdown và không giải thích.",
+    "Lượt phân tích trước có thể đã nhầm một câu trả lời ngắn thành câu hỏi chưa có Knowledge. Hãy đọc câu bot gần nhất trong HISTORY và các trường còn thiếu trong STATE trước khi quyết định.",
+    "Nếu bot vừa xin một trường còn thiếu và MESSAGE là câu trả lời hợp lý cho đúng trường đó, đây là dữ liệu đơn: intent=order_support, topic=order, asksDirectAnswer=false, needsClarification=false, unsupportedQuestions=[], actions phải có update_order với đúng giá trị nguyên văn và continue_order_collection. Không tạo answer_question, pause_order hoặc handoff.",
+    "Tên người nhận không bắt buộc phải đủ họ tên. Khi recipientName còn thiếu, một tên gọi một từ như 'Tài', 'Nhung', 'Minh' vẫn là recipientName hợp lệ nếu bot vừa xin tên. Không được coi tên đó là kiến thức sản phẩm chưa xác nhận.",
+    "SĐT chỉ ghi khi có đúng 10 chữ số bắt đầu bằng 0. Địa chỉ chỉ ghi phần có nguyên văn trong MESSAGE. Không suy đoán dữ liệu không có.",
+    "Nếu MESSAGE thực sự là câu hỏi hoặc đổi chủ đề, giữ đúng ý mới và không ép về đơn hàng. Chỉ sửa kết quả cũ khi lịch sử và trường còn thiếu tạo ra một cách hiểu rõ ràng.",
+    "Không cần draftReply cho lượt chỉ bổ sung dữ liệu đơn; workflow sẽ phản hồi từ state đã cập nhật.",
+    `SCHEMA: ${compactSemanticSchema}`,
+    `STATE: ${JSON.stringify({
+      selectedQuantity: input.state.selectedQuantity ?? null,
+      orderMissing: input.state.orderMissing,
+      pendingAction: input.state.pendingAction ?? null,
+      pipeline: input.state.pipeline,
+    })}`,
+    `HISTORY: ${JSON.stringify(promptConversationMemory(input.state))}`,
+    `PREVIOUS_INTERPRETATION: ${JSON.stringify({
+      intent: previous.intent ?? null,
+      topic: previous.topic ?? null,
+      actions: previous.actions ?? [],
+      unsupportedQuestions: previous.unsupportedQuestions ?? [],
+      needsClarification: previous.needsClarification ?? false,
+    })}`,
+    `MESSAGE: ${JSON.stringify(input.customerMessage)}`,
+  ].join("\n");
+}
+
+function needsPendingOrderFieldReinterpretation(
+  input: { customerMessage: string; state: DemoChatState },
+  understanding: SemanticUnderstanding,
+): boolean {
+  if (!input.state.selectedQuantity || input.state.orderMissing.length === 0) return false;
+  if (/[?？]/u.test(input.customerMessage)) return false;
+  const alreadyOwnsOrder =
+    (understanding.intent === "buying" || understanding.intent === "order_support") &&
+    understanding.actions?.some(
+      (action) => action.type === "update_order" || action.type === "continue_order_collection",
+    );
+  if (alreadyOwnsOrder) return false;
+  if (understanding.actions?.some((action) => action.type === "answer_question")) return false;
+  return Boolean(
+    understanding.intent === "knowledge_unknown" ||
+      understanding.intent === "other" ||
+      !understanding.intent ||
+      understanding.needsClarification,
+  );
+}
+
+function isGroundedPendingOrderFieldInterpretation(
+  input: { customerMessage: string; state: DemoChatState },
+  understanding: SemanticUnderstanding,
+): boolean {
+  if (understanding.intent !== "buying" && understanding.intent !== "order_support") return false;
+  if (understanding.needsClarification || understanding.unsupportedQuestions?.length) return false;
+  const update = understanding.actions?.find((action) => action.type === "update_order");
+  if (!update || update.type !== "update_order") return false;
+  const missing = new Set(input.state.orderMissing);
+  const normalizedMessage = input.customerMessage
+    .toLocaleLowerCase("vi-VN")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/gu, "d")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return Object.entries(update.fields).some(([field, value]) => {
+    if (!missing.has(field)) return false;
+    const normalizedValue = value
+      .toLocaleLowerCase("vi-VN")
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .replace(/đ/gu, "d")
+      .replace(/\s+/gu, " ")
+      .trim();
+    return Boolean(normalizedValue && normalizedMessage.includes(normalizedValue));
+  });
+}
+
 const compactSemanticSchema =
   '{"summary":"string","skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"stop_bot|start_customer_care|handoff_to_human|answer_question|record_fact|select_quantity|update_order|continue_order_collection|pause_order|decline_purchase","topic":"string?","field":"string?","value":"unknown?","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"quantity":1,"issue":"string?","reason":"string?","confidence":0.95,"evidence":["string"]}],"uncertainties":["string"],"knowledgeIds":["knowledge-id"],"knowledgeQueries":["truy vấn chuẩn hóa không chứa PII"],"unsupportedQuestions":["phần chưa có dữ liệu"],"groundingConfidence":0.95,"draftReply":"string","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":"boolean?","confidence":0.95,"needsClarification":false,"age":"number?","evidence":["string"],"asksDirectAnswer":true,"priceFromVnd":"number?","priceToVnd":"number?","discountAmountVnd":"number?","workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}';
 
@@ -1580,6 +1703,11 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
     state.orderMissing.length > 0 ||
     /\b(?:lay|mua|chot|gui|lo|combo|dia chi|sdt|so dien thoai|giao|nhan hang)\b/.test(text)
   ) {
+    if (state.orderMissing.includes("recipientName")) {
+      add(
+        "Bot vừa xin tên người nhận và STATE.orderMissing có recipientName: MESSAGE một tên ngắn như 'tài', 'Minh' hoặc 'Hồng Nhung' → order_support + update_order.fields.recipientName đúng nguyên văn + continue_order_collection; asksDirectAnswer=false, unsupportedQuestions=[]; tên một từ vẫn hợp lệ và không phải knowledge_unknown.",
+      );
+    }
     add(
       "'nếu đúng như lời nói, cho mình 1 lọ' → answer_question + select_quantity(1) + continue_order_collection.",
       "'chốt giùm tui mọt chai nghen' → hiểu 'mọt chai' là cách viết sai của một sản phẩm; buying + select_quantity(1) + continue_order_collection, evidence giữ nguyên cả cụm khách viết.",

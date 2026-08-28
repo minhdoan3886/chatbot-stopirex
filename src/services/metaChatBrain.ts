@@ -667,7 +667,12 @@ function assessQuestionCoverage(input: {
     requiredSemanticTopics.length,
     requiredFactTopics.length,
     requiredTopics.length,
-    input.interpreted.unsupportedQuestions?.length ?? 0,
+    // Model output alone is not evidence that the customer asked a question.
+    // A short order-field answer such as "Tài" must not become a fake FAQ
+    // question and pause an otherwise valid order update.
+    explicitQuestionCount > 0 || requiredSemanticTopics.length > 0 || requiredFactTopics.length > 0
+      ? (input.interpreted.unsupportedQuestions?.length ?? 0)
+      : 0,
   );
   const missingTopics = [
     ...missingRequiredAnswerTopics(input.customerMessage, input.candidateReply),

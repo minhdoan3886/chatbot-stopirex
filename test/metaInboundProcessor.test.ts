@@ -1227,6 +1227,80 @@ test("Question Coverage Gate chặn thu đơn khi LLM timeout làm mất câu h�
   assert.doesNotMatch(response.reply, /tên người nhận|SĐT|địa chỉ trước sáp nhập/iu);
 });
 
+test("LLM tự phân xử lại tên một từ trong đơn đang thiếu người nhận", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "pending-order-single-word-recipient";
+  chat.chat(
+    sessionId,
+    "Chốt cho anh 1 lọ. Giao về số 10 Duy Tân, phường Dịch Vọng Hậu, Cầu Giấy, Hà Nội. SĐT 0988777666.",
+  );
+  assert.deepEqual(chat.peek(sessionId).orderMissing, ["recipientName"]);
+
+  let calls = 0;
+  let arbitrationPrompt = "";
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      calls += 1;
+      if (prompt.includes("LLM phân xử cuối cho một lượt đang thu thông tin đơn")) {
+        arbitrationPrompt = prompt;
+        return JSON.stringify({
+          intent: "order_support",
+          topic: "order",
+          asksDirectAnswer: false,
+          confidence: 0.99,
+          needsClarification: false,
+          actions: [
+            {
+              type: "update_order",
+              fields: { recipientName: "tài" },
+              confidence: 0.99,
+              evidence: ["tài"],
+            },
+            {
+              type: "continue_order_collection",
+              confidence: 0.99,
+              evidence: ["tài"],
+            },
+          ],
+          unsupportedQuestions: [],
+          slots: {},
+        });
+      }
+      return JSON.stringify({
+        intent: "knowledge_unknown",
+        topic: "order",
+        asksDirectAnswer: true,
+        confidence: 0.84,
+        needsClarification: false,
+        actions: [
+          {
+            type: "pause_order",
+            reason: "unknown",
+            confidence: 0.84,
+            evidence: ["tài"],
+          },
+        ],
+        unsupportedQuestions: ["tài"],
+        groundingConfidence: 0.84,
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({ sessionId, text: "tài" });
+
+  assert.equal(calls, 2);
+  assert.match(arbitrationPrompt, /orderMissing.*recipientName/isu);
+  assert.equal(response.state.orderDraft?.recipientName, "Tài");
+  assert.deepEqual(response.state.orderMissing, []);
+  assert.equal(response.state.orderFlowStatus, "awaiting_confirmation");
+  assert.match(response.reply, /Người nhận: Tài.*0988777666/isu);
+  assert.doesNotMatch(response.reply, /chưa có đủ thông tin|chuyển bộ phận liên quan/iu);
+  assert.equal(response.state.botPaused, false);
+});
+
 test("Question Coverage Gate chấp nhận câu LLM diễn đạt lại thời điểm hiệu quả khi có Knowledge", async () => {
   const chat = new DemoChatService();
   const llm = new CodexLlmBridge({

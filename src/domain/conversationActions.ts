@@ -237,6 +237,7 @@ export function reconcileConversationActions(input: {
     if (
       candidate.type === "select_quantity" &&
       !explicitQuantity &&
+      candidate.quantity !== trustedLlmQuantity &&
       explicitQuantityAppears(text, candidate.quantity)
     ) {
       rejected.push({ action: candidate, reason: "policy_verification_required" });

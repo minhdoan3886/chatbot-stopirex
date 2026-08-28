@@ -90,6 +90,48 @@ test("LLM được sửa số lượng đơn dù cùng câu còn hỏi tổng ti
   );
 });
 
+test("LLM được ghi đè combo đang thu bằng cách nói tự nhiên 'à thôi 1 lọ đi'", () => {
+  const message = "à thôi 1 lọ đi";
+  const plan = reconcileConversationActions({
+    customerMessage: message,
+    semantic: semantic({
+      intent: "buying",
+      topic: "order",
+      confidence: 0.99,
+      evidence: [message],
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 1,
+          confidence: 0.99,
+          evidence: [message],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.99,
+          evidence: [message],
+          source: "llm",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: true,
+  });
+
+  assert.equal(plan.quantity, 1);
+  assert.deepEqual(
+    plan.accepted.map((action) => action.type),
+    ["select_quantity", "continue_order_collection"],
+  );
+  assert.equal(
+    plan.rejected.some(
+      ({ action, reason }) => action.type === "select_quantity" && reason === "policy_verification_required",
+    ),
+    false,
+  );
+});
+
 test("bổ sung chủ đề chính bị thiếu khi LLM mới tạo answer action cho ý còn lại", () => {
   const plan = reconcileConversationActions({
     customerMessage:

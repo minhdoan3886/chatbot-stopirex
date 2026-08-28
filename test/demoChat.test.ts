@@ -650,6 +650,44 @@ test("sau báo giá, câu '2 lọ' được chốt gói dù LLM gắn nhầm int
   assert.doesNotMatch(selected.reply, /GIÁ SANDBOX/);
 });
 
+test("đang thu combo 2 thì LLM được đổi ngay còn 1 lọ bằng câu nói tự nhiên", () => {
+  const chat = new DemoChatService();
+  const sessionId = "replace-active-combo-with-natural-llm-command";
+
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  const selected = chat.chat(sessionId, "2 lọ");
+  assert.equal(selected.state.selectedQuantity, 2);
+
+  const correction = chat.chat(sessionId, "à thôi 1 lọ đi", {
+    slots: {},
+    intent: "buying",
+    topic: "order",
+    confidence: 0.99,
+    evidence: ["à thôi 1 lọ đi"],
+    actions: [
+      {
+        type: "select_quantity",
+        quantity: 1,
+        confidence: 0.99,
+        evidence: ["à thôi 1 lọ đi"],
+        source: "llm",
+      },
+      {
+        type: "continue_order_collection",
+        confidence: 0.99,
+        evidence: ["à thôi 1 lọ đi"],
+        source: "llm",
+      },
+    ],
+  });
+
+  assert.equal(correction.state.selectedQuantity, 1);
+  assert.equal(correction.state.orderDraft?.quantity, 1);
+  assert.equal(correction.state.orderDraft?.totalVnd, 315_000);
+  assert.match(correction.reply, /1 lọ/iu);
+  assert.doesNotMatch(correction.reply, /tiếp tục combo 2|combo 2 lọ đang làm dở/iu);
+});
+
 test("sau báo giá, câu hỏi 'giá 2 lọ bao nhiêu' vẫn là hỏi giá", () => {
   const chat = new DemoChatService();
   chat.reset("post-price-two-question", { openingVariantId: "A.choice" });

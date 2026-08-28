@@ -522,6 +522,7 @@ export class CodexLlmBridge {
           : {}),
         required: input.knowledgeGroundingRequired === true,
       });
+      assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
       if (!groundedKnowledgeFirst) {
         assertRequiredFactsPreserved(input.baseReply, reply);
       }
@@ -591,8 +592,11 @@ export class CodexLlmBridge {
         .join("\n");
       assertNoUnapprovedCommerceFacts([input.baseReply, citedKnowledge].filter(Boolean).join("\n"), reply);
       assertActionClaimsGrounded(input.state, reply);
+      assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
       assertCustomerAdvisorVoice(input.customerMessage, reply);
-      if (input.skillId) assertSkillResponseShape(input.skillId, reply);
+      if (input.skillId && !isApprovedPriceCatalogBase(input.baseReply)) {
+        assertSkillResponseShape(input.skillId, reply);
+      }
       return this.result(reply, "enhanced", startedAt, "llm_repaired_after_validation");
     } catch (error) {
       return this.result(
@@ -1530,6 +1534,7 @@ function buildCompactInterpretPrompt(input: {
     "Tin sai/chưa xác nhận: ghi nhận trung tính → nêu dữ kiện đúng đã duyệt → giải đáp nỗi lo. Không tranh cãi, không nói khách sai, không tự dùng 'tùy cơ địa' nếu khách không hỏi cam kết tuyệt đối.",
     "OUTPUT đã được API ràng buộc bằng Structured Outputs. Điền đủ schema, không đổi tên trường. answeredQuestions/newAngle/rejectedArguments/nextStep là kế hoạch kiểm chứng ngắn, không phải chuỗi suy nghĩ. draftReply là lời khách sẽ thấy; mọi trường khác là dữ liệu nội bộ.",
     "CTA: chỉ đặt câu hỏi hoặc lời mời tiếp theo khi nextStep là ask_discovery, offer_guidance hoặc collect_order. Với answer_only/none/handoff, kết thúc sau nội dung cần trả lời; workflow không được tự chèn CTA.",
+    "BÁO GIÁ CHUNG: nếu khách hỏi giá chung và không chỉ rõ một số lượng, draftReply phải giữ đầy đủ mọi phương án được responseGuidance cho phép, quà tặng và combo sản phẩm liên quan trong KNOWLEDGE. Trình bày từng phương án trên một dòng, chia tối đa hai khối dễ đọc và kết thúc bằng đúng một câu hỏi nối tiếp phù hợp ngữ cảnh. Không nén bảng giá thành một đoạn văn; riêng trường hợp này được vượt ngân sách direct-answer đến 650 ký tự.",
     `SCHEMA CONTRACT: ${compactSemanticSchema}`,
     "Ví dụ liên quan tới tin hiện tại:",
     ...compactExamplesFor(input.customerMessage, input.state),
@@ -2250,30 +2255,6 @@ export function mergeDraftWithExecutedState(input: {
   return `${input.draftReply.trim()}\n\n${continuation}`;
 }
 
-function appendMissingConversationQuestion(
-  draftReply: string,
-  baseReplies: readonly string[],
-  state: DemoChatState,
-): string {
-  if (/[?？]/u.test(draftReply)) return draftReply;
-  for (const reply of [...baseReplies].reverse()) {
-    for (const line of reply.split("\n").reverse()) {
-      const questionEnd = Math.max(line.lastIndexOf("?"), line.lastIndexOf("？"));
-      if (questionEnd < 0) continue;
-      const beforeQuestion = line.slice(0, questionEnd + 1);
-      const sentenceBoundary = Math.max(
-        beforeQuestion.lastIndexOf(". "),
-        beforeQuestion.lastIndexOf("! "),
-        beforeQuestion.lastIndexOf("。 "),
-      );
-      const question = beforeQuestion.slice(sentenceBoundary >= 0 ? sentenceBoundary + 2 : 0).trim();
-      if (isResolvedAudienceClarification(question, state)) continue;
-      if (question) return `${draftReply.trim()}\n\n${question}`;
-    }
-  }
-  return draftReply;
-}
-
 function isResolvedAudienceClarification(question: string, state: DemoChatState): boolean {
   if (state.customerProfile?.age === undefined || !state.answeredTopics.includes("child_age")) {
     return false;
@@ -2310,6 +2291,45 @@ function assertRequiredFactsPreserved(baseReply: string, generatedReply: string)
       throw error;
     }
   }
+}
+
+function isApprovedPriceCatalogBase(value: string): boolean {
+  return (
+    /Dạ giá hiện tại:/u.test(value) &&
+    /Combo 3 lọ:/u.test(value) &&
+    /Herbal Body Wash 500\s*ml/iu.test(value)
+  );
+}
+
+function assertApprovedPriceCatalogComplete(
+  baseReply: string,
+  generatedReply: string,
+  state: DemoChatState,
+): void {
+  if (!isApprovedPriceCatalogBase(baseReply)) return;
+
+  assertRequiredFactsPreserved(baseReply, generatedReply);
+  const requiredConcepts = [
+    { pattern: /quà tặng/iu, label: "quà tặng" },
+    { pattern: /Herbal Body Wash 500\s*ml/iu, label: "Herbal Body Wash 500ml" },
+    { pattern: /chưa bán lẻ/iu, label: "Herbal Body Wash chưa bán lẻ" },
+  ];
+  for (const { pattern, label } of requiredConcepts) {
+    if (pattern.test(generatedReply)) continue;
+    const error = new Error(`LLM làm mất dữ kiện bảng giá bắt buộc: ${label}`);
+    error.name = "FactPreservationError";
+    throw error;
+  }
+
+  const listedLines = generatedReply
+    .split("\n")
+    .filter((line) => /^\s*(?:[•*-]|\d+[.)])\s+/u.test(line));
+  if (listedLines.length < 6 || !/\n\s*\n/u.test(generatedReply)) {
+    const error = new Error("LLM làm mất bố cục danh sách hai khối của bảng giá");
+    error.name = "FactPreservationError";
+    throw error;
+  }
+  assertConversationDirectionPreserved(baseReply, generatedReply, state);
 }
 
 function assertNoUnapprovedCommerceFacts(baseReply: string, generatedReply: string): void {

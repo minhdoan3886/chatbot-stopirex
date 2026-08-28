@@ -127,7 +127,14 @@ export function inferAnsweredTopicFromMessage(
 
 export function questionTopic(value: string): ConversationTopic | undefined {
   const withoutUrls = value.replace(/https?:\/\/\S+/giu, "");
-  const text = normalize(withoutUrls);
+  const questionEnd = Math.max(withoutUrls.lastIndexOf("?"), withoutUrls.lastIndexOf("？"));
+  const questionSource = questionEnd >= 0
+    ? withoutUrls
+        .slice(0, questionEnd + 1)
+        .split(/\n|(?<=[.!])\s+/u)
+        .at(-1) ?? withoutUrls
+    : withoutUrls;
+  const text = normalize(questionSource);
   const implicitChildAgeQuestion =
     /be bao nhieu tuoi|bao nhieu tuoi.*be|tuoi cua be/.test(text);
   if (!/[?？]/u.test(withoutUrls) && !implicitChildAgeQuestion) return undefined;
@@ -202,6 +209,13 @@ function mergeToBubbleLimit(blocks: string[], maxBubbles: number): string[] {
   if (blocks.length <= maxBubbles) return blocks;
   if (maxBubbles <= 1) return [blocks.join("\n\n")];
   if (maxBubbles === 2) {
+    if (
+      blocks.length >= 3 &&
+      /^Dạ em chào/iu.test(blocks[0] ?? "") &&
+      /Dạ giá hiện tại:/u.test(blocks[1] ?? "")
+    ) {
+      return [blocks[0]!, blocks.slice(1).join("\n\n")];
+    }
     // Preserve paragraph order but choose the boundary that produces the most
     // balanced Messenger bubbles. Keeping only the first paragraph separate
     // made a short greeting consume bubble 1 and merged every useful answer

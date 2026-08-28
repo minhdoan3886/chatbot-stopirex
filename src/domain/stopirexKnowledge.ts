@@ -266,10 +266,18 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "price",
       title: "Giá và phương án mua đã duyệt",
       content:
-        "Giá Facebook đã duyệt: 1 lọ 285.000đ và phí giao 30.000đ; combo 2 lọ 510.000đ; combo 3 lọ 750.000đ; combo 4 lọ 1.000.000đ; combo 5 lọ 1.250.000đ. Combo 2–5 lọ miễn phí giao. Mọi đơn từ 2 lọ trở lên được tặng đúng 1 túi đa năng vải dệt Stopirex; quà tính theo đơn hàng, không tính theo số lọ. Đơn 1 lọ được miễn phí giao khi khách mặc cả hoặc từ lúc hệ thống bắt đầu gửi follow-up.",
-      searchAliases: ["giá bao nhiêu", "báo giá", "giá một lọ", "giá combo", "phí giao hàng"],
+        "Giá Facebook đã duyệt: 1 lọ 285.000đ và phí giao 30.000đ; combo 2 lọ 510.000đ; combo 3 lọ 750.000đ; combo 4 lọ 1.000.000đ; combo 5 lọ 1.250.000đ. Combo 2–5 lọ miễn phí giao. Mọi đơn từ 2 lọ trở lên được tặng đúng 1 túi đa năng vải dệt Stopirex; quà tính theo đơn hàng, không tính theo số lọ. Combo chăm sóc mùi cơ thể gồm 1 lăn Stopirex và 1 chai Stopirex Herbal Body Wash 500ml có giá 525.000đ, miễn phí giao; Herbal Body Wash hiện chưa bán lẻ. Đơn 1 lọ được miễn phí giao khi khách mặc cả hoặc từ lúc hệ thống bắt đầu gửi follow-up.",
+      searchAliases: [
+        "giá bao nhiêu",
+        "báo giá",
+        "giá một lọ",
+        "giá combo",
+        "phí giao hàng",
+        "combo sữa tắm lăn nách",
+        "Herbal Body Wash",
+      ],
       responseGuidance:
-        "Nếu khách hỏi giá chung, chỉ báo phương án 1–3 lọ và quà tặng. Chỉ báo combo 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó. Chỉ nhắc chuyển tư vấn viên khi khách thực sự hỏi từ 6 lọ trở lên. Không tự chốt đơn.",
+        "Nếu khách hỏi giá chung, chỉ báo phương án 1–3 lọ; trình bày thành danh sách dễ đọc gồm quà tặng và combo chăm sóc mùi cơ thể, đồng thời nói rõ Herbal Body Wash chưa bán lẻ. Chỉ báo combo 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó. Chỉ nhắc chuyển tư vấn viên khi khách thực sự hỏi từ 6 lọ trở lên. Kết thúc bằng đúng một câu hỏi nối tiếp phù hợp ngữ cảnh, không tự chốt đơn.",
       sourceRow: 25,
     },
     {

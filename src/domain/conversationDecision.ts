@@ -406,22 +406,6 @@ function intentMatchesCare(intent: CustomerIntent, issue: IssueType): boolean {
   return intent === "order_support";
 }
 
-function isCommerceGuardIntent(intent: CustomerIntent): boolean {
-  return (
-    intent === "price_change" ||
-    intent === "price_request" ||
-    intent === "promotion_inquiry" ||
-    intent === "negotiation" ||
-    intent === "decline_purchase"
-  );
-}
-
-function isSemanticConsistencyGuardIntent(intent: CustomerIntent): boolean {
-  return (
-    intent === "product_comparison" || intent === "authenticity_question" || intent === "efficacy_objection"
-  );
-}
-
 function clampConfidence(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));

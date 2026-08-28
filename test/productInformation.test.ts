@@ -271,6 +271,9 @@ test("retrieval ưu tiên đúng knowledge hẹp và không để hướng dẫn
 
   const pricing = entities.find((item) => item.id === "pricing-approved-options-2026-08");
   assert.ok(pricing?.responseGuidance?.includes("chỉ báo phương án 1–3 lọ"));
+  assert.ok(pricing?.content.includes("Herbal Body Wash 500ml"));
+  assert.ok(pricing?.content.includes("525.000đ"));
+  assert.ok(pricing?.content.includes("chưa bán lẻ"));
   assert.equal(pricing?.content.includes("Khi khách hỏi giá chung"), false);
   assert.equal(
     entities

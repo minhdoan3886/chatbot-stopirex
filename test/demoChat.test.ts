@@ -301,6 +301,11 @@ test("AUTO trả lời thẳng ý định rõ và giữ chiến lược ổn đ�
   assert.equal(price.state.openingSelectionMode, "auto");
   assert.equal(price.state.lastIntent, "price_request");
   assert.match(price.reply, /Dạ giá hiện tại:/);
+  assert.match(price.reply, /Combo 3 lọ: 750\.000đ, miễn phí giao/iu);
+  assert.match(price.reply, /quà tặng.*1 túi đa năng vải dệt Stopirex/isu);
+  assert.match(price.reply, /Herbal Body Wash 500ml: 525\.000đ, miễn phí giao/iu);
+  assert.match(price.reply, /Herbal Body Wash hiện chưa bán lẻ/iu);
+  assert.equal(price.replies.length, 2);
   assert.doesNotMatch(price.reply, /chọn giúp em phương án 1 hoặc 2/);
   assert.match(price.reply, /mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai/iu);
   assert.equal(price.state.pendingAction, undefined);
@@ -327,6 +332,9 @@ test("báo giá sau khi đã tư vấn mới mời khách chọn số lượng",
   assert.equal(price.state.pendingAction, "choose_quantity");
   assert.equal(price.state.pendingQuestionTopic, "quantity");
   assert.match(price.reply, /muốn chọn phương án mấy lọ/iu);
+  assert.match(price.replies[0] ?? "", /Dạ giá hiện tại:/u);
+  assert.match(price.replies[1] ?? "", /Combo chăm sóc mùi cơ thể:/u);
+  assert.match(price.replies[1] ?? "", /muốn chọn phương án mấy lọ/iu);
   assert.doesNotMatch(price.reply, /khó chịu chủ yếu vì mồ hôi/iu);
 });
 

@@ -3466,17 +3466,6 @@ function isSevereAllergicReaction(text: string): boolean {
   return /kho tho|kho khe|choang|kho nuot|sung (?:moi|mat|luoi)|me day.*toan|ngat/.test(text);
 }
 
-function isCommerceGuardIntent(intent: CustomerIntent): boolean {
-  return [
-    "price_change",
-    "price_request",
-    "promotion_inquiry",
-    "price_objection",
-    "negotiation",
-    "decline_purchase",
-  ].includes(intent);
-}
-
 /**
  * Nhận diện yêu cầu dò/tìm cách lấy chỉ dẫn, cấu hình hoặc thông tin truy cập
  * nội bộ. Rule này được dùng trước LLM để nội dung nhạy cảm không cần đi qua
@@ -5534,7 +5523,14 @@ function priceReply(nextQuestion = continuationQuestion("choose_quantity")): str
   const single = quote(1);
   const combo = quote(2);
   const visibleAdditionalOffers = [quote(3)];
-  return formatPriceOffer(single, combo, visibleAdditionalOffers, nextQuestion);
+  const rollOnOffer = formatPriceOffer(single, combo, visibleAdditionalOffers, "");
+  const bodyCareOffer = [
+    "Combo chăm sóc mùi cơ thể:",
+    "• 1 lăn Stopirex + 1 chai Herbal Body Wash 500ml: 525.000đ, miễn phí giao.",
+    "• Herbal Body Wash hiện chưa bán lẻ.",
+    nextQuestion,
+  ].join("\n");
+  return `${rollOnOffer}\n\n${bodyCareOffer}`;
 }
 
 function priceReplyForRequest(text: string, nextQuestion = continuationQuestion("choose_quantity")): string {

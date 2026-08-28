@@ -1044,6 +1044,74 @@ test("single-pass có Knowledge không bị workflow tự nối thêm CTA", () =
   assert.doesNotMatch(result.reply, /mình khó chịu vì mồ hôi, mùi hay cả hai/iu);
 });
 
+test("bảng giá chung không được LLM nén mất phương án, combo phụ hoặc câu hỏi nối tiếp", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const baseReply = [
+    "Dạ giá hiện tại:",
+    "• 1 lọ: 285.000đ + 30.000đ phí giao.",
+    "• Combo 2 lọ: 510.000đ, miễn phí giao, tiết kiệm 60.000đ.",
+    "• Combo 3 lọ: 750.000đ, miễn phí giao.",
+    "• Quà tặng: đơn từ 2 lọ trở lên được tặng 1 túi đa năng vải dệt Stopirex (1 túi/đơn).",
+    "",
+    "Combo chăm sóc mùi cơ thể:",
+    "• 1 lăn Stopirex + 1 chai Herbal Body Wash 500ml: 525.000đ, miễn phí giao.",
+    "• Herbal Body Wash hiện chưa bán lẻ.",
+    "Để em tư vấn sát hơn, hiện mình khó chịu chủ yếu vì mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai tình trạng ạ?",
+  ].join("\n");
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "cho em giá",
+    draftReply:
+      "Dạ 1 lọ Stopirex giá 285.000đ, phí giao 30.000đ ạ. Nếu mình lấy từ 2 lọ trở lên thì có giá combo: 2 lọ 510.000đ, 3 lọ 750.000đ.",
+    baseReply,
+    state: { ...state, pendingQuestionTopic: "symptom" },
+    skillId: "direct-answer",
+    knowledge: [
+      {
+        id: "pricing-approved-options-2026-08",
+        title: "Giá và phương án mua đã duyệt",
+        content: baseReply,
+      },
+    ],
+    knowledgeIds: ["pricing-approved-options-2026-08"],
+    groundingConfidence: 0.99,
+    knowledgeGroundingRequired: true,
+  });
+
+  assert.equal(result.status, "fallback");
+  assert.equal(result.reason, "fact_guard");
+  assert.equal(result.reply, baseReply);
+});
+
+test("bảng giá chung đầy đủ, chia hai khối và có câu hỏi nối tiếp được chấp nhận", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const reply = [
+    "Dạ giá hiện tại:",
+    "• 1 lọ: 285.000đ + 30.000đ phí giao.",
+    "• Combo 2 lọ: 510.000đ, miễn phí giao, tiết kiệm 60.000đ.",
+    "• Combo 3 lọ: 750.000đ, miễn phí giao.",
+    "• Quà tặng: đơn từ 2 lọ trở lên được tặng 1 túi đa năng vải dệt Stopirex (1 túi/đơn).",
+    "",
+    "Combo chăm sóc mùi cơ thể:",
+    "• 1 lăn Stopirex + 1 chai Herbal Body Wash 500ml: 525.000đ, miễn phí giao.",
+    "• Herbal Body Wash hiện chưa bán lẻ.",
+    "Anh/chị muốn chọn phương án mấy lọ ạ?",
+  ].join("\n");
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "giá",
+    draftReply: reply,
+    baseReply: reply,
+    state: { ...state, pendingQuestionTopic: "quantity" },
+    skillId: "direct-answer",
+    knowledge: [{ id: "pricing-approved-options-2026-08", title: "Bảng giá", content: reply }],
+    knowledgeIds: ["pricing-approved-options-2026-08"],
+    groundingConfidence: 0.99,
+    knowledgeGroundingRequired: true,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.equal(result.reply, reply);
+});
+
 test("LLM-first giữ câu grounded đúng dù base regex đang trả sai chủ đề", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const result = bridge.adoptInterpretedDraft({

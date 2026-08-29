@@ -59,6 +59,12 @@ export interface OmicallAdapter {
 }
 
 export interface MetaMessenger {
+  getProfile?(recipientId: string): Promise<
+    ProviderResult<{
+      name?: string;
+      firstName?: string;
+    }>
+  >;
   sendText(input: {
     recipientId: string;
     text: string;

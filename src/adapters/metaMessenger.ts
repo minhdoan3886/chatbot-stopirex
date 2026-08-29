@@ -10,6 +10,52 @@ export class GraphMetaMessenger implements MetaMessenger {
     },
   ) {}
 
+  async getProfile(
+    recipientId: string,
+  ): Promise<ProviderResult<{ name?: string; firstName?: string }>> {
+    try {
+      const params = new URLSearchParams({
+        fields: "first_name,last_name,name",
+        access_token: this.config.pageAccessToken,
+      });
+      const response = await (this.config.fetcher ?? fetch)(
+        `https://graph.facebook.com/${this.config.graphVersion}/${encodeURIComponent(recipientId)}?${params.toString()}`,
+        {
+          method: "GET",
+          signal: AbortSignal.timeout(this.config.timeoutMs ?? 10_000),
+        },
+      );
+      const payload = (await response.json()) as {
+        name?: unknown;
+        first_name?: unknown;
+      };
+      if (!response.ok) {
+        return {
+          ok: false,
+          retryable: response.status === 429 || response.status >= 500,
+          code: `meta_${response.status}`,
+          message: "Meta profile request failed",
+        };
+      }
+      const name = cleanProfileName(payload.name);
+      const firstName = cleanProfileName(payload.first_name);
+      return {
+        ok: true,
+        value: {
+          ...(name ? { name } : {}),
+          ...(firstName ? { firstName } : {}),
+        },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        retryable: true,
+        code: "network_error",
+        message: error instanceof Error ? error.message : "network error",
+      };
+    }
+  }
+
   async sendText(input: {
     recipientId: string;
     text: string;
@@ -87,4 +133,10 @@ export class GraphMetaMessenger implements MetaMessenger {
       };
     }
   }
+}
+
+function cleanProfileName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value.replace(/[<>{}#]/gu, "").replace(/\s+/gu, " ").trim().slice(0, 80);
+  return cleaned || undefined;
 }

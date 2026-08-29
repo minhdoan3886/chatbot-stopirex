@@ -11,6 +11,7 @@ export type OpeningVariantId =
 export type ConversationIdentity = {
   salutation?: "anh" | "chị" | "anh/chị";
   customerFirstName?: string;
+  customerDisplayName?: string;
   staffFirstName?: string;
 };
 

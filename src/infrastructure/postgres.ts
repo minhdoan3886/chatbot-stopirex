@@ -5,6 +5,7 @@ import type { ActionRolloutComparison } from "../domain/actionRollout.js";
 
 export type MessengerConversation = {
   customerId: string;
+  displayName?: string;
   conversationId: string;
   humanStatus: "bot" | "human" | "paused";
   runtimeState: unknown;
@@ -633,10 +634,14 @@ export class PostgresStore {
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (page_id, external_customer_id)
          DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, customers.display_name)
-         RETURNING id::text`,
+         RETURNING id::text, display_name`,
         [input.tenantId, input.pageId, input.externalCustomerId, input.displayName ?? null],
       );
       const customerId = String(customer.rows[0].id);
+      const displayName =
+        typeof customer.rows[0].display_name === "string" && customer.rows[0].display_name.trim()
+          ? String(customer.rows[0].display_name).trim()
+          : undefined;
       const existing = await client.query(
         `SELECT id::text, human_status, runtime_state, state_version::int, pipeline_tag
          FROM conversations
@@ -648,6 +653,7 @@ export class PostgresStore {
       if (existing.rowCount === 1) {
         return {
           customerId,
+          ...(displayName ? { displayName } : {}),
           conversationId: String(existing.rows[0].id),
           humanStatus: existing.rows[0].human_status as MessengerConversation["humanStatus"],
           runtimeState: existing.rows[0].runtime_state,
@@ -663,6 +669,7 @@ export class PostgresStore {
       );
       return {
         customerId,
+        ...(displayName ? { displayName } : {}),
         conversationId: String(created.rows[0].id),
         humanStatus: created.rows[0].human_status as MessengerConversation["humanStatus"],
         runtimeState: created.rows[0].runtime_state,

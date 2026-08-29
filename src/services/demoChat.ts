@@ -5807,7 +5807,13 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
   }
   if (!addressHandled && phone && parts.length >= 3) {
     const nonPhone = parts.filter((part) => !part.includes(phone));
-    if (!session.order.recipientName && nonPhone[0] && looksLikeOrderRecipientCandidate(nonPhone[0])) {
+    const firstPartIsRecipient = Boolean(
+      !session.order.recipientName &&
+        nonPhone[0] &&
+        !looksLikeAddress(nonPhone[0]) &&
+        looksLikeOrderRecipientCandidate(nonPhone[0]),
+    );
+    if (firstPartIsRecipient && nonPhone[0]) {
       commitOrderMutations(session, [
         {
           type: "set_recipient_name",
@@ -5816,8 +5822,9 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
         },
       ]);
     }
-    if (nonPhone.length > 1) {
-      commitLegacyAddress(session, cleanLabel(nonPhone.slice(1).join(", ")), "append", raw);
+    const addressParts = firstPartIsRecipient ? nonPhone.slice(1) : nonPhone;
+    if (addressParts.length > 0) {
+      commitLegacyAddress(session, cleanLabel(addressParts.join(", ")), "append", raw);
     }
     found = true;
   }
@@ -6666,6 +6673,7 @@ function orderHasAllFields(order: OrderDraft): boolean {
 }
 
 function orderCollectionReply(session: DemoSession, raw = ""): string {
+  applyProfileRecipientFallback(session, raw);
   if (orderHasAllFields(session.order)) {
     const selected = quote(session.selectedQuantity ?? 1);
     const shippingFeeVnd =
@@ -6744,6 +6752,19 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
     ? `Dạ em đã ghi nhận ${recorded.join("; ")} ạ.`
     : "Dạ em đã ghi nhận thông tin vừa gửi.";
   return `${acknowledgement}\n\nMình bổ sung giúp em:\n• ${missing.join("\n• ")} ạ.`;
+}
+
+function applyProfileRecipientFallback(session: DemoSession, evidence: string): void {
+  if (!session.selectedQuantity || session.order.recipientName) return;
+  const profileName = session.identity.customerDisplayName?.trim();
+  if (!profileName || !looksLikeOrderRecipientCandidate(profileName)) return;
+  commitOrderMutations(session, [
+    {
+      type: "set_recipient_name",
+      recipientName: formatRecipientName(profileName),
+      evidence: evidence || "Tên hồ sơ Facebook của khách đang nhắn",
+    },
+  ]);
 }
 
 function receiveCompleteInboxOrder(session: DemoSession, evidence: string): void {

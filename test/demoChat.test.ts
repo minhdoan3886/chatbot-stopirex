@@ -3524,6 +3524,60 @@ test("global NER stores strong order fields and rejects discourse prefix as reci
   assert.match(eta.reply, /liên miền.*3–5 ngày/isu);
 });
 
+test("đơn Meta thiếu tên dùng tên hồ sơ Facebook làm người nhận mặc định", () => {
+  const chat = new DemoChatService();
+  const message =
+    "Cho 1 lọ. Đt 0963028734 đc: thôn Dương Trung, xã Trà Dương, huyện Bắc Trà My (cũ), nay xã Trà My, Đà Nẵng.";
+  const result = chat.chat(
+    "meta-profile-recipient-fallback",
+    message,
+    {
+      intent: "buying",
+      topic: "order",
+      confidence: 0.99,
+      needsClarification: false,
+      slots: {},
+      actions: [
+        {
+          type: "select_quantity",
+          quantity: 1,
+          confidence: 0.99,
+          evidence: ["Cho 1 lọ"],
+          source: "llm",
+        },
+        {
+          type: "update_order",
+          fields: {
+            phone: "0963028734",
+            legacyAddress:
+              "thôn Dương Trung, xã Trà Dương, huyện Bắc Trà My (cũ), nay xã Trà My, Đà Nẵng",
+          },
+          confidence: 0.99,
+          evidence: [message],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.99,
+          evidence: [message],
+          source: "llm",
+        },
+      ],
+    },
+    {
+      identity: { customerDisplayName: "Nguyễn Văn Khách" },
+      orderConfirmationMode: "inbox",
+      actionExecutionMode: "multi_action",
+    },
+  );
+
+  assert.equal(result.state.orderDraft?.recipientName, "Nguyễn Văn Khách");
+  assert.equal(result.state.orderDraft?.phone, "0963028734");
+  assert.equal(result.state.orderMissing.includes("recipientName"), false);
+  assert.doesNotMatch(result.reply, /bổ sung.*tên người nhận/isu);
+  assert.match(result.reply, /Người nhận: Nguyễn Văn Khách/iu);
+});
+
 test("kịch bản dài giữ ngữ cảnh, không lặp phản biện và cập nhật đơn theo quyết định cuối", () => {
   const chat = new DemoChatService();
   const sessionId = "long-context-final-quantity";

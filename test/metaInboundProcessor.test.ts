@@ -27,6 +27,7 @@ function fixture(options: {
   failSendAttempt?: number;
   followups?: boolean;
   dispatchCurrent?: boolean;
+  profileName?: string;
 }) {
   const sent: string[] = [];
   const processed: string[] = [];
@@ -49,10 +50,15 @@ function fixture(options: {
   const inboxPushes: Array<Record<string, unknown>> = [];
   let newerInbound = options.newerInbound ?? false;
   let sendAttempts = 0;
+  let cachedDisplayName: string | undefined;
+  let profileRequests = 0;
+  const profileName = options.profileName;
   const store: MetaInboundStore = {
-    async ensureMessengerConversation() {
+    async ensureMessengerConversation(input) {
+      cachedDisplayName = input.displayName ?? cachedDisplayName;
       return {
         customerId: "customer-1",
+        ...(cachedDisplayName ? { displayName: cachedDisplayName } : {}),
         conversationId: "conversation-1",
         humanStatus: options.humanStatus ?? "bot",
         runtimeState: {},
@@ -102,6 +108,17 @@ function fixture(options: {
     },
   };
   const messenger: MetaMessenger = {
+    ...(profileName
+      ? {
+          async getProfile() {
+            profileRequests += 1;
+            return {
+              ok: true as const,
+              value: { name: profileName },
+            };
+          },
+        }
+      : {}),
     async sendTyping() {
       return { ok: true, value: undefined };
     },
@@ -159,6 +176,9 @@ function fixture(options: {
     followupSchedules,
     followupCancellations,
     inboxPushes,
+    get profileRequests() {
+      return profileRequests;
+    },
     setNewerInbound(value: boolean) {
       newerInbound = value;
     },
@@ -211,6 +231,26 @@ test("Meta ghi đơn vào inbox ngay khi khách gửi đủ thông tin và khôn
   assert.ok(context.sent.some((reply) => /đã nhận đủ thông tin.*ghi nhận đơn/isu.test(reply)));
   assert.ok(context.sent.every((reply) => !/phản hồi.*ĐỒNG Ý|phản hồi.*ĐÚNG/iu.test(reply)));
   assert.ok(context.sent.every((reply) => !/DEMO-|SPX-DEMO|đã lên đơn thành công/iu.test(reply)));
+});
+
+test("Meta lấy tên hồ sơ Facebook làm tên người nhận khi khách chỉ gửi SĐT và địa chỉ", async () => {
+  const context = fixture({ live: true, profileName: "Nguyễn Văn Khách" });
+  await context.processor.processBatch([
+    job({
+      eventId: "profile-order-1",
+      text:
+        "Cho 1 lọ. Đt 0963028734 đc: thôn Dương Trung, xã Trà Dương, huyện Bắc Trà My, Đà Nẵng",
+    }),
+  ]);
+
+  assert.equal(context.profileRequests, 1);
+  assert.equal(context.inboxPushes.length, 1);
+  assert.equal(
+    (context.inboxPushes[0]?.draft as { recipientName?: string })?.recipientName,
+    "Nguyễn Văn Khách",
+  );
+  assert.ok(context.sent.some((reply) => /Người nhận: Nguyễn Văn Khách/iu.test(reply)));
+  assert.ok(context.sent.every((reply) => !/bổ sung.*tên người nhận/isu.test(reply)));
 });
 
 test("Meta inbound dùng brain để trả lời và lưu state khi đã bật gửi", async () => {

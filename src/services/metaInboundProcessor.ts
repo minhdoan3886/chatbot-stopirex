@@ -87,7 +87,7 @@ export class MetaInboundProcessor {
     ) {
       throw new Error("meta_batch_scope_mismatch");
     }
-    const conversation = await this.options.store.ensureMessengerConversation({
+    let conversation = await this.options.store.ensureMessengerConversation({
       tenantId: first.tenantId,
       pageId: first.pageId,
       externalCustomerId: first.senderId,
@@ -210,10 +210,30 @@ export class MetaInboundProcessor {
       return { status: "paused", replyCount: dispatched.count };
     }
 
+    let profileFirstName: string | undefined;
+    if (!conversation.displayName && this.options.messenger.getProfile) {
+      const profile = await this.options.messenger.getProfile(first.senderId);
+      if (profile.ok && profile.value.name) {
+        profileFirstName = profile.value.firstName;
+        conversation = await this.options.store.ensureMessengerConversation({
+          tenantId: first.tenantId,
+          pageId: first.pageId,
+          externalCustomerId: first.senderId,
+          displayName: profile.value.name,
+        });
+      } else if (!profile.ok) {
+        this.options.logger.log("warn", "meta_customer_profile_unavailable", {
+          traceId: first.traceId,
+          pageId: first.pageId,
+          code: profile.code,
+        });
+      }
+    }
+    const chatContext = this.context(conversation.displayName, profileFirstName);
     this.options.chat.restoreSession(
       sessionId,
       conversation.runtimeState,
-      this.context(),
+      chatContext,
     );
     const text = batchMessages(
       contentJobs.map((job) => ({
@@ -235,7 +255,7 @@ export class MetaInboundProcessor {
       tenantId: first.tenantId,
       pageId: first.pageId,
       conversationId: conversation.conversationId,
-      ...this.context(),
+      ...chatContext,
     });
     const hasNewerInbound = await this.options.store.hasNewerInboundContent({
       tenantId: first.tenantId,
@@ -309,8 +329,13 @@ export class MetaInboundProcessor {
     };
   }
 
-  private context(): {
-    identity: { salutation: "anh/chị"; staffFirstName: string };
+  private context(displayName?: string, firstName?: string): {
+    identity: {
+      salutation: "anh/chị";
+      staffFirstName: string;
+      customerDisplayName?: string;
+      customerFirstName?: string;
+    };
     openingVariantId: OpeningVariantId;
     orderConfirmationMode: "inbox";
   } {
@@ -318,6 +343,8 @@ export class MetaInboundProcessor {
       identity: {
         salutation: "anh/chị",
         staffFirstName: this.options.staffName,
+        ...(displayName ? { customerDisplayName: displayName } : {}),
+        ...(firstName ? { customerFirstName: firstName } : {}),
       },
       openingVariantId: this.options.openingVariantId,
       orderConfirmationMode: "inbox",

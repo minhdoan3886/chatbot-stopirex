@@ -420,6 +420,67 @@ test("Meta brain khóa luồng khiếu nại khi LLM chỉ trả handoff after-s
   );
 });
 
+test("Meta brain giữ đủ bảng giá khi khách hỏi lại sau một đơn đã tạo", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "completed-order-new-price-cycle";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "2 lọ");
+  chat.chat(
+    sessionId,
+    "Hoàng 0824938877, số 82 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội",
+  );
+  chat.chat(sessionId, "Đồng ý");
+  assert.equal(chat.peek(sessionId).pipeline, "6.Đã tạo đơn");
+
+  const shortDraft =
+    "Dạ 1 lọ Stopirex giá 285.000đ, phí giao 30.000đ ạ. Nếu mình lấy từ 2 lọ trở lên thì có giá combo: 2 lọ 510.000đ, 3 lọ 750.000đ.";
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      if (prompt.includes("Bản nháp của bạn vừa bị lớp hậu kiểm")) return shortDraft;
+      return JSON.stringify({
+        summary: "Khách hỏi bảng giá hiện tại",
+        skill: "direct-answer",
+        intent: "price_request",
+        topic: "price",
+        subject: "customer",
+        scenario: "actual",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        needsClarification: false,
+        evidence: ["cho a giá"],
+        actions: [
+          {
+            type: "answer_question",
+            topic: "price",
+            confidence: 0.99,
+            evidence: ["cho a giá"],
+          },
+        ],
+        knowledgeIds: ["pricing-approved-options-2026-08"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.99,
+        nextStep: "ask_discovery",
+        draftReply: shortDraft,
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+
+  const response = await brain.reply({ sessionId, text: "cho a giá" });
+
+  assert.equal(response.state.pipeline, "3.Đã báo giá");
+  assert.equal(response.state.selectedQuantity, undefined);
+  assert.equal(response.replies.length, 2);
+  assert.match(response.replies[0] ?? "", /Dạ giá hiện tại:/u);
+  assert.match(response.replies[0] ?? "", /Combo 3 lọ: 750\.000đ/iu);
+  assert.match(response.replies[0] ?? "", /Quà tặng/iu);
+  assert.match(response.replies[1] ?? "", /Herbal Body Wash 500ml: 525\.000đ/iu);
+  assert.match(response.replies[1] ?? "", /mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai/iu);
+  assert.notEqual(response.reply, shortDraft);
+});
+
 test("Meta brain không handoff câu địa phương hỏi cách dùng, bết và hoàn xèng", async () => {
   const chat = new DemoChatService();
   const llm = new CodexLlmBridge({

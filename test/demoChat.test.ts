@@ -3265,7 +3265,7 @@ test("tạo đơn xong phải xóa hành động xác nhận đang chờ", () =>
   assert.equal(repeated.state.activeSkill, "order-closing");
 });
 
-test("đơn đã tạo không bị câu hỏi giá kéo ngược pipeline", () => {
+test("hỏi giá sau đơn đã tạo bắt đầu chu kỳ mới và trả đủ bảng giá", () => {
   const chat = new DemoChatService();
   chat.chat("completed-order-lock", "Giá bao nhiêu?");
   chat.chat("completed-order-lock", "2 lọ");
@@ -3276,9 +3276,14 @@ test("đơn đã tạo không bị câu hỏi giá kéo ngược pipeline", () =
   chat.chat("completed-order-lock", "Đồng ý");
 
   const followup = chat.chat("completed-order-lock", "Giá bao nhiêu?");
-  assert.equal(followup.state.pipeline, "6.Đã tạo đơn");
-  assert.equal(followup.state.selectedQuantity, 2);
-  assert.match(followup.reply, /đơn thử.*đã hoàn tất/i);
+  assert.equal(followup.state.pipeline, "3.Đã báo giá");
+  assert.equal(followup.state.selectedQuantity, undefined);
+  assert.match(followup.replies[0] ?? "", /Dạ giá hiện tại:/u);
+  assert.match(followup.replies[0] ?? "", /Combo 3 lọ: 750\.000đ/iu);
+  assert.match(followup.replies[0] ?? "", /Quà tặng/iu);
+  assert.match(followup.replies[1] ?? "", /Herbal Body Wash 500ml: 525\.000đ/iu);
+  assert.match(followup.replies[1] ?? "", /mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai/iu);
+  assert.doesNotMatch(followup.reply, /đơn thử.*đã hoàn tất/iu);
 });
 
 test("kết quả nhân viên có thể mở khóa ca CSKH và trả session về flow trước đó", () => {

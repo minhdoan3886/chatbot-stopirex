@@ -1650,6 +1650,21 @@ export class DemoChatService {
       return this.respond(session, orderInformationRequestReply(postPriceQuantity));
     }
 
+    const directIntent = decision.intent;
+    if (session.pipeline === "6.Đã tạo đơn" && directIntent === "price_request") {
+      // A completed order is an immutable business record outside this runtime
+      // draft. A new price question starts a fresh sales cycle; the broad
+      // completed-order lock must not replace an LLM-understood product/price
+      // question with the stale “order completed” receipt.
+      clearOrderDraft(session);
+      session.pipeline = "1.Phân loại";
+      session.consultation = {
+        ...session.consultation,
+        stage: "S0.new",
+      };
+      session.orderCollectionPaused = false;
+    }
+
     if (session.pipeline === "6.Đã tạo đơn") {
       session.activeSkill = "order-closing";
       session.skillReason = "Đơn đã hoàn tất nên giữ nguyên trạng thái giao dịch.";
@@ -1666,7 +1681,6 @@ export class DemoChatService {
       );
     }
 
-    const directIntent = decision.intent;
     if (directIntent) session.lastIntent = directIntent;
     if (directIntent === "buying" && session.selectedQuantity) {
       session.orderCollectionPaused = false;
@@ -4951,9 +4965,10 @@ function multiActionAnswer(
           : `Dạ ${quantityLabel(requested)} giá ${formatVnd(selected.total.amount)}, miễn phí giao và tặng ${stopirexGiftForQuantity(requested)} ạ.`,
       );
     } else {
-      answers.push(
-        "Dạ giá hiện tại:\n• 1 lọ: 285.000đ + 30.000đ phí giao.\n• Combo 2 lọ: 510.000đ, miễn phí giao, tiết kiệm 60.000đ.\n• Combo 3 lọ: 750.000đ, miễn phí giao.\n• Quà tặng: đơn từ 2 lọ trở lên được tặng 1 túi đa năng vải dệt Stopirex (1 túi/đơn).",
-      );
+      // Multi-action turns use the same approved catalog renderer as the
+      // direct price route. This prevents an order interruption or a second
+      // question from silently dropping the body-wash combo and follow-up.
+      answers.push(priceReply());
     }
   }
   if (uniqueTopics.some((topic) => ["order", "delivery"].includes(topic))) {

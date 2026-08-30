@@ -4,6 +4,27 @@ import { scopedKey } from "./types.js";
 export type FollowupStage = "3h" | "6h" | "9h";
 export type FollowupStatus = "scheduled" | "claimed" | "sent" | "cancelled";
 
+export type FollowupContextSnapshot = {
+  customerMessage?: string;
+  assistantReply?: string;
+  customerDisplayName?: string;
+  lastIntent?: string;
+  activeSkill?: string;
+  pipeline?: string;
+  nextBestAction?: {
+    key: string;
+    prompt?: string;
+  };
+  conversationMemory?: {
+    currentGoal?: string;
+    usedArguments?: string[];
+    rejectedArguments?: string[];
+    openQuestions?: string[];
+  };
+  answeredTopics?: string[];
+  askedTopics?: string[];
+};
+
 export type FollowupJob = {
   id: string;
   conversationId: ConversationId;

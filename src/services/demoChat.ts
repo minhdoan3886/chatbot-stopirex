@@ -100,6 +100,7 @@ type DemoSession = {
   orderId?: string;
   trackingNumber?: string;
   orderConfirmationMode: "sandbox" | "inbox";
+  orderEditable?: boolean;
   identity: ConversationIdentity;
   openingVariantId: OpeningVariantId;
   openingSelectionMode: "auto" | "manual";
@@ -229,6 +230,8 @@ export type DemoChatContext = {
   openingVariantId?: OpeningVariantId;
   actionExecutionMode?: ActionExecutionMode;
   orderConfirmationMode?: "sandbox" | "inbox";
+  /** Giá trị authoritative từ order_inbox; false khi đã có mã vận đơn. */
+  orderEditable?: boolean;
 };
 
 export class DemoChatService {
@@ -249,7 +252,12 @@ export class DemoChatService {
     if (session.pipeline === "7.Chờ followup") session.freeShippingApproved = true;
     const raw = input.trim();
     const text = normalize(raw);
-    const observedEntities = observeGlobalEntities(session, raw);
+    const canEditCreatedInboxOrder =
+      session.pipeline === "6.Đã tạo đơn" &&
+      session.orderConfirmationMode === "inbox" &&
+      session.orderEditable === true;
+    const orderMutationAllowed = session.pipeline !== "6.Đã tạo đơn" || canEditCreatedInboxOrder;
+    const observedEntities = observeGlobalEntities(session, raw, orderMutationAllowed);
     const requestedQuantity = extractRequestedQuantity(text);
     const committedRequestedQuantity = extractExplicitOrderQuantity(text);
     const quantityOperation = extractQuantityOperation(text);
@@ -287,7 +295,7 @@ export class DemoChatService {
       ...contextualSlotsFromSemanticAnswer(semantic, session.consultation, text),
     };
     semantic.slots = semanticSlots;
-    if (isStateRequest(text)) return this.respond(session, "Dạ đây là trạng thái sandbox hiện tại ạ.");
+    if (isStateRequest(text)) return this.respond(session, "Dạ đây là trạng thái hội thoại hiện tại ạ.");
 
     session.messages += 1;
     if (session.messages === 1) this.move(session, "first_reply");
@@ -379,13 +387,13 @@ export class DemoChatService {
       priorOtherProductAdverseExperience,
       conditionalNoIrritationPurchase,
       optOut: isOptOut(text),
-      collectingOrder: session.pipeline !== "6.Đã tạo đơn" && Boolean(session.selectedQuantity),
+      collectingOrder: orderMutationAllowed && Boolean(session.selectedQuantity),
     });
     const quantityBlockedByConditionalRefund = actionPlan.conflicts.some((conflict) =>
       conflict.includes("giả định hoàn tiền"),
     );
     const semanticOrderDataRecorded =
-      session.pipeline !== "6.Đã tạo đơn" &&
+      orderMutationAllowed &&
       Boolean(
         session.selectedQuantity ||
         (!quantityBlockedByConditionalRefund &&
@@ -448,9 +456,9 @@ export class DemoChatService {
         session.pipeline !== "6.Đã tạo đơn" &&
         isCorrectConfirmation(text) &&
         orderHasAllFields(session.order),
-      collectingOrder: session.pipeline !== "6.Đã tạo đơn" && Boolean(session.selectedQuantity),
+      collectingOrder: orderMutationAllowed && Boolean(session.selectedQuantity),
       orderDataCandidate:
-        session.pipeline !== "6.Đã tạo đơn" &&
+        orderMutationAllowed &&
         Boolean(session.selectedQuantity) &&
         !effectiveExactIntent &&
         !effectiveCareIssue &&
@@ -620,6 +628,7 @@ export class DemoChatService {
 
     if (
       compoundFinalQuantity &&
+      orderMutationAllowed &&
       (!semanticAuthorityReady || semantic.intent === "buying" || semantic.intent === "order_support")
     ) {
       selectQuantity(session, compoundFinalQuantity);
@@ -639,6 +648,10 @@ export class DemoChatService {
         "Chuỗi 3 lọ → 4 lọ → bớt một người được tính thành 3 lọ trước khi báo tổng.",
       );
       const selected = quote(compoundFinalQuantity);
+      if (canEditCreatedInboxOrder) {
+        session.pipeline = "6.Đã tạo đơn";
+        return this.respond(session, orderUpdatedReply(session));
+      }
       return this.respond(
         session,
         `Dạ chốt lại đơn là ${compoundFinalQuantity} lọ: ${formatVnd(selected.total.amount)}, được miễn phí giao ạ. Em đã lưu đúng số lượng ${compoundFinalQuantity} lọ cho mình.`,
@@ -651,7 +664,7 @@ export class DemoChatService {
     if (
       quantityOperation &&
       session.selectedQuantity &&
-      session.pipeline !== "6.Đã tạo đơn" &&
+      orderMutationAllowed &&
       (!semanticAuthorityReady || semantic.intent === "buying" || semantic.intent === "order_support") &&
       !isWholesaleDealerInquiry(text) &&
       !isQuantityShippingPolicyQuestion(text) &&
@@ -660,7 +673,7 @@ export class DemoChatService {
       const nextQuantity = applyQuantityOperation(session.selectedQuantity, quantityOperation);
       if (nextQuantity) {
         selectQuantity(session, nextQuantity);
-        session.pipeline = "5.Chờ TT KH";
+        session.pipeline = canEditCreatedInboxOrder ? "6.Đã tạo đơn" : "5.Chờ TT KH";
         session.consultation = { ...session.consultation, stage: "S8.order" };
         session.orderCollectionPaused = false;
         session.lastIntent = "buying";
@@ -684,6 +697,7 @@ export class DemoChatService {
     if (
       isOrderRecapRequest(text) &&
       session.selectedQuantity &&
+      orderMutationAllowed &&
       (!semanticAuthorityReady || semantic.intent === "buying" || semantic.intent === "order_support")
     ) {
       // A recap may also contain the customer's final correction (for example
@@ -726,6 +740,7 @@ export class DemoChatService {
 
     if (
       session.selectedQuantity &&
+      orderMutationAllowed &&
       isPriorAddressReference(raw) &&
       (!semanticAuthorityReady || semantic.intent === "buying" || semantic.intent === "order_support")
     ) {
@@ -745,7 +760,7 @@ export class DemoChatService {
         if (session.order.legacyAddress) {
           rememberLocation(session, session.order.legacyAddress, restoredAddress);
         }
-        session.pipeline = "5.Chờ TT KH";
+        session.pipeline = canEditCreatedInboxOrder ? "6.Đã tạo đơn" : "5.Chờ TT KH";
         session.orderCollectionPaused = false;
         session.lastIntent = "order_support";
         session.activeSkill = "order-closing";
@@ -773,7 +788,7 @@ export class DemoChatService {
         observedEntities.address ||
         semanticOrderDataRecorded);
     if (pureCommittedOrderEntity) {
-      session.pipeline = "5.Chờ TT KH";
+      session.pipeline = canEditCreatedInboxOrder ? "6.Đã tạo đơn" : "5.Chờ TT KH";
       session.consultation = { ...session.consultation, stage: "S8.order" };
       session.orderCollectionPaused = false;
       session.lastIntent = "order_support";
@@ -791,10 +806,6 @@ export class DemoChatService {
       this.move(session, "order_created");
       session.signal = undefined;
       session.lastIntent = "buying";
-      if (session.orderConfirmationMode === "sandbox") {
-        session.orderId = `DEMO-${randomUUID().slice(0, 8).toUpperCase()}`;
-        session.trackingNumber = `VTP-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
-      }
       return this.respond(session, [orderCreatingReply(session), orderCreatedReply(session)]);
     }
 
@@ -1366,7 +1377,7 @@ export class DemoChatService {
       multiActionEnabled &&
       actionPlan.quantity &&
       actionPlan.answerTopics.length > 0 &&
-      session.pipeline !== "6.Đã tạo đơn"
+      orderMutationAllowed
     ) {
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
@@ -1376,7 +1387,7 @@ export class DemoChatService {
       }
       const answer = multiActionAnswer(actionPlan.answerTopics, raw, semanticSlots);
       selectQuantity(session, quantity);
-      this.move(session, "agreed_to_buy");
+      if (!canEditCreatedInboxOrder) this.move(session, "agreed_to_buy");
       session.lastIntent = "buying";
       session.activeSkill = "order-closing";
       session.skillReason =
@@ -1400,13 +1411,13 @@ export class DemoChatService {
       multiActionEnabled &&
       actionPlan.quantity &&
       actionPlan.answerTopics.length === 0 &&
-      session.pipeline !== "6.Đã tạo đơn"
+      orderMutationAllowed
     ) {
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
       const quantity = actionPlan.quantity;
       selectQuantity(session, quantity);
-      this.move(session, "agreed_to_buy");
+      if (!canEditCreatedInboxOrder) this.move(session, "agreed_to_buy");
       session.orderCollectionPaused = false;
       session.lastIntent = "buying";
       session.activeSkill = "order-closing";
@@ -1431,7 +1442,7 @@ export class DemoChatService {
       actionPlan.rejected.some(
         ({ action }) => action.type === "continue_order_collection" && action.source === "llm",
       ) &&
-      session.pipeline !== "6.Đã tạo đơn"
+      orderMutationAllowed
     ) {
       session.lastIntent = "buying";
       session.activeSkill = "order-closing";
@@ -1446,14 +1457,14 @@ export class DemoChatService {
     const compoundOrderQuantity = session.selectedQuantity
       ? resolveQuantitySelection(text, semantic, session)
       : undefined;
-    if (compoundOrderQuantity && isCompoundOrderUpdateQuestion(raw)) {
+    if (orderMutationAllowed && compoundOrderQuantity && isCompoundOrderUpdateQuestion(raw)) {
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
       selectQuantity(session, compoundOrderQuantity);
       mergeOrderData(session, raw);
       const destination = extractDeliveryDestination(raw);
       if (destination) commitLegacyAddress(session, destination, "append", raw);
-      session.pipeline = "5.Chờ TT KH";
+      session.pipeline = canEditCreatedInboxOrder ? "6.Đã tạo đơn" : "5.Chờ TT KH";
       session.consultation = {
         ...session.consultation,
         stage: "S8.order",
@@ -1577,10 +1588,6 @@ export class DemoChatService {
       this.move(session, "order_created");
       session.signal = undefined;
       session.lastIntent = "buying";
-      if (session.orderConfirmationMode === "sandbox") {
-        session.orderId = `DEMO-${randomUUID().slice(0, 8).toUpperCase()}`;
-        session.trackingNumber = `VTP-DEMO-${randomUUID().slice(0, 10).toUpperCase()}`;
-      }
       return this.respond(session, [orderCreatingReply(session), orderCreatedReply(session)]);
     }
 
@@ -1588,7 +1595,7 @@ export class DemoChatService {
       session.orderCollectionPaused = false;
       session.lastIntent = "order_support";
       const recorded = mergeOrderData(session, raw) || semanticOrderDataRecorded;
-      session.pipeline = "5.Chờ TT KH";
+      session.pipeline = canEditCreatedInboxOrder ? "6.Đã tạo đơn" : "5.Chờ TT KH";
       session.consultation = {
         ...session.consultation,
         stage: "S8.order",
@@ -1667,7 +1674,12 @@ export class DemoChatService {
 
     if (session.pipeline === "6.Đã tạo đơn") {
       session.activeSkill = "order-closing";
-      session.skillReason = "Đơn đã hoàn tất nên giữ nguyên trạng thái giao dịch.";
+      session.skillReason = session.orderEditable
+        ? "Đơn đang chờ mã vận đơn nên có thể cập nhật từ yêu cầu có bằng chứng của khách."
+        : "Đơn đã có mã vận đơn nên không tự động sửa dữ liệu giao dịch.";
+      if (session.orderEditable && hasOrderTransactionChanges(session)) {
+        return this.respond(session, orderUpdatedReply(session));
+      }
       if (/mua them|dat them|lay them/.test(text)) {
         clearOrderDraft(session);
         session.pipeline = "3.Đã báo giá";
@@ -1677,7 +1689,9 @@ export class DemoChatService {
       }
       return this.respond(
         session,
-        `Dạ đơn thử ${session.orderId ?? "đã tạo"} đã hoàn tất. Nếu mình muốn đặt thêm, mình nhắn “mua thêm” giúp em nhé ạ.`,
+        session.orderEditable === false
+          ? "Dạ đơn của mình đã có mã vận đơn nên em chưa thể tự sửa thông tin ạ. Mình gửi nội dung cần thay đổi để bộ phận phụ trách kiểm tra giúp em nhé."
+          : "Dạ đơn hàng của mình đã được ghi nhận và đang chờ mã vận đơn ạ. Nếu cần đổi số lượng, SĐT, người nhận hoặc địa chỉ, mình nhắn rõ thông tin mới giúp em nhé.",
       );
     }
 
@@ -2266,7 +2280,12 @@ export class DemoChatService {
     this.move(session, "followup_due");
     session.activeSkill = "follow-up";
     session.skillReason = "Follow-up đã bắt đầu nên quyền miễn phí giao cho 1 lọ được kích hoạt.";
-    return this.respond(session, followupMessage(stage));
+    return this.respond(session, followupMessage(stage, {
+      ...(session.lastIntent ? { lastIntent: session.lastIntent } : {}),
+      rejectedArguments: session.conversationMemory.rejectedArguments,
+      openQuestions: session.conversationMemory.openQuestions,
+      askedTopics: session.askedTopics,
+    }));
   }
 
   replaceLatestAssistantTurn(sessionId: string | undefined, styledReply: string): DemoChatState {
@@ -2724,6 +2743,7 @@ function newSession(id: string, context: DemoChatContext = {}): DemoSession {
     freeShippingApproved: false,
     optedOut: false,
     orderConfirmationMode: context.orderConfirmationMode ?? "sandbox",
+    ...(context.orderEditable !== undefined ? { orderEditable: context.orderEditable } : {}),
     messages: 0,
     history: [],
     identity: { ...(context.identity ?? {}) },
@@ -2775,6 +2795,7 @@ function applyChatContext(session: DemoSession, context: DemoChatContext): void 
     delete session.openingStrategyReason;
   }
   if (context.orderConfirmationMode) session.orderConfirmationMode = context.orderConfirmationMode;
+  if (context.orderEditable !== undefined) session.orderEditable = context.orderEditable;
 }
 
 function openingStage(variantId: OpeningVariantId): ConsultationState["stage"] {
@@ -5483,6 +5504,9 @@ const internalCopyPatterns = [
   /\bslot\b/i,
   /\bstate machine\b/i,
   /\bbreakpoint\b/i,
+  /\b(?:localhost|sandbox)\b/i,
+  /\b(?:đơn|mã đơn|mã vận đơn)\s+(?:thử|test|demo)\b/iu,
+  /\b(?:DEMO-|VTP-DEMO)\b/i,
 ] as const;
 
 function assertCustomerFacingCopy(reply: string): void {
@@ -5884,7 +5908,11 @@ type AddressUpdate = {
   address?: string;
 };
 
-function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntityChanges {
+function observeGlobalEntities(
+  session: DemoSession,
+  raw: string,
+  allowOrderMutations = true,
+): ObservedEntityChanges {
   const changes: ObservedEntityChanges = {};
   const text = normalize(raw);
   if (/\b(?:minh|toi|em|anh)\s+la\s+nam\b|\bnam gioi\b/.test(text)) {
@@ -5905,7 +5933,8 @@ function observeGlobalEntities(session: DemoSession, raw: string): ObservedEntit
   // This lets an ETA/policy question also complete a draft without letting a
   // generic phrase such as "nghe ổn đấy" become the recipient name.
   const collectingOrderBeforeTurn = Boolean(session.selectedQuantity);
-  const shouldObserveOrder = collectingOrderBeforeTurn || isOrderCaptureMessage(raw);
+  const shouldObserveOrder =
+    allowOrderMutations && (collectingOrderBeforeTurn || isOrderCaptureMessage(raw));
   if (shouldObserveOrder) {
     const mayCaptureAddress = collectingOrderBeforeTurn || isOrderCaptureMessage(raw);
     const actions: OrderMutationAction[] = [];
@@ -6675,17 +6704,23 @@ function orderHasAllFields(order: OrderDraft): boolean {
 function orderCollectionReply(session: DemoSession, raw = ""): string {
   applyProfileRecipientFallback(session, raw);
   if (orderHasAllFields(session.order)) {
+    const updatingExistingOrder =
+      session.pipeline === "6.Đã tạo đơn" &&
+      session.orderConfirmationMode === "inbox" &&
+      session.orderEditable === true &&
+      hasOrderTransactionChanges(session);
     const selected = quote(session.selectedQuantity ?? 1);
     const shippingFeeVnd =
       session.selectedQuantity === 1 && session.freeShippingApproved ? 0 : selected.shippingFee.amount;
     if (session.orderConfirmationMode === "inbox") {
       receiveCompleteInboxOrder(session, raw);
+      if (updatingExistingOrder) return orderUpdatedReply(session);
       return formatInboxOrderReceipt(session.order, {
         productPriceVnd: selected.productPrice.amount,
         shippingFeeVnd,
       });
     }
-    return `Dạ em tổng hợp đơn thử như sau:\n${formatOrderConfirmation(session.order, {
+    return `Dạ em tổng hợp đơn hàng như sau:\n${formatOrderConfirmation(session.order, {
       productPriceVnd: selected.productPrice.amount,
       shippingFeeVnd,
     })}`;
@@ -6785,6 +6820,7 @@ function receiveCompleteInboxOrder(session: DemoSession, evidence: string): void
   session.consultation = { ...session.consultation, stage: "S8.order" };
   session.signal = undefined;
   session.lastIntent = "buying";
+  session.orderEditable = true;
   session.activeSkill = "order-closing";
   session.skillReason =
     "Khách đã gửi đủ dữ liệu; hệ thống tiếp nhận đơn ngay và gửi bản tóm tắt để khách đối chiếu.";
@@ -6924,30 +6960,40 @@ function orderCreatedReply(session: DemoSession): string {
     return [
       "Dạ em đã ghi nhận thông tin đơn của mình rồi ạ ✅",
       "",
-      "Bộ phận bán hàng sẽ kiểm tra và lên đơn trên hệ thống, sau đó gửi lại mã đơn cho mình ạ.",
+      "Thông tin đã được chuyển vào danh sách xử lý. Khi có mã vận đơn, bên em sẽ gửi lại để mình theo dõi ạ.",
     ].join("\n");
   }
-  const trackingNumber = session.trackingNumber ?? "VTP-DEMO";
   return [
-    "Dạ em đã lên đơn thành công rồi ạ ✅",
+    "Dạ em đã ghi nhận thông tin đơn của mình rồi ạ ✅",
     "",
-    `Mã đơn thử: ${session.orderId}`,
     `Sản phẩm: Stopirex × ${order.quantity}`,
     `Tổng thanh toán: ${order.totalVnd?.toLocaleString("vi-VN")}đ`,
     `Hình thức: ${order.paymentMethod === "cod" ? "Thanh toán khi nhận hàng (COD)" : "Chuyển khoản"}`,
     `Người nhận: ${order.recipientName} – ${order.phone}`,
     `Địa chỉ trước sáp nhập: ${order.legacyAddress}`,
     "",
-    "Dạ em gửi mình mã vận đơn Viettel Post để mình theo dõi tiến độ giao hàng ạ:",
-    `Mã vận đơn thử: ${trackingNumber}`,
-    "Mình mở website hoặc ứng dụng Viettel Post, chọn mục tra cứu vận đơn và nhập mã trên giúp em nhé.",
-    "",
-    "Khi nhận hàng, mình nhớ kiểm tra kỹ thông tin người gửi và sản phẩm. Nếu không đúng thông tin từ Stopirex thì mình hoàn toàn có quyền từ chối nhận hàng ạ.",
-    "",
-    "Cảm ơn mình đã tin tưởng Stopirex!",
-    "",
-    "⚠️ Đây là đơn thử trên localhost, chưa gửi sang Pancake/Sapo và không phát sinh giao hàng thật.",
+    "Khi có mã vận đơn Viettel Post, bên em sẽ gửi lại để mình theo dõi ạ.",
   ].join("\n");
+}
+
+function orderUpdatedReply(session: DemoSession): string {
+  const order = session.order;
+  const changed = new Set(session.orderTransactionTrace?.changedFields ?? []);
+  const lines = ["Dạ em đã cập nhật lại đơn theo thông tin mình vừa gửi ạ ✅"];
+  if (changed.has("recipientName")) lines.push(`• Người nhận: ${order.recipientName}`);
+  if (changed.has("phone")) lines.push(`• SĐT: ${order.phone}`);
+  if (changed.has("legacyAddress")) lines.push(`• Địa chỉ: ${order.legacyAddress}`);
+  if (changed.has("quantity") || changed.has("selectedQuantity")) {
+    lines.push(`• Sản phẩm: Stopirex × ${order.quantity}`);
+    lines.push(`• Tổng thanh toán: ${order.totalVnd?.toLocaleString("vi-VN")}đ`);
+  }
+  if (changed.has("deliveryNote")) lines.push(`• Ghi chú giao hàng: ${order.deliveryNote}`);
+  lines.push("Đơn vẫn đang chờ mã vận đơn; thông tin thay đổi đã được lưu trên hệ thống ạ.");
+  return lines.join("\n");
+}
+
+function hasOrderTransactionChanges(session: DemoSession): boolean {
+  return (session.orderTransactionTrace?.changedFields.length ?? 0) > 0;
 }
 
 function orderCreatingReply(session: DemoSession): string {

@@ -19,4 +19,6 @@ test("trang production không còn lối vào chat thử hay nhãn demo", () => 
   assert.match(ordersPage, /Viettel Post/u);
   assert.doesNotMatch(ordersPage, /Mở trang tra cứu/u);
   assert.match(ordersPage, /Đã gửi vận đơn/u);
+  assert.match(ordersPage, /Thay đổi từ khách/u);
+  assert.match(ordersPage, /changeHistory/u);
 });

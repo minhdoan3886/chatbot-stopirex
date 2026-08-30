@@ -247,6 +247,39 @@ const server = createServer(async (request, response) => {
     return json(response, 200, buildProductInformationSnapshot(knowledgeTenantId));
   }
 
+  if (request.method === "GET" && url.pathname === "/api/analytics/marketing-attribution") {
+    if (!isOperationsAuthorized(request)) {
+      return json(response, 401, { error: "unauthorized" });
+    }
+    if (!postgres) {
+      return json(response, 503, { error: "database_not_configured" });
+    }
+    const requestedDays = Number(url.searchParams.get("days") ?? "30");
+    if (!Number.isInteger(requestedDays) || requestedDays < 1 || requestedDays > 365) {
+      return json(response, 400, { error: "days_must_be_between_1_and_365" });
+    }
+    const pageId = url.searchParams.get("pageId")?.trim() || undefined;
+    if (pageId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(pageId)) {
+      return json(response, 400, { error: "invalid_page_id" });
+    }
+    try {
+      return json(
+        response,
+        200,
+        await postgres.marketingAttributionSnapshot({
+          periodDays: requestedDays,
+          ...(pageId ? { pageId } : {}),
+        }),
+      );
+    } catch (error) {
+      logger.log("error", "marketing_attribution_snapshot_failed", {
+        traceId,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+      return json(response, 503, { error: "marketing_attribution_unavailable", traceId });
+    }
+  }
+
   if (request.method === "GET" && url.pathname === "/api/operations/overview") {
     if (!isOperationsAuthorized(request)) {
       return json(response, 401, { error: "unauthorized" });
@@ -684,6 +717,7 @@ const server = createServer(async (request, response) => {
             kind: event.kind,
             ...(event.text ? { text: event.text } : {}),
             ...(event.attachmentUrl ? { attachmentUrl: event.attachmentUrl } : {}),
+            ...(event.referral ? { referral: event.referral } : {}),
             timestamp: event.timestamp.toISOString(),
             payload: event.payload,
             attempt: 0,
@@ -816,6 +850,17 @@ const openApiContract = {
         responses: {
           "200": { description: "Current product information snapshot" },
           "401": { description: "Admin API key required in production" },
+        },
+      },
+    },
+    "/api/analytics/marketing-attribution": {
+      get: {
+        summary: "Marketing attribution by source, customer stage, and Meta ad ID",
+        responses: {
+          "200": { description: "Attribution and attributed-order snapshot" },
+          "400": { description: "Invalid period or Page ID" },
+          "401": { description: "Admin API key required in production" },
+          "503": { description: "Attribution data unavailable" },
         },
       },
     },

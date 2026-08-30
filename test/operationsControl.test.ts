@@ -57,6 +57,7 @@ test("nút vận hành restart gateway và worker rồi kiểm tra các kết n�
                 subscribed_fields: [
                   "messages",
                   "messaging_postbacks",
+                  "messaging_referrals",
                   "message_deliveries",
                   "message_reads",
                   "message_echoes",
@@ -201,6 +202,7 @@ test("Public Webhook mất kết nối được tạo tunnel mới và cập nh�
               subscribed_fields: [
                 "messages",
                 "messaging_postbacks",
+                "messaging_referrals",
                 "message_deliveries",
                 "message_reads",
                 "message_echoes",

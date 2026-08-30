@@ -1,15 +1,18 @@
+import type { MetaReferralAttribution } from "../domain/marketingAttribution.js";
+
 export type MetaInbound = {
   pageId: string;
   senderId: string;
   recipientId?: string;
   eventId: string;
   timestamp: Date;
-  kind: "text" | "image" | "postback" | "delivery" | "read";
+  kind: "text" | "image" | "postback" | "referral" | "delivery" | "read";
   text?: string;
   attachmentUrl?: string;
   isEcho: boolean;
   appId?: string;
   metadata?: string;
+  referral?: MetaReferralAttribution;
   payload: unknown;
 };
 
@@ -43,6 +46,7 @@ export function parseMetaWebhook(payload: unknown): MetaInbound[] {
         metadata?: unknown;
       } | undefined;
       const postback = event.postback as { payload?: unknown; mid?: unknown } | undefined;
+      const referral = parseReferral(event, message, postback);
       const systemTemplateOnly =
         typeof message?.text !== "string" &&
         !postback &&
@@ -65,9 +69,11 @@ export function parseMetaWebhook(payload: unknown): MetaInbound[] {
           ? "read"
           : postback
             ? "postback"
-            : message?.attachments?.length
-              ? "image"
-              : "text";
+            : referral && !message
+              ? "referral"
+              : message?.attachments?.length
+                ? "image"
+                : "text";
       events.push({
         pageId: page.id,
         senderId:
@@ -91,11 +97,56 @@ export function parseMetaWebhook(payload: unknown): MetaInbound[] {
           ? { appId: String(message.app_id) }
           : {}),
         ...(typeof message?.metadata === "string" ? { metadata: message.metadata } : {}),
+        ...(referral ? { referral } : {}),
         payload: item,
       });
     }
   }
   return events;
+}
+
+function parseReferral(
+  event: Record<string, unknown>,
+  messageValue: unknown,
+  postbackValue: unknown,
+): MetaReferralAttribution | undefined {
+  const message = record(messageValue);
+  const postback = record(postbackValue);
+  const raw = firstRecord(event.referral, message?.referral, postback?.referral);
+  if (!raw) return undefined;
+  const adsContextData = record(raw.ads_context_data) ?? {};
+  const source = scalarString(raw.source);
+  const type = scalarString(raw.type);
+  const ref = scalarString(raw.ref);
+  const adId = scalarString(raw.ad_id);
+  return {
+    ...(source ? { source } : {}),
+    ...(type ? { type } : {}),
+    ...(ref ? { ref } : {}),
+    ...(adId ? { adId } : {}),
+    adsContextData,
+    raw,
+  };
+}
+
+function firstRecord(...values: unknown[]): Record<string, unknown> | undefined {
+  for (const value of values) {
+    const candidate = record(value);
+    if (candidate) return candidate;
+  }
+  return undefined;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function scalarString(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const normalized = String(value).trim();
+  return normalized ? normalized.slice(0, 500) : undefined;
 }
 
 export class PageTenantRegistry {

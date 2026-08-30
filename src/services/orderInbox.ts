@@ -5,6 +5,17 @@ import type { OrderTrackingCarrier } from "./orderTrackingNotification.js";
 export type OrderInboxStatus = "pending" | "completed" | "cancelled";
 export type TrackingSendStatus = "not_sent" | "sending" | "sent" | "failed";
 
+export type OrderChangeEvidence = {
+  at: string;
+  type?: "created" | "customer_update";
+  source: "customer_message" | "system";
+  customerMessage?: string;
+  acceptedActions?: Array<{ type: string; evidence: string }>;
+  changedFields: string[];
+  before?: Partial<OrderDraft>;
+  after?: Partial<OrderDraft>;
+};
+
 export type OrderInboxRecord = {
   id: string;
   sessionId: string;
@@ -27,6 +38,7 @@ export type OrderInboxRecord = {
   trackingMessageId?: string;
   trackingSentAt?: string;
   trackingLastError?: string;
+  changeHistory: OrderChangeEvidence[];
   confirmedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -38,6 +50,11 @@ export type PushOrderInboxInput = {
   draft: OrderDraft;
   confirmedAt: Date;
   idempotencyKey?: string;
+  changeEvidence?: {
+    customerMessage?: string;
+    acceptedActions?: Array<{ type: string; evidence: string }>;
+    changedFields?: string[];
+  };
 };
 
 export type OrderInboxListResult = {
@@ -61,13 +78,109 @@ export class OrderInboxService {
       confirmedAt,
       idempotencyKey = `${sessionId}:${confirmedAt.toISOString()}`,
     } = input;
+    const evidence = JSON.stringify({
+      at: new Date().toISOString(),
+      source: input.changeEvidence?.customerMessage ? "customer_message" : "system",
+      ...(input.changeEvidence?.customerMessage
+        ? { customerMessage: input.changeEvidence.customerMessage.slice(0, 1_000) }
+        : {}),
+      ...(input.changeEvidence?.acceptedActions?.length
+        ? { acceptedActions: input.changeEvidence.acceptedActions.slice(-12) }
+        : {}),
+      changedFields: [...new Set(input.changeEvidence?.changedFields ?? [])],
+    } satisfies Omit<OrderChangeEvidence, "source"> & { source: OrderChangeEvidence["source"] });
     const result = await this.pool.query<OrderInboxRecord>(
       `INSERT INTO order_inbox
         (session_id, idempotency_key, channel, recipient_name, phone, legacy_address, delivery_note,
-         sku, quantity, total_vnd, payment_method, confirmed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         sku, quantity, total_vnd, payment_method, confirmed_at, change_history)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+         jsonb_build_array($13::jsonb || jsonb_build_object(
+           'type', 'created',
+           'after', jsonb_build_object(
+             'recipientName', $4::text, 'phone', $5::text, 'legacyAddress', $6::text,
+             'deliveryNote', $7::text, 'sku', $8::text, 'quantity', $9::integer,
+             'totalVnd', $10::bigint, 'paymentMethod', $11::text
+           )
+         )))
        ON CONFLICT (session_id, idempotency_key)
-       DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
+       DO UPDATE SET
+         recipient_name = CASE WHEN order_inbox.status = 'pending'
+                                    AND order_inbox.tracking_number IS NULL
+                                    AND order_inbox.tracking_sent_at IS NULL
+                               THEN EXCLUDED.recipient_name ELSE order_inbox.recipient_name END,
+         phone = CASE WHEN order_inbox.status = 'pending'
+                           AND order_inbox.tracking_number IS NULL
+                           AND order_inbox.tracking_sent_at IS NULL
+                      THEN EXCLUDED.phone ELSE order_inbox.phone END,
+         legacy_address = CASE WHEN order_inbox.status = 'pending'
+                                    AND order_inbox.tracking_number IS NULL
+                                    AND order_inbox.tracking_sent_at IS NULL
+                               THEN EXCLUDED.legacy_address ELSE order_inbox.legacy_address END,
+         delivery_note = CASE WHEN order_inbox.status = 'pending'
+                                   AND order_inbox.tracking_number IS NULL
+                                   AND order_inbox.tracking_sent_at IS NULL
+                              THEN EXCLUDED.delivery_note ELSE order_inbox.delivery_note END,
+         sku = CASE WHEN order_inbox.status = 'pending'
+                         AND order_inbox.tracking_number IS NULL
+                         AND order_inbox.tracking_sent_at IS NULL
+                    THEN EXCLUDED.sku ELSE order_inbox.sku END,
+         quantity = CASE WHEN order_inbox.status = 'pending'
+                              AND order_inbox.tracking_number IS NULL
+                              AND order_inbox.tracking_sent_at IS NULL
+                         THEN EXCLUDED.quantity ELSE order_inbox.quantity END,
+         total_vnd = CASE WHEN order_inbox.status = 'pending'
+                               AND order_inbox.tracking_number IS NULL
+                               AND order_inbox.tracking_sent_at IS NULL
+                          THEN EXCLUDED.total_vnd ELSE order_inbox.total_vnd END,
+         payment_method = CASE WHEN order_inbox.status = 'pending'
+                                    AND order_inbox.tracking_number IS NULL
+                                    AND order_inbox.tracking_sent_at IS NULL
+                               THEN EXCLUDED.payment_method ELSE order_inbox.payment_method END,
+         change_history = CASE
+           WHEN order_inbox.status = 'pending'
+             AND order_inbox.tracking_number IS NULL
+             AND order_inbox.tracking_sent_at IS NULL
+             AND ROW(
+               order_inbox.recipient_name, order_inbox.phone, order_inbox.legacy_address,
+               order_inbox.delivery_note, order_inbox.sku, order_inbox.quantity,
+               order_inbox.total_vnd, order_inbox.payment_method
+             ) IS DISTINCT FROM ROW(
+               EXCLUDED.recipient_name, EXCLUDED.phone, EXCLUDED.legacy_address,
+               EXCLUDED.delivery_note, EXCLUDED.sku, EXCLUDED.quantity,
+               EXCLUDED.total_vnd, EXCLUDED.payment_method
+             )
+           THEN order_inbox.change_history || jsonb_build_array(
+             $13::jsonb || jsonb_build_object(
+               'type', 'customer_update',
+               'before', jsonb_build_object(
+                 'recipientName', order_inbox.recipient_name,
+                 'phone', order_inbox.phone,
+                 'legacyAddress', order_inbox.legacy_address,
+                 'deliveryNote', order_inbox.delivery_note,
+                 'sku', order_inbox.sku,
+                 'quantity', order_inbox.quantity,
+                 'totalVnd', order_inbox.total_vnd,
+                 'paymentMethod', order_inbox.payment_method
+               ),
+               'after', jsonb_build_object(
+                 'recipientName', EXCLUDED.recipient_name,
+                 'phone', EXCLUDED.phone,
+                 'legacyAddress', EXCLUDED.legacy_address,
+                 'deliveryNote', EXCLUDED.delivery_note,
+                 'sku', EXCLUDED.sku,
+                 'quantity', EXCLUDED.quantity,
+                 'totalVnd', EXCLUDED.total_vnd,
+                 'paymentMethod', EXCLUDED.payment_method
+               )
+             )
+           )
+           ELSE order_inbox.change_history
+         END,
+         updated_at = CASE
+           WHEN order_inbox.status = 'pending'
+             AND order_inbox.tracking_number IS NULL
+             AND order_inbox.tracking_sent_at IS NULL
+           THEN NOW() ELSE order_inbox.updated_at END
        RETURNING
          id,
          session_id       AS "sessionId",
@@ -90,6 +203,7 @@ export class OrderInboxService {
          tracking_message_id AS "trackingMessageId",
          tracking_sent_at AS "trackingSentAt",
          tracking_last_error AS "trackingLastError",
+         change_history AS "changeHistory",
          confirmed_at     AS "confirmedAt",
          created_at       AS "createdAt",
          updated_at       AS "updatedAt"`,
@@ -106,6 +220,7 @@ export class OrderInboxService {
         draft.totalVnd ?? null,
         draft.paymentMethod ?? null,
         confirmedAt.toISOString(),
+        evidence,
       ],
     );
     const record = result.rows[0];
@@ -151,6 +266,7 @@ export class OrderInboxService {
            tracking_message_id AS "trackingMessageId",
            tracking_sent_at AS "trackingSentAt",
            tracking_last_error AS "trackingLastError",
+           change_history AS "changeHistory",
            confirmed_at   AS "confirmedAt",
            created_at     AS "createdAt",
            updated_at     AS "updatedAt"
@@ -209,6 +325,7 @@ export class OrderInboxService {
          tracking_message_id AS "trackingMessageId",
          tracking_sent_at AS "trackingSentAt",
          tracking_last_error AS "trackingLastError",
+         change_history AS "changeHistory",
          confirmed_at   AS "confirmedAt",
          created_at     AS "createdAt",
          updated_at     AS "updatedAt"`,
@@ -248,6 +365,27 @@ export class OrderInboxService {
       [id],
     );
     return result.rows[0];
+  }
+
+  /** Trạng thái authoritative để chatbot chỉ nhận sửa khi chưa có mã vận đơn. */
+  async canEditPending(sessionId: string): Promise<boolean | undefined> {
+    const result = await this.pool.query<{
+      status: OrderInboxStatus;
+      trackingNumber?: string;
+      trackingSentAt?: string;
+    }>(
+      `SELECT status,
+              tracking_number AS "trackingNumber",
+              tracking_sent_at AS "trackingSentAt"
+       FROM order_inbox
+       WHERE session_id = $1
+       ORDER BY confirmed_at DESC
+       LIMIT 1`,
+      [sessionId],
+    );
+    const record = result.rows[0];
+    if (!record) return undefined;
+    return record.status === "pending" && !record.trackingNumber && !record.trackingSentAt;
   }
 
   async markTrackingSent(id: string, messageId: string): Promise<OrderInboxRecord | undefined> {
@@ -302,6 +440,7 @@ const orderInboxReturningColumns = `
   tracking_message_id AS "trackingMessageId",
   tracking_sent_at AS "trackingSentAt",
   tracking_last_error AS "trackingLastError",
+  change_history AS "changeHistory",
   confirmed_at AS "confirmedAt",
   created_at AS "createdAt",
   updated_at AS "updatedAt"`;

@@ -273,7 +273,7 @@ function parseQueueMessage(
     typeof value.eventId !== "string" ||
     typeof value.senderId !== "string" ||
     typeof value.kind !== "string" ||
-    !["text", "image", "postback", "delivery", "read"].includes(value.kind) ||
+    !["text", "image", "postback", "referral", "delivery", "read"].includes(value.kind) ||
     typeof value.timestamp !== "string"
   ) {
     return undefined;
@@ -291,8 +291,22 @@ function parseQueueMessage(
     attempt: typeof value.attempt === "number" && Number.isInteger(value.attempt) ? value.attempt : 0,
     ...(typeof value.text === "string" ? { text: value.text } : {}),
     ...(typeof value.attachmentUrl === "string" ? { attachmentUrl: value.attachmentUrl } : {}),
+    ...(isMetaReferralAttribution(value.referral) ? { referral: value.referral } : {}),
   };
   return { id: message.id, payload: parsed };
+}
+
+function isMetaReferralAttribution(value: unknown): value is MetaInboundJob["referral"] & object {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const referral = value as Record<string, unknown>;
+  return (
+    referral.adsContextData !== null &&
+    typeof referral.adsContextData === "object" &&
+    !Array.isArray(referral.adsContextData) &&
+    referral.raw !== null &&
+    typeof referral.raw === "object" &&
+    !Array.isArray(referral.raw)
+  );
 }
 
 function groupByConversation(

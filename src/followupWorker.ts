@@ -5,6 +5,7 @@ import { PostgresStore } from "./infrastructure/postgres.js";
 import { RedisRuntime } from "./infrastructure/redis.js";
 import { FollowupDispatcher } from "./services/followupDispatcher.js";
 import { PgFollowupRepository } from "./services/followupRepository.js";
+import { CodexLlmBridge } from "./services/codexLlm.js";
 import { StructuredLogger } from "./services/logger.js";
 
 const env = loadEnv();
@@ -24,6 +25,10 @@ if (!env.redisUrl || !env.databaseUrl) {
   const redis = new RedisRuntime(env.redisUrl);
   const postgres = new PostgresStore(env.databaseUrl);
   const repository = new PgFollowupRepository(postgres.pool);
+  const llm = CodexLlmBridge.fromEnvironment(
+    process.env,
+    (event) => postgres.recordLlmUsage(event),
+  );
   const messenger = new GraphMetaMessenger({
     pageAccessToken: env.metaPageAccessToken ?? "",
     graphVersion: env.metaGraphVersion,
@@ -35,6 +40,7 @@ if (!env.redisUrl || !env.databaseUrl) {
     mode: env.followupMode,
     outboundWindowHours: env.outboundWindowHours,
     maxAttempts: env.followupMaxAttempts,
+    composer: llm,
   });
   const workerLeaseKey = `worker:followup:${env.followupWorkerConsumer}`;
   const workerLeaseOwner = `${process.pid}:${randomUUID()}`;
@@ -73,6 +79,9 @@ if (!env.redisUrl || !env.databaseUrl) {
       mode: env.followupMode,
       batchSize: env.followupBatchSize,
       activePage: env.metaActivePage,
+      llmEnabled: llm.enabled,
+      llmProvider: llm.provider,
+      llmModel: llm.model,
     });
 
     while (!stopping) {

@@ -602,7 +602,7 @@ test("phiên bắt đầu trực tiếp từ inbox vẫn chào khách trước n
   assert.match(result.replies[1] ?? "", /Dạ giá hiện tại:/);
 });
 
-test("chat sandbox nhớ ngữ cảnh và tạo đơn sau xác nhận ĐỒNG Ý", () => {
+test("chat nhớ ngữ cảnh và ghi nhận đơn sau xác nhận ĐỒNG Ý", () => {
   const chat = new DemoChatService();
   const sessionId = "happy-path";
 
@@ -631,16 +631,16 @@ test("chat sandbox nhớ ngữ cảnh và tạo đơn sau xác nhận ĐỒNG Ý
   assert.equal(created.replies.length, 2);
   assert.match(created.reply, /xin phép lên đơn trên hệ thống/);
   assert.match(created.reply, /chờ em một chút/);
-  assert.match(created.reply, /DEMO-/);
-  assert.match(created.reply, /đã lên đơn thành công/);
+  assert.doesNotMatch(created.reply, /DEMO-|đơn thử|localhost|sandbox/iu);
+  assert.match(created.reply, /đã ghi nhận thông tin đơn/);
   assert.match(created.reply, /Thanh toán khi nhận hàng \(COD\)/);
   assert.match(created.reply, /Địa chỉ trước sáp nhập/);
   assert.match(created.reply, /Viettel Post/);
-  assert.match(created.reply, /VTP-DEMO-/);
-  assert.match(created.reply, /website hoặc ứng dụng Viettel Post.*nhập mã/isu);
+  assert.match(created.reply, /Khi có mã vận đơn Viettel Post/iu);
+  assert.doesNotMatch(created.reply, /website hoặc ứng dụng Viettel Post.*nhập mã/isu);
   assert.doesNotMatch(created.reply, /https?:\/\/|Link tra cứu/iu);
-  assert.match(created.reply, /quyền từ chối nhận hàng/);
-  assert.match(created.reply, /không phát sinh giao hàng thật/);
+  assert.doesNotMatch(created.reply, /mã vận đơn:\s*\S+/iu);
+  assert.doesNotMatch(created.reply, /không phát sinh giao hàng thật/iu);
 });
 
 test("sau báo giá, câu '2 lọ' được chốt gói dù LLM gắn nhầm intent hỏi giá", () => {
@@ -1096,7 +1096,7 @@ test("khách đang cung cấp thông tin đơn vẫn có thể ngắt để hỏ
   assert.equal(resumed.state.pipeline, "5.Chờ TT KH");
   assert.equal(resumed.state.selectedQuantity, 1);
   assert.deepEqual(resumed.state.orderMissing, []);
-  assert.match(resumed.reply, /tổng hợp đơn thử/i);
+  assert.match(resumed.reply, /tổng hợp đơn hàng/i);
 });
 
 test("chương trình chưa có trong tri thức được từ chối khéo và chuyển người kiểm tra", () => {
@@ -2878,7 +2878,7 @@ test("phần phường quận chưa rõ được hỏi lại đúng dữ liệu 
 
   const clarified = chat.chat(sessionId, "Phường Thanh Xuân Trung, quận Thanh Xuân");
   assert.deepEqual(clarified.state.orderMissing, []);
-  assert.match(clarified.reply, /tổng hợp đơn thử/i);
+  assert.match(clarified.reply, /tổng hợp đơn hàng/i);
 });
 
 test("hai phần phường quận ngăn bằng dấu phẩy được nhận theo thứ tự trường còn thiếu", () => {
@@ -2983,7 +2983,7 @@ test("câu dò AI khi đang thu đơn được trả lời đúng phạm vi và 
   const resumed = chat.chat(sessionId, "thanh xuân trung, thanh xuân");
   assert.equal(resumed.state.decisionTrace?.selectedRoute, "order_collection");
   assert.deepEqual(resumed.state.orderMissing, []);
-  assert.match(resumed.reply, /tổng hợp đơn thử|ĐỒNG Ý/iu);
+  assert.match(resumed.reply, /tổng hợp đơn hàng|ĐỒNG Ý/iu);
 });
 
 test("câu dò API key bị từ chối bằng rule nội bộ", () => {
@@ -3243,7 +3243,7 @@ test("recap chấp nhận cả Đúng và không chỉ riêng Đồng ý", () =>
 
   const created = chat.chat("confirm-dung-alias", "Đúng");
   assert.equal(created.state.pipeline, "6.Đã tạo đơn");
-  assert.match(created.reply, /đã lên đơn thành công/);
+  assert.match(created.reply, /đã ghi nhận thông tin đơn/);
 });
 
 test("tạo đơn xong phải xóa hành động xác nhận đang chờ", () => {

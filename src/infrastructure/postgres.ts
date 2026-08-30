@@ -2,6 +2,16 @@ import { Pool, type PoolClient } from "pg";
 import type { TenantId } from "../domain/types.js";
 import type { LlmUsageTelemetry } from "../services/codexLlm.js";
 import type { ActionRolloutComparison } from "../domain/actionRollout.js";
+import {
+  marketingSourceCategory,
+  marketingCustomerStage,
+  referralAdTitle,
+  referralPostId,
+  shouldRecordMarketingTouch,
+  type MarketingCustomerStage,
+  type MarketingSourceCategory,
+  type MetaReferralAttribution,
+} from "../domain/marketingAttribution.js";
 
 export type MessengerConversation = {
   customerId: string;
@@ -11,6 +21,54 @@ export type MessengerConversation = {
   runtimeState: unknown;
   stateVersion: number;
   pipelineTag: string;
+};
+
+export type MarketingAttributionTouchInput = {
+  tenantId: TenantId;
+  pageId: string;
+  customerId: string;
+  conversationId: string;
+  externalEventId: string;
+  occurredAt: Date;
+  referral?: MetaReferralAttribution;
+};
+
+export type MarketingAttributionSegment = {
+  sourceCategory: MarketingSourceCategory;
+  customerStage: MarketingCustomerStage;
+  touches: number;
+  uniqueCustomers: number;
+  orders: number;
+  revenueVnd: number;
+};
+
+export type MarketingAttributionAd = {
+  adId: string;
+  adTitle?: string;
+  touches: number;
+  uniqueCustomers: number;
+  newCustomers: number;
+  returningCustomers: number;
+  orders: number;
+  revenueVnd: number;
+};
+
+export type MarketingAttributionSnapshot = {
+  generatedAt: string;
+  periodDays: number;
+  pageId?: string;
+  totals: {
+    touches: number;
+    newCustomers: number;
+    returningCustomers: number;
+    paidTouches: number;
+    organicTouches: number;
+    referralTouches: number;
+    orders: number;
+    revenueVnd: number;
+  };
+  segments: MarketingAttributionSegment[];
+  ads: MarketingAttributionAd[];
 };
 
 export type ConversationOutboundPlan = {
@@ -679,6 +737,156 @@ export class PostgresStore {
     });
   }
 
+  async recordMarketingAttribution(input: MarketingAttributionTouchInput): Promise<{
+    recorded: boolean;
+    sourceCategory: MarketingSourceCategory;
+    customerStage: MarketingCustomerStage;
+  }> {
+    const sourceCategory = marketingSourceCategory(input.referral);
+    return this.withTenant(input.tenantId, async (client) => {
+      const history = await client.query(
+        `SELECT
+           EXISTS (
+             SELECT 1 FROM messages
+             WHERE tenant_id = $1 AND conversation_id = $2 AND direction = 'inbound'
+           ) AS had_prior_inbound,
+           (
+             SELECT max(created_at) FROM messages
+             WHERE tenant_id = $1 AND conversation_id = $2 AND direction = 'inbound'
+           ) AS last_inbound_at,
+           EXISTS (
+             SELECT 1 FROM marketing_attribution_touches
+             WHERE tenant_id = $1 AND customer_id = $3
+           ) AS had_prior_touch,
+           (
+             SELECT max(occurred_at) FROM marketing_attribution_touches
+             WHERE tenant_id = $1 AND customer_id = $3
+           ) AS last_touch_at`,
+        [input.tenantId, input.conversationId, input.customerId],
+      );
+      const row = history.rows[0] ?? {};
+      const customerStage = marketingCustomerStage({
+        hadPriorInbound: row.had_prior_inbound === true,
+        hadPriorTouch: row.had_prior_touch === true,
+      });
+      const activityDates = [row.last_touch_at, row.last_inbound_at]
+        .filter(Boolean)
+        .map((value) => new Date(value));
+      const lastActivityAt = activityDates.length > 0
+        ? new Date(Math.max(...activityDates.map((value) => value.getTime())))
+        : undefined;
+      if (!shouldRecordMarketingTouch({
+        occurredAt: input.occurredAt,
+        ...(lastActivityAt ? { lastActivityAt } : {}),
+        hasReferral: Boolean(input.referral),
+      })) {
+        return { recorded: false, sourceCategory, customerStage };
+      }
+      const inserted = await client.query(
+        `INSERT INTO marketing_attribution_touches (
+           tenant_id, page_id, customer_id, conversation_id, external_event_id,
+           source_category, customer_stage, referral_source, referral_type,
+           referral_ref, ad_id, ad_title, post_id, ads_context_data,
+           raw_referral, occurred_at
+         ) VALUES (
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16
+         )
+         ON CONFLICT (page_id, external_event_id) DO NOTHING`,
+        [
+          input.tenantId,
+          input.pageId,
+          input.customerId,
+          input.conversationId,
+          input.externalEventId,
+          sourceCategory,
+          customerStage,
+          input.referral?.source ?? null,
+          input.referral?.type ?? null,
+          input.referral?.ref ?? null,
+          input.referral?.adId ?? null,
+          referralAdTitle(input.referral) ?? null,
+          referralPostId(input.referral) ?? null,
+          JSON.stringify(input.referral?.adsContextData ?? {}),
+          JSON.stringify(input.referral?.raw ?? {}),
+          input.occurredAt,
+        ],
+      );
+      return { recorded: inserted.rowCount === 1, sourceCategory, customerStage };
+    });
+  }
+
+  async marketingAttributionSnapshot(input: {
+    periodDays?: number;
+    pageId?: string;
+  } = {}): Promise<MarketingAttributionSnapshot> {
+    const periodDays = Math.max(1, Math.min(Math.trunc(input.periodDays ?? 30), 365));
+    const pageId = input.pageId ?? null;
+    const [segmentRows, adRows, orderRows] = await Promise.all([
+      this.pool.query(
+        `SELECT source_category, customer_stage,
+                count(*)::int AS touches,
+                count(DISTINCT customer_id)::int AS unique_customers
+         FROM marketing_attribution_touches
+         WHERE occurred_at >= now() - ($1::int * interval '1 day')
+           AND ($2::uuid IS NULL OR page_id = $2::uuid)
+         GROUP BY source_category, customer_stage
+         ORDER BY touches DESC`,
+        [periodDays, pageId],
+      ),
+      this.pool.query(
+        `SELECT ad_id, max(ad_title) AS ad_title,
+                count(*)::int AS touches,
+                count(DISTINCT customer_id)::int AS unique_customers,
+                count(*) FILTER (WHERE customer_stage = 'new')::int AS new_customers,
+                count(*) FILTER (WHERE customer_stage = 'returning')::int AS returning_customers
+         FROM marketing_attribution_touches
+         WHERE occurred_at >= now() - ($1::int * interval '1 day')
+           AND ($2::uuid IS NULL OR page_id = $2::uuid)
+           AND ad_id IS NOT NULL
+         GROUP BY ad_id
+         ORDER BY touches DESC`,
+        [periodDays, pageId],
+      ),
+      this.pool.query(
+        `WITH eligible_orders AS (
+           SELECT o.id, o.confirmed_at, coalesce(o.total_vnd, 0)::bigint AS total_vnd,
+                  c.id AS customer_id
+           FROM order_inbox o
+           JOIN customers c
+             ON o.session_id = c.page_id::text || ':' || c.external_customer_id
+           WHERE o.status <> 'cancelled'
+             AND o.confirmed_at >= now() - ($1::int * interval '1 day')
+             AND ($2::uuid IS NULL OR c.page_id = $2::uuid)
+         ), attributed AS (
+           SELECT o.id, o.total_vnd, touch.source_category, touch.customer_stage, touch.ad_id
+           FROM eligible_orders o
+           JOIN LATERAL (
+             SELECT source_category, customer_stage, ad_id
+             FROM marketing_attribution_touches t
+             WHERE t.customer_id = o.customer_id
+               AND t.occurred_at <= o.confirmed_at
+               AND t.occurred_at >= o.confirmed_at - interval '30 days'
+             ORDER BY t.occurred_at DESC
+             LIMIT 1
+           ) touch ON true
+         )
+         SELECT source_category, customer_stage, ad_id,
+                count(*)::int AS orders,
+                coalesce(sum(total_vnd), 0)::bigint AS revenue_vnd
+         FROM attributed
+         GROUP BY source_category, customer_stage, ad_id`,
+        [periodDays, pageId],
+      ),
+    ]);
+    return buildMarketingAttributionSnapshot({
+      periodDays,
+      ...(input.pageId ? { pageId: input.pageId } : {}),
+      segmentRows: segmentRows.rows,
+      adRows: adRows.rows,
+      orderRows: orderRows.rows,
+    });
+  }
+
   async markHumanTakeover(input: {
     tenantId: TenantId;
     pageId: string;
@@ -1099,5 +1307,90 @@ function emptyLlmUsageTotals(): LlmUsageTotals {
     totalTokens: 0,
     costUsd: 0,
     averageLatencyMs: 0,
+  };
+}
+
+function buildMarketingAttributionSnapshot(input: {
+  periodDays: number;
+  pageId?: string;
+  segmentRows: Array<Record<string, unknown>>;
+  adRows: Array<Record<string, unknown>>;
+  orderRows: Array<Record<string, unknown>>;
+}): MarketingAttributionSnapshot {
+  const segmentOrders = new Map<string, { orders: number; revenueVnd: number }>();
+  const adOrders = new Map<string, { orders: number; revenueVnd: number }>();
+  let totalOrders = 0;
+  let totalRevenueVnd = 0;
+  for (const row of input.orderRows) {
+    const orders = Number(row.orders ?? 0);
+    const revenueVnd = Number(row.revenue_vnd ?? 0);
+    const segmentKey = `${String(row.source_category)}:${String(row.customer_stage)}`;
+    const currentSegment = segmentOrders.get(segmentKey) ?? { orders: 0, revenueVnd: 0 };
+    currentSegment.orders += orders;
+    currentSegment.revenueVnd += revenueVnd;
+    segmentOrders.set(segmentKey, currentSegment);
+    if (typeof row.ad_id === "string" && row.ad_id) {
+      const currentAd = adOrders.get(row.ad_id) ?? { orders: 0, revenueVnd: 0 };
+      currentAd.orders += orders;
+      currentAd.revenueVnd += revenueVnd;
+      adOrders.set(row.ad_id, currentAd);
+    }
+    totalOrders += orders;
+    totalRevenueVnd += revenueVnd;
+  }
+  const segments = input.segmentRows.map((row): MarketingAttributionSegment => {
+    const sourceCategory = row.source_category as MarketingSourceCategory;
+    const customerStage = row.customer_stage as MarketingCustomerStage;
+    const conversion = segmentOrders.get(`${sourceCategory}:${customerStage}`) ?? {
+      orders: 0,
+      revenueVnd: 0,
+    };
+    return {
+      sourceCategory,
+      customerStage,
+      touches: Number(row.touches ?? 0),
+      uniqueCustomers: Number(row.unique_customers ?? 0),
+      ...conversion,
+    };
+  });
+  const ads = input.adRows.map((row): MarketingAttributionAd => {
+    const adId = String(row.ad_id);
+    const conversion = adOrders.get(adId) ?? { orders: 0, revenueVnd: 0 };
+    return {
+      adId,
+      ...(typeof row.ad_title === "string" && row.ad_title ? { adTitle: row.ad_title } : {}),
+      touches: Number(row.touches ?? 0),
+      uniqueCustomers: Number(row.unique_customers ?? 0),
+      newCustomers: Number(row.new_customers ?? 0),
+      returningCustomers: Number(row.returning_customers ?? 0),
+      ...conversion,
+    };
+  });
+  return {
+    generatedAt: new Date().toISOString(),
+    periodDays: input.periodDays,
+    ...(input.pageId ? { pageId: input.pageId } : {}),
+    totals: {
+      touches: segments.reduce((sum, item) => sum + item.touches, 0),
+      newCustomers: segments
+        .filter((item) => item.customerStage === "new")
+        .reduce((sum, item) => sum + item.uniqueCustomers, 0),
+      returningCustomers: segments
+        .filter((item) => item.customerStage === "returning")
+        .reduce((sum, item) => sum + item.uniqueCustomers, 0),
+      paidTouches: segments
+        .filter((item) => item.sourceCategory === "paid_ad")
+        .reduce((sum, item) => sum + item.touches, 0),
+      organicTouches: segments
+        .filter((item) => item.sourceCategory === "organic")
+        .reduce((sum, item) => sum + item.touches, 0),
+      referralTouches: segments
+        .filter((item) => item.sourceCategory === "referral")
+        .reduce((sum, item) => sum + item.touches, 0),
+      orders: totalOrders,
+      revenueVnd: totalRevenueVnd,
+    },
+    segments,
+    ads,
   };
 }

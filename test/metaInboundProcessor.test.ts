@@ -28,6 +28,7 @@ function fixture(options: {
   followups?: boolean;
   dispatchCurrent?: boolean;
   profileName?: string;
+  attribution?: boolean;
 }) {
   const sent: string[] = [];
   const processed: string[] = [];
@@ -48,6 +49,7 @@ function fixture(options: {
   const followupSchedules: Array<Record<string, unknown>> = [];
   const followupCancellations: Array<Record<string, unknown>> = [];
   const inboxPushes: Array<Record<string, unknown>> = [];
+  const attributionTouches: Array<Record<string, unknown>> = [];
   let newerInbound = options.newerInbound ?? false;
   let sendAttempts = 0;
   let cachedDisplayName: string | undefined;
@@ -106,6 +108,18 @@ function fixture(options: {
     async markInboundProcessed(input) {
       processed.push(input.externalEventId);
     },
+    ...(options.attribution
+      ? {
+          async recordMarketingAttribution(input: Record<string, unknown>) {
+            attributionTouches.push(input);
+            return {
+              recorded: true,
+              sourceCategory: input.referral ? ("paid_ad" as const) : ("organic" as const),
+              customerStage: "new" as const,
+            };
+          },
+        }
+      : {}),
   };
   const messenger: MetaMessenger = {
     ...(profileName
@@ -176,6 +190,7 @@ function fixture(options: {
     followupSchedules,
     followupCancellations,
     inboxPushes,
+    attributionTouches,
     get profileRequests() {
       return profileRequests;
     },
@@ -200,7 +215,7 @@ function job(overrides: Partial<MetaInboundJob> = {}): MetaInboundJob {
     attempt: 0,
     ...overrides,
   };
-  if (output.kind === "image" && !("text" in overrides)) delete output.text;
+  if ((output.kind === "image" || output.kind === "referral") && !("text" in overrides)) delete output.text;
   return output;
 }
 
@@ -210,6 +225,29 @@ test("Meta inbound chỉ lưu dữ liệu khi công tắc gửi thật đang t�
   assert.deepEqual(result, { status: "ingested", replyCount: 0 });
   assert.deepEqual(context.sent, []);
   assert.deepEqual(context.processed, ["message-1"]);
+});
+
+test("Meta inbound ghi attribution trước cả khi công tắc gửi phản hồi đang tắt", async () => {
+  const context = fixture({ live: false, attribution: true });
+  await context.processor.processBatch([
+    job({
+      kind: "referral",
+      referral: {
+        source: "ADS",
+        type: "OPEN_THREAD",
+        adId: "ad-123",
+        adsContextData: { ad_title: "Mẫu quảng cáo A" },
+        raw: { source: "ADS", ad_id: "ad-123" },
+      },
+    }),
+  ]);
+
+  assert.equal(context.attributionTouches.length, 1);
+  assert.equal(
+    (context.attributionTouches[0]?.referral as { adId?: string } | undefined)?.adId,
+    "ad-123",
+  );
+  assert.deepEqual(context.sent, []);
 });
 
 test("Meta ghi đơn vào inbox ngay khi khách gửi đủ thông tin và không gửi mã demo", async () => {
@@ -253,6 +291,31 @@ test("Meta lấy tên hồ sơ Facebook làm tên người nhận khi khách ch�
   assert.ok(context.sent.every((reply) => !/bổ sung.*tên người nhận/isu.test(reply)));
 });
 
+test("Meta cập nhật chính đơn pending khi khách đổi thông tin và chuyển dẫn chứng vào order inbox", async () => {
+  const context = fixture({ live: true });
+  await context.processor.processBatch([job({ eventId: "edit-order-1", text: "Giá bao nhiêu?" })]);
+  await context.processor.processBatch([job({ eventId: "edit-order-2", text: "Mình lấy combo 2 lọ" })]);
+  await context.processor.processBatch([
+    job({
+      eventId: "edit-order-3",
+      text: "Nguyễn Văn A, 0912345678, số 12 Đội Cấn, phường Đội Cấn, quận Ba Đình, Hà Nội",
+    }),
+  ]);
+  const updated = await context.processor.processBatch([
+    job({ eventId: "edit-order-4", text: "Anh chốt lại 1 lọ thôi nhé" }),
+  ]);
+
+  assert.equal(updated.status, "replied");
+  assert.equal(context.inboxPushes.length, 2);
+  assert.equal((context.inboxPushes[1]?.draft as { quantity?: number })?.quantity, 1);
+  assert.equal(
+    (context.inboxPushes[1]?.changeEvidence as { customerMessage?: string })?.customerMessage,
+    "Anh chốt lại 1 lọ thôi nhé",
+  );
+  assert.ok(context.sent.some((reply) => /đã cập nhật lại đơn/iu.test(reply)));
+  assert.ok(context.sent.every((reply) => !/đơn thử|DEMO-|localhost|sandbox/iu.test(reply)));
+});
+
 test("Meta inbound dùng brain để trả lời và lưu state khi đã bật gửi", async () => {
   const context = fixture({ live: true });
   const result = await context.processor.processBatch([job()]);
@@ -283,6 +346,18 @@ test("báo giá gửi Meta thành công mới tạo follow-up cycle và inbound 
   assert.equal(context.followupSchedules[0]?.conversationId, "conversation-1");
   assert.equal(context.followupSchedules[0]?.anchorOutboundMessageId, "out-2");
   assert.equal(context.followupSchedules[0]?.stateVersion, 1);
+  assert.equal(
+    (context.followupSchedules[0]?.contextSnapshot as { lastIntent?: string })?.lastIntent,
+    "price_request",
+  );
+  assert.match(
+    String((context.followupSchedules[0]?.contextSnapshot as { customerMessage?: string })?.customerMessage),
+    /Giá bao nhiêu/iu,
+  );
+  assert.match(
+    String((context.followupSchedules[0]?.contextSnapshot as { assistantReply?: string })?.assistantReply),
+    /285\.000đ/iu,
+  );
 });
 
 test("Meta gửi báo giá lỗi thì chưa được tạo follow-up cycle", async () => {
@@ -340,6 +415,101 @@ test("Meta brain chỉ nhận câu trả lời AI có citation thuộc knowledge
   assert.ok(
     response.state.decisionTrace?.knowledgeEntityIds.includes("product-comparison-traditional-rollon"),
   );
+});
+
+test("Meta brain xử lý dấu chấm bằng LLM một lần, không truy xuất Knowledge hoặc handoff", async () => {
+  let llmCalls = 0;
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      llmCalls += 1;
+      assert.match(prompt, /TIN KHÔNG CÓ NỘI DUNG|không còn chữ, số hoặc emoji/iu);
+      assert.match(prompt, /KNOWLEDGE: \[\]/u);
+      return JSON.stringify({
+        summary: "Khách gửi tin chưa có nội dung",
+        skill: "need-discovery",
+        intent: "other",
+        topic: "other",
+        subject: "customer",
+        scenario: "unknown",
+        asksDirectAnswer: false,
+        confidence: 1,
+        needsClarification: false,
+        evidence: [],
+        actions: [],
+        uncertainties: [],
+        knowledgeIds: [],
+        knowledgeQueries: [],
+        unsupportedQuestions: [],
+        answeredQuestions: [],
+        nextStep: "ask_discovery",
+        groundingConfidence: 1,
+        draftReply:
+          "Dạ em chào mình ạ. Mình đang cần hỗ trợ về mồ hôi, mùi cơ thể, cách dùng, giá hay đơn hàng ạ?",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({ sessionId: "content-free-dot", text: "." });
+
+  assert.equal(llmCalls, 1);
+  assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(response.state.botPaused, false);
+  assert.match(response.reply, /mồ hôi.*mùi cơ thể.*cách dùng.*giá.*đơn hàng/iu);
+  assert.equal((response.reply.match(/[?？]/gu) ?? []).length, 1);
+  assert.doesNotMatch(response.reply, /chưa thấy nội dung|chuyển bộ phận/iu);
+});
+
+test("Meta brain buộc LLM tự sửa câu trả lời lạnh cho dấu chấm mà không chạy Knowledge retry", async () => {
+  let llmCalls = 0;
+  const chat = new DemoChatService();
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async (prompt) => {
+      llmCalls += 1;
+      if (prompt.includes("Bản nháp của bạn vừa bị lớp hậu kiểm")) {
+        assert.match(prompt, /content_free_message_guard/u);
+        return "Dạ em chào mình ạ. Mình muốn được hỗ trợ về sản phẩm, cách dùng, giá hay đơn hàng ạ?";
+      }
+      return JSON.stringify({
+        summary: "Khách gửi dấu chấm",
+        skill: "knowledge-handoff",
+        intent: "knowledge_unknown",
+        topic: "other",
+        subject: "product",
+        scenario: "unknown",
+        asksDirectAnswer: true,
+        confidence: 0.8,
+        needsClarification: false,
+        evidence: ["."],
+        actions: [
+          {
+            type: "handoff_to_human",
+            confidence: 0.8,
+            evidence: ["."],
+            reason: "chưa có dữ liệu",
+          },
+        ],
+        uncertainties: [],
+        knowledgeIds: [],
+        knowledgeQueries: ["nội dung khách cần hỗ trợ"],
+        unsupportedQuestions: ["nội dung khách cần hỗ trợ"],
+        groundingConfidence: 0,
+        draftReply: "Mình chưa thấy nội dung cần hỗ trợ từ tin nhắn này.",
+        slots: {},
+      });
+    },
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({ sessionId: "content-free-dot-repair", text: "." });
+
+  assert.equal(llmCalls, 2);
+  assert.notEqual(response.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(response.state.botPaused, false);
+  assert.match(response.reply, /mình muốn được hỗ trợ/iu);
+  assert.doesNotMatch(response.reply, /chưa thấy nội dung|chuyển bộ phận/iu);
 });
 
 test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge thay vì handoff", async () => {

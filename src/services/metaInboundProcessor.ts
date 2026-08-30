@@ -10,9 +10,11 @@ import { batchMessages } from "./messageBatcher.js";
 import type { DemoChatService } from "./demoChat.js";
 import { MetaChatBrain } from "./metaChatBrain.js";
 import type { StructuredLogger } from "./logger.js";
+import type { FollowupContextSnapshot } from "../domain/followup.js";
 import type { FollowupCycleSchedule } from "./followupRepository.js";
 import type { OrderDraft } from "../domain/orders.js";
 import type { PushOrderInboxInput } from "./orderInbox.js";
+import type { MetaReferralAttribution } from "../domain/marketingAttribution.js";
 
 export type FollowupCoordinator = {
   cancelConversation(input: {
@@ -25,6 +27,7 @@ export type FollowupCoordinator = {
 
 export type OrderInboxWriter = {
   push(input: PushOrderInboxInput): Promise<unknown>;
+  canEditPending?(sessionId: string): Promise<boolean | undefined>;
 };
 
 export type MetaInboundJob = {
@@ -34,9 +37,10 @@ export type MetaInboundJob = {
   externalPageId: string;
   eventId: string;
   senderId: string;
-  kind: "text" | "image" | "postback" | "delivery" | "read";
+  kind: "text" | "image" | "postback" | "referral" | "delivery" | "read";
   text?: string;
   attachmentUrl?: string;
+  referral?: MetaReferralAttribution;
   timestamp: string;
   payload: unknown;
   attempt: number;
@@ -53,7 +57,7 @@ export type MetaInboundStore = Pick<
   | "markConversationTurnOutboundSent"
   | "markInboundProcessed"
   | "canDispatchConversationOutbound"
->;
+> & Partial<Pick<PostgresStore, "recordMarketingAttribution">>;
 
 export class MetaInboundProcessor {
   constructor(
@@ -96,6 +100,28 @@ export class MetaInboundProcessor {
     const contentJobs = jobs.filter(
       (job) => job.kind === "text" || job.kind === "image" || job.kind === "postback",
     );
+    const attributionJob = jobs.find((job) => job.referral) ?? contentJobs[0];
+    if (attributionJob && this.options.store.recordMarketingAttribution) {
+      const occurredAt = new Date(attributionJob.timestamp);
+      const attribution = await this.options.store.recordMarketingAttribution({
+        tenantId: first.tenantId,
+        pageId: first.pageId,
+        customerId: conversation.customerId,
+        conversationId: conversation.conversationId,
+        externalEventId: attributionJob.eventId,
+        occurredAt: Number.isNaN(occurredAt.getTime()) ? new Date() : occurredAt,
+        ...(attributionJob.referral ? { referral: attributionJob.referral } : {}),
+      });
+      if (attribution.recorded) {
+        this.options.logger.log("info", "marketing_attribution_recorded", {
+          traceId: first.traceId,
+          conversationId: conversation.conversationId,
+          sourceCategory: attribution.sourceCategory,
+          customerStage: attribution.customerStage,
+          ...(attributionJob.referral?.adId ? { adId: attributionJob.referral.adId } : {}),
+        });
+      }
+    }
     const turnIdempotencyKey = `${first.eventId}:reply:turn`;
     for (const job of contentJobs) {
       await this.options.store.persistConversationMessage({
@@ -170,6 +196,12 @@ export class MetaInboundProcessor {
           conversationId: conversation.conversationId,
           stateVersion: conversation.stateVersion,
           anchorOutboundMessageId: lastMessageId,
+          contextSnapshot: buildFollowupContextSnapshot({
+            state: conversation.runtimeState,
+            customerMessage: contentJobs.map((job) => job.text ?? "").filter(Boolean).join("\n"),
+            assistantReplies: existingOutbound.texts,
+            ...(conversation.displayName ? { customerDisplayName: conversation.displayName } : {}),
+          }),
         });
       }
       await this.markProcessed(jobs);
@@ -229,7 +261,8 @@ export class MetaInboundProcessor {
         });
       }
     }
-    const chatContext = this.context(conversation.displayName, profileFirstName);
+    const orderEditable = await this.options.orderInbox?.canEditPending?.(sessionId);
+    const chatContext = this.context(conversation.displayName, profileFirstName, orderEditable);
     this.options.chat.restoreSession(
       sessionId,
       conversation.runtimeState,
@@ -321,6 +354,12 @@ export class MetaInboundProcessor {
         conversationId: conversation.conversationId,
         stateVersion: committed.stateVersion,
         anchorOutboundMessageId: dispatched.lastMessageId,
+        contextSnapshot: buildFollowupContextSnapshot({
+          state: result.state,
+          customerMessage: text,
+          assistantReplies: result.replies,
+          ...(conversation.displayName ? { customerDisplayName: conversation.displayName } : {}),
+        }),
       });
     }
     return {
@@ -329,7 +368,7 @@ export class MetaInboundProcessor {
     };
   }
 
-  private context(displayName?: string, firstName?: string): {
+  private context(displayName?: string, firstName?: string, orderEditable?: boolean): {
     identity: {
       salutation: "anh/chị";
       staffFirstName: string;
@@ -338,6 +377,7 @@ export class MetaInboundProcessor {
     };
     openingVariantId: OpeningVariantId;
     orderConfirmationMode: "inbox";
+    orderEditable?: boolean;
   } {
     return {
       identity: {
@@ -348,6 +388,7 @@ export class MetaInboundProcessor {
       },
       openingVariantId: this.options.openingVariantId,
       orderConfirmationMode: "inbox",
+      ...(orderEditable !== undefined ? { orderEditable } : {}),
     };
   }
 
@@ -358,6 +399,11 @@ export class MetaInboundProcessor {
       orderFlowStatus?: string;
       orderDraft?: OrderDraft;
       order?: OrderDraft;
+      recentTurns?: Array<{ role?: string; text?: string }>;
+      orderTransactionTrace?: {
+        acceptedActions?: Array<{ type: string; evidence: string }>;
+        changedFields?: string[];
+      };
     };
     const draft = state.orderDraft ?? state.order;
     const created = state.orderFlowStatus === "created" || state.pipeline === "6.Đã tạo đơn";
@@ -367,11 +413,19 @@ export class MetaInboundProcessor {
         ? draft.customerConfirmedAt
         : new Date(draft.customerConfirmedAt);
     if (Number.isNaN(confirmedAt.getTime())) throw new Error("invalid_order_confirmation_timestamp");
+    const customerMessage = state.recentTurns
+      ? [...state.recentTurns].reverse().find((turn) => turn.role === "user")?.text
+      : undefined;
     await this.options.orderInbox.push({
       sessionId: input.sessionId,
       channel: "meta",
       draft,
       confirmedAt,
+      changeEvidence: {
+        ...(customerMessage ? { customerMessage } : {}),
+        acceptedActions: state.orderTransactionTrace?.acceptedActions ?? [],
+        changedFields: state.orderTransactionTrace?.changedFields ?? [],
+      },
     });
     this.options.logger.log("info", "order_inbox_recorded", {
       sessionId: input.sessionId,
@@ -485,4 +539,65 @@ function isFollowupEligiblePipeline(pipeline: string): boolean {
 
 function isFollowupEligibleTurn(intent: string | undefined, pipeline: string): boolean {
   return Boolean(intent && FOLLOWUP_PRICE_INTENTS.has(intent) && isFollowupEligiblePipeline(pipeline));
+}
+
+function buildFollowupContextSnapshot(input: {
+  state: unknown;
+  customerMessage: string;
+  assistantReplies: readonly string[];
+  customerDisplayName?: string;
+}): FollowupContextSnapshot {
+  const state = asObject(input.state);
+  const memory = asObject(state.conversationMemory);
+  const nextBestAction = asObject(state.nextBestAction ?? state.lastNextBestAction);
+  const snapshot: FollowupContextSnapshot = {
+    customerMessage: sanitizeFollowupContextText(input.customerMessage, 500),
+    assistantReply: sanitizeFollowupContextText(input.assistantReplies.join("\n\n"), 800),
+    ...(input.customerDisplayName
+      ? { customerDisplayName: sanitizeFollowupContextText(input.customerDisplayName, 80) }
+      : {}),
+    ...(typeof state.lastIntent === "string" ? { lastIntent: state.lastIntent.slice(0, 80) } : {}),
+    ...(typeof state.activeSkill === "string" ? { activeSkill: state.activeSkill.slice(0, 80) } : {}),
+    ...(typeof state.pipeline === "string" ? { pipeline: state.pipeline.slice(0, 80) } : {}),
+    ...(typeof nextBestAction.key === "string"
+      ? {
+          nextBestAction: {
+            key: nextBestAction.key.slice(0, 120),
+            ...(typeof nextBestAction.prompt === "string"
+              ? { prompt: sanitizeFollowupContextText(nextBestAction.prompt, 240) }
+              : {}),
+          },
+        }
+      : {}),
+    conversationMemory: {
+      ...(typeof memory.currentGoal === "string" ? { currentGoal: memory.currentGoal.slice(0, 120) } : {}),
+      usedArguments: stringArray(memory.usedArguments, 8),
+      rejectedArguments: stringArray(memory.rejectedArguments, 8),
+      openQuestions: stringArray(memory.openQuestions, 8),
+    },
+    answeredTopics: stringArray(state.answeredTopics, 12),
+    askedTopics: stringArray(state.askedTopics, 12),
+  };
+  return snapshot;
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringArray(value: unknown, limit: number): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 120)).slice(0, limit)
+    : [];
+}
+
+function sanitizeFollowupContextText(value: string, maxLength: number): string {
+  return value
+    .replace(/(?<!\d)0\d{9}(?!\d)/gu, "[SĐT đã ẩn]")
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/gu, "[email đã ẩn]")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, maxLength);
 }

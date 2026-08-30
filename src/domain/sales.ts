@@ -129,12 +129,37 @@ export function stopirexGiftForQuantity(quantity: number): string | undefined {
     : undefined;
 }
 
-export function followupMessage(stage: "3h" | "6h" | "9h"): string {
-  if (stage === "3h")
-    return "Dạ em nhắn lại để thông tin không bị trôi ạ. Lần này bên em hỗ trợ miễn phí giao cả phương án 1 lọ. Anh/chị muốn chọn mấy lọ ạ?";
-  if (stage === "6h")
-    return "Dạ để em hỗ trợ đúng phần mình còn cân nhắc: anh/chị đang băn khoăn về giá/phí giao, hiệu quả, an toàn hay hiện chưa cần mua ngay ạ?";
-  return "Dạ em xin phép khép lại vòng tư vấn để không làm phiền anh/chị. Khi cần hỗ trợ, mình chỉ cần nhắn TƯ VẤN, bên em sẽ xem lại thông tin và hỗ trợ tiếp ạ.";
+export function followupMessage(
+  stage: "3h" | "6h" | "9h",
+  context: {
+    lastIntent?: string;
+    rejectedArguments?: readonly string[];
+    openQuestions?: readonly string[];
+    askedTopics?: readonly string[];
+  } = {},
+): string {
+  if (stage === "3h") {
+    if (context.lastIntent === "price_objection") {
+      return "Dạ em hiểu mình vẫn đang cân nhắc vì mức giá ạ. Bên em đang hỗ trợ miễn phí giao cả phương án 1 lọ. Điều mình muốn làm rõ thêm là cơ chế khác biệt, cách dùng hay hiệu quả thực tế ạ?";
+    }
+    if (context.lastIntent === "negotiation") {
+      return "Dạ mức hỗ trợ hiện có là miễn phí giao cả phương án 1 lọ ạ. Ngoài phí giao, mình còn băn khoăn nhất về hiệu quả, cách dùng hay độ phù hợp với da ạ?";
+    }
+    if (context.askedTopics?.includes("symptom")) {
+      return "Dạ hiện bên em cũng hỗ trợ miễn phí giao cho phương án 1 lọ ạ. Để mình dễ cân nhắc hơn, mình muốn em làm rõ hiệu quả thực tế, cách dùng hay độ phù hợp với da trước ạ?";
+    }
+    return "Dạ em gửi mình thêm thông tin: hiện bên em hỗ trợ miễn phí giao cho phương án 1 lọ ạ. Để tư vấn sát hơn, mình khó chịu chủ yếu vì mồ hôi làm ướt áo, mùi cơ thể hay cả hai ạ?";
+  }
+  if (stage === "6h") {
+    if (context.rejectedArguments?.includes("duration_or_cost")) {
+      return "Dạ nếu thời gian sử dụng chưa phải điểm mình quan tâm, em có thể làm rõ cơ chế kiểm soát mồ hôi và cách dùng khác lăn khử mùi thông thường. Mình muốn xem phần nào trước ạ?";
+    }
+    if (context.rejectedArguments?.includes("mechanism")) {
+      return "Dạ em không lặp lại phần cơ chế nữa ạ. Mình muốn em làm rõ cách dùng thực tế, độ phù hợp với da hay chính sách hỗ trợ sau mua ạ?";
+    }
+    return "Dạ để em hỗ trợ đúng phần mình còn băn khoăn: mình muốn làm rõ hiệu quả thực tế, cách dùng, độ an toàn hay chi phí ạ?";
+  }
+  return "Dạ em xin phép khép lại phần tư vấn tại đây để không làm phiền mình thêm. Khi cần hỗ trợ, mình chỉ cần nhắn TƯ VẤN, bên em sẽ tiếp tục đúng nội dung đang trao đổi ạ.";
 }
 
 export function oneQuestionResponse(statements: readonly string[], nextQuestion: string): string {

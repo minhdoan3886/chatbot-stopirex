@@ -39,6 +39,7 @@ type PageSubscriptionHealth = {
 const requiredMetaWebhookFields = [
   "messages",
   "messaging_postbacks",
+  "messaging_referrals",
   "message_deliveries",
   "message_reads",
   "message_echoes",
@@ -350,7 +351,7 @@ export class OperationsControlService {
       }
       if (!verified.found) throw new Error("Meta nhận lệnh subscribe nhưng chưa trả về app trên Page");
       if (!verified.hasAllRequiredFields) {
-        throw new Error("Meta chưa đăng ký đủ message_echoes để phát hiện nhân viên tiếp quản");
+        throw new Error("Meta chưa đăng ký đủ webhook fields bắt buộc cho tin nhắn và attribution");
       }
     }
 

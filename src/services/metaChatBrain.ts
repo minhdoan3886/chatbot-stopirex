@@ -21,6 +21,7 @@ import { assertReplyMatchesConversationState } from "../domain/responseConsisten
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
 import {
   CodexLlmBridge,
+  isContentFreeCustomerMessage,
   repairMissingKnowledgeCitations,
   requiresKnowledgeGrounding,
   type ApprovedKnowledgeContext,
@@ -92,15 +93,18 @@ export class MetaChatBrain {
     let knowledge: ApprovedKnowledgeContext[] = [];
     let interpretationStatus: "not_run" | "interpreted" | "fallback" | "skipped" | "unavailable" = "not_run";
     let interpretationReason: string | undefined;
+    const contentFreeMessage = isContentFreeCustomerMessage(input.text);
     if (!fastTransition) {
-      let matches = retrieveKnowledgeMatches({
-        tenantId: liveKnowledgeTenant,
-        query: knowledgeSafeQuery(contextualKnowledgeQuery(input.text, before)),
-        entities: liveKnowledge,
-        // Compound customer messages need breadth. The retriever keeps a leader
-        // for every detected concept, while the LLM remains the semantic owner.
-        limit: 6,
-      });
+      let matches = contentFreeMessage
+        ? []
+        : retrieveKnowledgeMatches({
+            tenantId: liveKnowledgeTenant,
+            query: knowledgeSafeQuery(contextualKnowledgeQuery(input.text, before)),
+            entities: liveKnowledge,
+            // Compound customer messages need breadth. The retriever keeps a leader
+            // for every detected concept, while the LLM remains the semantic owner.
+            limit: 6,
+          });
       knowledge = knowledgeContexts(matches);
       let rawLlmResult = await this.llm.interpret({
         customerMessage: input.text,
@@ -109,7 +113,11 @@ export class MetaChatBrain {
       });
       let knowledgeRetry = false;
       const semanticQueries = semanticKnowledgeQueries(rawLlmResult);
-      if (semanticQueries.length > 0 && needsSemanticKnowledgeExpansion(rawLlmResult)) {
+      if (
+        !contentFreeMessage &&
+        semanticQueries.length > 0 &&
+        needsSemanticKnowledgeExpansion(rawLlmResult)
+      ) {
         const expandedMatches = semanticQueries.flatMap((query) =>
           retrieveKnowledgeMatches({
             tenantId: liveKnowledgeTenant,
@@ -131,6 +139,9 @@ export class MetaChatBrain {
           });
           knowledgeRetry = true;
         }
+      }
+      if (contentFreeMessage) {
+        rawLlmResult = reconcileContentFreeInterpretation(rawLlmResult);
       }
       const retrievedIds = new Set(knowledge.map((entity) => entity.id));
       const validCitations = (rawLlmResult.knowledgeIds ?? []).filter((id) => retrievedIds.has(id));
@@ -289,6 +300,18 @@ export class MetaChatBrain {
         knowledge,
         ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
       });
+    }
+    if (contentFreeMessage && composed.status !== "enhanced") {
+      const reply = contentFreeMessageFallbackReply();
+      const replies = [reply];
+      const state = this.chat.replaceLatestAssistantTurns(input.sessionId, base.replies, replies);
+      this.logger?.log("warn", "content_free_message_fallback", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        interpretationStatus,
+        compositionStatus: composed.status,
+        compositionReason: composed.reason,
+      });
+      return { ...base, reply, replies, state };
     }
     this.logger?.log(composed.status === "enhanced" ? "debug" : "warn", "llm_composition", {
       ...(input.traceId ? { traceId: input.traceId } : {}),
@@ -1017,6 +1040,34 @@ function contextualKnowledgeQuery(customerMessage: string, state: DemoChatState)
     .slice(-2)
     .map((turn) => turn.text.replace(/(?<!\d)0\d{9}(?!\d)/gu, "[SĐT]"));
   return [...priorCustomerTurns, customerMessage].join("\n");
+}
+
+function reconcileContentFreeInterpretation<T extends SemanticUnderstanding>(semantic: T): T {
+  return {
+    ...semantic,
+    skill: "need-discovery",
+    intent: "other",
+    topic: "other",
+    subject: "customer",
+    scenario: "unknown",
+    slots: {},
+    actions: [],
+    uncertainties: [],
+    knowledgeIds: [],
+    knowledgeQueries: [],
+    unsupportedQuestions: [],
+    answeredQuestions: [],
+    nextStep: "ask_discovery",
+    groundingConfidence: 1,
+    confidence: 1,
+    needsClarification: false,
+    asksDirectAnswer: false,
+    evidence: [],
+  };
+}
+
+function contentFreeMessageFallbackReply(): string {
+  return "Dạ em chào mình ạ. Mình đang cần hỗ trợ về mồ hôi, mùi cơ thể, cách dùng, giá hay đơn hàng ạ?";
 }
 
 function knowledgeContexts(matches: readonly KnowledgeMatch[]): ApprovedKnowledgeContext[] {

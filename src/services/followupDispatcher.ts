@@ -1,5 +1,7 @@
 import type { MetaMessenger } from "../integrations/contracts.js";
 import { followupMessage } from "../domain/sales.js";
+import { questionTopic } from "../domain/responseGovernor.js";
+import type { FollowupComposeResult } from "./codexLlm.js";
 import type {
   ClaimedFollowupJob,
   PgFollowupRepository,
@@ -65,6 +67,13 @@ export class FollowupDispatcher {
       mode: FollowupMode;
       outboundWindowHours: number;
       maxAttempts: number;
+      composer?: {
+        composeFollowup(input: {
+          stage: ClaimedFollowupJob["stage"];
+          baseReply: string;
+          context: ClaimedFollowupJob["contextSnapshot"];
+        }): Promise<FollowupComposeResult>;
+      };
       now?: () => Date;
     },
   ) {}
@@ -106,7 +115,33 @@ export class FollowupDispatcher {
     if (!(await this.options.repository.isStillClaimed(job.id))) {
       return "cancelled";
     }
-    const text = followupMessage(job.stage);
+    const context = job.contextSnapshot;
+    const baseReply = followupMessage(job.stage, {
+      ...(context.lastIntent ? { lastIntent: context.lastIntent } : {}),
+      ...(context.conversationMemory?.rejectedArguments
+        ? { rejectedArguments: context.conversationMemory.rejectedArguments }
+        : {}),
+      ...(context.conversationMemory?.openQuestions
+        ? { openQuestions: context.conversationMemory.openQuestions }
+        : {}),
+      ...(context.askedTopics ? { askedTopics: context.askedTopics } : {}),
+    });
+    const composed = this.options.composer
+      ? await this.options.composer.composeFollowup({
+          stage: job.stage,
+          baseReply,
+          context,
+        })
+      : {
+          text: baseReply,
+          status: "fallback" as const,
+          latencyMs: 0,
+          reason: "composer_not_configured",
+          model: "none",
+          provider: "openai" as const,
+        };
+    const text = composed.text;
+    const pendingQuestionTopic = questionTopic(text);
     const result = await this.options.messenger.sendText({
       recipientId: job.externalCustomerId,
       text,
@@ -118,6 +153,8 @@ export class FollowupDispatcher {
         metaMessageId: result.value.messageId,
         text,
         sentAt: now,
+        ...(pendingQuestionTopic ? { pendingQuestionTopic } : {}),
+        composerStatus: composed.status,
       });
       this.options.logger.log("info", "followup_sent", {
         jobId: job.id,
@@ -125,6 +162,11 @@ export class FollowupDispatcher {
         conversationId: job.conversationId,
         stage: job.stage,
         metaMessageId: result.value.messageId,
+        composerStatus: composed.status,
+        composerReason: composed.reason,
+        composerModel: composed.model,
+        composerProvider: composed.provider,
+        composerLatencyMs: composed.latencyMs,
       });
       return "sent";
     }

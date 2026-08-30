@@ -478,8 +478,10 @@ test("state reducer cập nhật quantity, thay/khôi phục địa chỉ, recap
 
   const completed = chat.chat(sessionId, "Đùa thôi, cứ giao đơn lẻ này trước đi. Chào shop nhé.");
   assert.equal(completed.state.pipeline, "6.Đã tạo đơn");
-  assert.ok(completed.state.orderId);
+  assert.equal(completed.state.orderId, undefined);
   assert.equal(completed.state.orderDraft?.quantity, 2);
+  assert.match(completed.reply, /đã ghi nhận thông tin đơn/iu);
+  assert.doesNotMatch(completed.reply, /DEMO-|đơn thử|localhost|sandbox/iu);
 });
 
 test("refund follow-up giữ đúng chủ đề và không đổi state đơn", () => {
@@ -564,10 +566,11 @@ test("khách kỹ tính đi đủ knowledge rồi chốt đơn trong một trans
 
   const t7 = chat.chat(sessionId, "Đúng thông tin rồi, shop gửi hàng sớm cho mình nhé.");
   assert.equal(t7.state.pipeline, "6.Đã tạo đơn");
-  assert.ok(t7.state.orderId);
+  assert.equal(t7.state.orderId, undefined);
   assert.deepEqual(
     t7.state.orderTransactionTrace?.acceptedActions.map((action) => action.type),
     ["confirm_order"],
   );
-  assert.match(t7.reply, /lên đơn thành công/iu);
+  assert.match(t7.reply, /đã ghi nhận thông tin đơn/iu);
+  assert.doesNotMatch(t7.reply, /DEMO-|đơn thử|localhost|sandbox/iu);
 });

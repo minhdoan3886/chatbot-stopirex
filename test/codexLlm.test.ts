@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   buildInterpretPromptForDiagnostics,
   CodexLlmBridge,
+  isContentFreeCustomerMessage,
+  isHelpfulContentFreeReply,
   mergeDraftWithExecutedState,
   parseCodexJsonl,
   parseSemanticSlots,
@@ -32,6 +34,31 @@ const state: DemoChatState = {
   responseGovernorTruncated: false,
 };
 
+test("nhận diện tin chỉ có dấu câu nhưng vẫn giữ emoji là tín hiệu có nghĩa", () => {
+  assert.equal(isContentFreeCustomerMessage("."), true);
+  assert.equal(isContentFreeCustomerMessage("  ...?!  "), true);
+  assert.equal(isContentFreeCustomerMessage("👍"), false);
+  assert.equal(isContentFreeCustomerMessage("giá?"), false);
+});
+
+test("hậu kiểm buộc tin dấu chấm có đúng một câu hỏi hỗ trợ thân thiện", () => {
+  assert.equal(
+    isHelpfulContentFreeReply(
+      ".",
+      "Dạ em chào mình ạ. Mình đang cần hỗ trợ về sản phẩm, cách dùng, giá hay đơn hàng ạ?",
+    ),
+    true,
+  );
+  assert.equal(
+    isHelpfulContentFreeReply(".", "Mình chưa thấy nội dung cần hỗ trợ từ tin nhắn này."),
+    false,
+  );
+  assert.equal(
+    isHelpfulContentFreeReply(".", "Dạ mình cần hỗ trợ gì ạ? Hay mình muốn xem giá ạ?"),
+    false,
+  );
+});
+
 test("citation repair chỉ gắn nguồn retrieval khi LLM đã có draft và answer action", () => {
   const repaired = repairMissingKnowledgeCitations(
     {
@@ -59,6 +86,51 @@ test("citation repair chỉ gắn nguồn retrieval khi LLM đã có draft và a
     "product-comparison-traditional-rollon",
   ]);
   assert.equal(repaired.groundingConfidence, 0.82);
+});
+
+test("OpenAI soạn follow-up theo ngữ cảnh nhưng vẫn giữ dữ kiện thương mại đã duyệt", async () => {
+  const bridge = new CodexLlmBridge({
+    enabled: true,
+    provider: "openai",
+    apiKey: "test-key",
+    model: "test-model",
+    runner: async () =>
+      "Dạ em hiểu mình vẫn đang cân nhắc ạ. Phương án 1 lọ hiện được miễn phí giao. Mình muốn em làm rõ cơ chế khác biệt hay cách dùng thực tế trước ạ?",
+  });
+  const result = await bridge.composeFollowup({
+    stage: "3h",
+    baseReply:
+      "Dạ em hiểu mình vẫn đang cân nhắc vì mức giá ạ. Bên em đang hỗ trợ miễn phí giao cả phương án 1 lọ. Điều mình muốn làm rõ thêm là cơ chế khác biệt, cách dùng hay hiệu quả thực tế ạ?",
+    context: {
+      customerMessage: "Giá hơi cao em nhỉ",
+      lastIntent: "price_objection",
+    },
+  });
+
+  assert.equal(result.status, "generated");
+  assert.match(result.text, /miễn phí giao/iu);
+  assert.equal((result.text.match(/[?？]/gu) ?? []).length, 1);
+  assert.doesNotMatch(result.text, /chọn mấy lọ/iu);
+});
+
+test("follow-up LLM vi phạm hướng chốt số lượng bị hạ về fallback đã duyệt", async () => {
+  const baseReply =
+    "Dạ em gửi mình thêm thông tin: hiện phương án 1 lọ cũng được hỗ trợ miễn phí giao ạ. Để tư vấn sát hơn, mình khó chịu chủ yếu vì mồ hôi làm ướt áo, mùi cơ thể hay cả hai ạ?";
+  const bridge = new CodexLlmBridge({
+    enabled: true,
+    provider: "openai",
+    apiKey: "test-key",
+    model: "test-model",
+    runner: async () => "Dạ phương án 1 lọ được miễn phí giao. Anh/chị muốn chọn mấy lọ ạ?",
+  });
+  const result = await bridge.composeFollowup({
+    stage: "3h",
+    baseReply,
+    context: { customerMessage: "Cho em xin giá" },
+  });
+
+  assert.equal(result.status, "fallback");
+  assert.equal(result.text, baseReply);
 });
 
 test("Response Planner ghép câu trả lời nhiều ý với trạng thái đơn đã thực thi", () => {

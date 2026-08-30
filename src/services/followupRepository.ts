@@ -1,4 +1,4 @@
-import type { FollowupJob } from "../domain/followup.js";
+import type { FollowupContextSnapshot, FollowupJob } from "../domain/followup.js";
 import type { Pool } from "pg";
 
 export type FollowupCycleSchedule = {
@@ -8,6 +8,7 @@ export type FollowupCycleSchedule = {
   anchorOutboundMessageId: string;
   anchorSentAt: Date;
   stateVersion: number;
+  contextSnapshot?: FollowupContextSnapshot;
 };
 
 export type ClaimedFollowupJob = {
@@ -30,6 +31,7 @@ export type ClaimedFollowupJob = {
   customerDeleted: boolean;
   orderExists: boolean;
   lastCustomerActivityAt?: Date;
+  contextSnapshot: FollowupContextSnapshot;
 };
 
 export type FollowupRuntimeSnapshot = {
@@ -101,8 +103,8 @@ export class PgFollowupRepository {
       const cycle = await client.query(
         `INSERT INTO followup_cycles (
            tenant_id, page_id, conversation_id, anchor_outbound_message_id,
-           anchor_sent_at, state_version, status
-         ) VALUES ($1,$2,$3,$4,$5,$6,'active')
+           anchor_sent_at, state_version, context_snapshot, status
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'active')
          RETURNING id::text`,
         [
           input.tenantId,
@@ -111,6 +113,7 @@ export class PgFollowupRepository {
           input.anchorOutboundMessageId,
           input.anchorSentAt,
           input.stateVersion,
+          JSON.stringify(input.contextSnapshot ?? {}),
         ],
       );
       const cycleId = String(cycle.rows[0].id);
@@ -184,12 +187,17 @@ export class PgFollowupRepository {
          f.id::text, f.cycle_id::text, f.tenant_id::text, f.page_id::text,
          f.conversation_id::text, f.stage, f.idempotency_key, f.attempt_count,
          fc.anchor_sent_at, fc.state_version AS anchor_state_version, fc.status AS cycle_status,
+         fc.context_snapshot,
          c.state_version AS current_state_version, c.human_status, c.pipeline_tag,
          p.active AS page_active, (cu.deleted_at IS NOT NULL) AS customer_deleted,
          cu.external_customer_id,
          EXISTS (
            SELECT 1 FROM orders o
            WHERE o.conversation_id = c.id AND o.status IN ('confirmed','creating','created')
+         ) OR EXISTS (
+           SELECT 1 FROM order_inbox oi
+           WHERE oi.session_id = concat(c.page_id::text, ':', cu.external_customer_id)
+             AND oi.status IN ('pending','completed')
          ) AS order_exists,
          GREATEST(
            (SELECT max(m.created_at) FROM messages m
@@ -257,6 +265,8 @@ export class PgFollowupRepository {
     metaMessageId: string;
     text: string;
     sentAt: Date;
+    pendingQuestionTopic?: string;
+    composerStatus?: string;
   }): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -285,34 +295,64 @@ export class PgFollowupRepository {
             stage: input.job.stage,
             cycleId: input.job.cycleId,
             jobId: input.job.id,
+            ...(input.composerStatus ? { composerStatus: input.composerStatus } : {}),
           }),
         ],
       );
-      if (input.job.stage === "3h") {
+      const conversation = await client.query(
+        `SELECT runtime_state
+         FROM conversations
+         WHERE id = $1 AND human_status = 'bot'
+         FOR UPDATE`,
+        [input.job.conversationId],
+      );
+      const currentState = asRuntimeState(conversation.rows[0]?.runtime_state);
+      const history = Array.isArray(currentState.history)
+        ? currentState.history.filter(isHistoryTurn).slice(-39)
+        : [];
+      history.push({ role: "assistant", text: input.text });
+      currentState.history = history;
+      currentState.freeShippingApproved = true;
+      currentState.lastNextBestAction = input.job.stage === "9h"
+        ? {
+            type: "close_without_question",
+            state: "stopped",
+            key: "followup_cycle_completed",
+            reason: "Đã gửi nhịp cuối và khép vòng follow-up.",
+          }
+        : {
+            type: "ask_relevant_fact",
+            state: "preserved_existing_question",
+            key: `followup_${input.job.stage}`,
+            reason: "Câu hỏi follow-up đã gửi và được lưu vào lịch sử hội thoại.",
+          };
+      if (input.job.stage === "9h") {
+        currentState.pipeline = "N.Nuôi dưỡng";
+        delete currentState.pendingQuestionTopic;
+      } else {
+        currentState.pipeline = "7.Chờ followup";
+        if (input.pendingQuestionTopic) currentState.pendingQuestionTopic = input.pendingQuestionTopic;
+        else delete currentState.pendingQuestionTopic;
+      }
+      if (conversation.rowCount === 1) {
         await client.query(
           `UPDATE conversations
-           SET pipeline_tag = '7.Chờ followup',
-               runtime_state = jsonb_set(runtime_state, '{pipeline}', '"7.Chờ followup"'::jsonb, true),
+           SET pipeline_tag = $2,
+               runtime_state = $3::jsonb,
                state_version = state_version + 1,
                updated_at = now()
-           WHERE id = $1 AND human_status = 'bot'
-             AND pipeline_tag IN ('3.Đã báo giá','4.XL băn khoăn')`,
-          [input.job.conversationId],
+           WHERE id = $1 AND human_status = 'bot'`,
+          [
+            input.job.conversationId,
+            input.job.stage === "9h" ? "N.Nuôi dưỡng" : "7.Chờ followup",
+            JSON.stringify(currentState),
+          ],
         );
       }
       if (input.job.stage === "9h") {
         await client.query(
           `UPDATE followup_cycles SET status = 'completed', updated_at = now() WHERE id = $1`,
           [input.job.cycleId],
-        );
-        await client.query(
-          `UPDATE conversations
-           SET pipeline_tag = 'N.Nuôi dưỡng',
-               runtime_state = jsonb_set(runtime_state, '{pipeline}', '"N.Nuôi dưỡng"'::jsonb, true),
-               state_version = state_version + 1,
-               updated_at = now()
-           WHERE id = $1 AND human_status = 'bot' AND pipeline_tag = '7.Chờ followup'`,
-          [input.job.conversationId],
         );
       }
       await client.query("COMMIT");
@@ -440,10 +480,29 @@ function mapClaimedJob(row: Record<string, unknown>): ClaimedFollowupJob {
     pageActive: row.page_active === true,
     customerDeleted: row.customer_deleted === true,
     orderExists: row.order_exists === true,
+    contextSnapshot: asFollowupContext(row.context_snapshot),
     ...(row.last_customer_activity_at
       ? { lastCustomerActivityAt: new Date(row.last_customer_activity_at as string | Date) }
       : {}),
   };
+}
+
+function asFollowupContext(value: unknown): FollowupContextSnapshot {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (structuredClone(value) as FollowupContextSnapshot)
+    : {};
+}
+
+function asRuntimeState(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? structuredClone(value) as Record<string, unknown>
+    : {};
+}
+
+function isHistoryTurn(value: unknown): value is { role: "user" | "assistant"; text: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const turn = value as { role?: unknown; text?: unknown };
+  return (turn.role === "user" || turn.role === "assistant") && typeof turn.text === "string";
 }
 
 function dateValue<Key extends string>(key: Key, value: unknown): Partial<Record<Key, string>> {

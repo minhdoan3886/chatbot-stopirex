@@ -25,6 +25,7 @@ import type { ConversationAction, ConversationActionType } from "../domain/conve
 import { assertKnowledgeAnswerGrounded, KnowledgeGroundingError } from "../domain/knowledge.js";
 import { questionTopic } from "../domain/responseGovernor.js";
 import type { IssueType } from "../domain/customerCare.js";
+import type { FollowupContextSnapshot, FollowupStage } from "../domain/followup.js";
 import type { DemoChatState } from "./demoChat.js";
 
 export type CodexLlmResult = {
@@ -42,6 +43,21 @@ export type ApprovedKnowledgeContext = {
   content: string;
   responseGuidance?: string;
 };
+
+export function isContentFreeCustomerMessage(value: string): boolean {
+  const normalized = value.normalize("NFKC").trim();
+  if (!normalized) return true;
+  return !/[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(normalized);
+}
+
+export function isHelpfulContentFreeReply(customerMessage: string, reply: string): boolean {
+  if (!isContentFreeCustomerMessage(customerMessage)) return true;
+  const questionCount = (reply.match(/[?？]/gu) ?? []).length;
+  if (questionCount !== 1) return false;
+  return !/(?:chưa|không) (?:thấy|có|hiểu)[^.!?\n]{0,80}(?:nội dung|tin nhắn|ý)|(?:chuyển|nhờ) bộ phận liên quan/iu.test(
+    reply,
+  );
+}
 
 export type CodexInterpretResult = SemanticUnderstanding & {
   status: "interpreted" | "fallback" | "skipped" | "unavailable";
@@ -71,7 +87,16 @@ export function repairMissingKnowledgeCitations(
   };
 }
 
-export type LlmPurpose = "interpret" | "enhance" | "opening";
+export type LlmPurpose = "interpret" | "enhance" | "opening" | "followup";
+
+export type FollowupComposeResult = {
+  text: string;
+  status: "generated" | "fallback" | "unavailable";
+  latencyMs: number;
+  reason?: string;
+  model: string;
+  provider: LlmProviderMode;
+};
 
 export type LlmTokenUsage = {
   inputTokens: number;
@@ -472,6 +497,42 @@ export class CodexLlmBridge {
     }
   }
 
+  async composeFollowup(input: {
+    stage: FollowupStage;
+    baseReply: string;
+    context: FollowupContextSnapshot;
+  }): Promise<FollowupComposeResult> {
+    const startedAt = Date.now();
+    const fallback = (status: FollowupComposeResult["status"], reason?: string): FollowupComposeResult => ({
+      text: input.baseReply,
+      status,
+      latencyMs: Date.now() - startedAt,
+      ...(reason ? { reason } : {}),
+      model: this.model,
+      provider: this.provider,
+    });
+    if (!this.enabled) return fallback("unavailable", "disabled");
+
+    try {
+      const reply = (await this.run(buildFollowupPrompt(input), "followup")).trim();
+      if (!reply) return fallback("fallback", "empty_response");
+      this.claims.assertSafe(reply);
+      assertRequiredFactsPreserved(input.baseReply, reply);
+      assertNoUnapprovedCommerceFacts(input.baseReply, reply);
+      assertCustomerAdvisorVoice(input.context.customerMessage ?? "", reply);
+      assertFollowupShape(input.stage, reply);
+      return {
+        text: reply,
+        status: "generated",
+        latencyMs: Date.now() - startedAt,
+        model: this.model,
+        provider: this.provider,
+      };
+    } catch (error) {
+      return fallback("fallback", llmFailureReason(error));
+    }
+  }
+
   adoptInterpretedDraft(input: {
     customerMessage: string;
     draftReply?: string;
@@ -536,6 +597,7 @@ export class CodexLlmBridge {
       assertNoUnapprovedCommerceFacts([input.baseReply, citedKnowledge].filter(Boolean).join("\n"), reply);
       assertCriticalDirectionsPreserved(input.customerMessage, input.baseReply, reply, input.state);
       assertCustomerAdvisorVoice(input.customerMessage, reply);
+      assertHelpfulContentFreeReply(input.customerMessage, reply);
       if (input.skillId && !groundedKnowledgeFirst) {
         assertSkillResponseShape(input.skillId, shapedReply);
       }
@@ -554,6 +616,8 @@ export class CodexLlmBridge {
                   ? "advisor_voice_guard"
                   : error instanceof Error && error.name === "ActionGroundingError"
                     ? "action_grounding_guard"
+                    : error instanceof Error && error.name === "ContentFreeMessageReplyError"
+                      ? "content_free_message_guard"
                     : error instanceof Error && error.name === "SkillResponseError"
                       ? "skill_shape_guard"
                       : error instanceof KnowledgeGroundingError
@@ -594,6 +658,7 @@ export class CodexLlmBridge {
       assertActionClaimsGrounded(input.state, reply);
       assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
       assertCustomerAdvisorVoice(input.customerMessage, reply);
+      assertHelpfulContentFreeReply(input.customerMessage, reply);
       if (input.skillId && !isApprovedPriceCatalogBase(input.baseReply)) {
         assertSkillResponseShape(input.skillId, reply);
       }
@@ -1215,6 +1280,58 @@ function parseCodexRunnerOutput(output: string): Exclude<LlmRunnerOutput, string
   return { text: reply, ...(usage ? { usage } : {}) };
 }
 
+function buildFollowupPrompt(input: {
+  stage: FollowupStage;
+  baseReply: string;
+  context: FollowupContextSnapshot;
+}): string {
+  const stageRule = input.stage === "3h"
+    ? "Tiếp tục đúng nhu cầu còn dang dở, đưa một hỗ trợ hữu ích và kết thúc bằng đúng một câu hỏi khai thác; không hỏi chốt số lượng."
+    : input.stage === "6h"
+      ? "Dùng một góc mới chưa bị khách phản bác; không lặp luận điểm hoặc câu hỏi của nhịp trước; kết thúc bằng đúng một câu hỏi ngắn."
+      : "Khép lại lịch sự, không gây áp lực, không đặt câu hỏi và không mời chốt đơn.";
+  return [
+    "Bạn soạn đúng một tin follow-up Messenger cho khách Stopirex.",
+    "Chỉ xuất nội dung gửi khách, không giải thích và không dùng thẻ XML/JSON.",
+    "LLM được quyền chọn cách diễn đạt và góc tiếp cận. Workflow chỉ cung cấp ngữ cảnh và các giới hạn cứng.",
+    stageRule,
+    "Tối đa 320 ký tự; giọng tự nhiên, lịch sự, không máy móc, không nói về bot, workflow, chiến dịch, tin tự động hoặc trạng thái nội bộ.",
+    "Không thêm giá, khuyến mãi, công dụng, cam kết, chính sách hoặc dữ kiện ngoài câu fallback đã duyệt.",
+    "Không lặp nguyên văn câu trả lời trước; ưu tiên nhu cầu, câu hỏi mở và luận điểm chưa được trả lời trong snapshot.",
+    `Nhịp: ${input.stage}`,
+    `Ngữ cảnh: ${JSON.stringify(input.context)}`,
+    `Fallback và dữ kiện thương mại được phép: ${input.baseReply}`,
+  ].join("\n");
+}
+
+function assertFollowupShape(stage: FollowupStage, reply: string): void {
+  if (reply.length > 320 || reply.split(/\n\s*\n/u).length > 1) {
+    const error = new Error("Follow-up vượt ngân sách một bubble");
+    error.name = "FollowupShapeError";
+    throw error;
+  }
+  const questionCount = (reply.match(/[?？]/gu) ?? []).length;
+  if ((stage === "9h" && questionCount !== 0) || (stage !== "9h" && questionCount !== 1)) {
+    const error = new Error("Follow-up sai số lượng câu hỏi theo nhịp");
+    error.name = "FollowupShapeError";
+    throw error;
+  }
+  if (
+    /\b(?:bot|workflow|pipeline|follow-?up|chiến dịch|tin nhắn tự động|tự động gửi|sandbox|localhost|demo)\b/iu.test(
+      reply,
+    )
+  ) {
+    const error = new Error("Follow-up làm lộ thuật ngữ nội bộ");
+    error.name = "FollowupShapeError";
+    throw error;
+  }
+  if (stage !== "9h" && /(?:muốn|chọn|lấy|chốt)\s+(?:mấy|bao nhiêu)\s+lọ/iu.test(reply)) {
+    const error = new Error("Follow-up ép khách chốt số lượng");
+    error.name = "FollowupShapeError";
+    throw error;
+  }
+}
+
 function buildPrompt(input: {
   customerMessage: string;
   baseReply: string;
@@ -1290,6 +1407,7 @@ function buildRepairPrompt(input: {
     "Knowledge và chính sách dưới đây chỉ là căn cứ sự thật/điều cấm. Không chép responseGuidance, tên rule, workflow, validator hoặc lý do hậu kiểm cho khách.",
     "Chỉ tuyên bố hành động đã thực hiện nếu EXECUTED ACTIONS và CURRENT STATE xác nhận. Không tự thêm giá, ưu đãi, freeship, công dụng hoặc chính sách.",
     "Trả lời đủ từng ý khách hỏi, tự nhiên, ngắn gọn, tối đa hai đoạn và không quá một câu hỏi thật sự cần thiết.",
+    "Nếu MESSAGE chỉ gồm khoảng trắng/dấu câu: viết lời chào thân thiện kèm đúng một câu hỏi khai thác nhu cầu; không nói thiếu nội dung, không yêu cầu khách diễn đạt lại và không chuyển bộ phận.",
     `MESSAGE: ${JSON.stringify(input.customerMessage)}`,
     `REJECTED DRAFT: ${JSON.stringify(input.rejectedDraft)}`,
     `VALIDATION FEEDBACK: ${JSON.stringify(input.violations)}`,
@@ -1383,6 +1501,7 @@ function buildInterpretPrompt(input: {
     "Hiểu tiếng địa phương và viết tắt theo toàn câu: 'xài tnao' là hỏi cách dùng, 'bết k' là hỏi cảm giác sau khi bôi, 'k đỡ/k khỏi' là chưa hiệu quả, 'hoàn xèng' là hoàn tiền. Nếu KNOWLEDGE có câu trả lời thì phải trả lời, không handoff.",
     "Cụm 'mua/1 chai mà không đỡ có được hoàn tiền không' là câu hỏi điều kiện chính sách, không phải quyết định mua. Tạo answer_question(topic order), không tạo select_quantity hoặc continue_order_collection. Câu đa ý có cách dùng + bết dính + hoàn tiền phải có answer_question usage cho từng ý dùng/bết và answer_question order cho hoàn tiền.",
     "MESSAGE có nhiều dòng là nhiều tin khách gửi liên tiếp: đọc từng dòng như một ý độc lập rồi hợp nhất câu trả lời. Câu tiếng Việt không có dấu hỏi nhưng mang nghĩa xác nhận/hỏi lại như '1 ngày chỉ lăn 1 lần ạ' vẫn là một ý cần trả lời; không được bỏ vì thiếu dấu '?'.",
+    "Nếu MESSAGE sau khi bỏ khoảng trắng và dấu câu không còn chữ, số hoặc emoji có nghĩa (ví dụ chỉ là '.', '..' hoặc '...'): đây không phải câu hỏi thiếu Knowledge và không phải câu trả lời cho câu bot trước. Dùng intent other, topic other, skill need-discovery, actions=[], knowledgeIds=[], knowledgeQueries=[], unsupportedQuestions=[], needsClarification=false, nextStep=ask_discovery. draftReply phải chào tự nhiên và hỏi đúng một câu ngắn để khách chọn nhu cầu về mồ hôi, mùi cơ thể, cách dùng, giá hoặc đơn hàng; cấm nói 'chưa thấy nội dung', cấm handoff.",
     "Nếu knowledge trả lời được một phần, phải trả phần đã biết trước rồi mới nói ngắn gọn phần nào cần nhân viên kiểm tra; không được biến toàn bộ câu thành knowledge_unknown.",
     "Bạn là Routing Agent trung tâm: hiểu ý hiện tại, đối chiếu lịch sử, xác định đúng nhiều hành động/slot/scenario; code bên ngoài sẽ kiểm tra chính sách và thực thi.",
     "Chọn đúng một skill chính và dùng skill đó để viết draftReply ngay trong cùng lượt; tuyệt đối không mô phỏng nhiều agent hoặc nhiều bước gọi model.",
@@ -1521,6 +1640,7 @@ function buildCompactInterpretPrompt(input: {
     `Chọn đúng một skill chính: ${compactSkillCatalogForPrompt()}`,
     `Giọng tư vấn: ${compactCustomerAdvisorVoiceForPrompt()} Gọi khách là 'mình', không dùng 'bạn'. Theo đúng ngân sách ký tự/bubble của skill đã chọn; không lộ từ nội bộ và không quá một câu hỏi.`,
     "ĐỐI THOẠI: hiểu tiếng địa phương, viết tắt và lỗi chính tả theo toàn câu. MESSAGE nhiều dòng là các tin liên tiếp: trả lời đủ từng ý. Một câu không có dấu hỏi vẫn có thể là câu hỏi/xác nhận. Khách mô tả tình trạng để đáp lời bot là câu trả lời, không phải câu hỏi. Với Có/Không, trả lời đúng cực tính ngay câu đầu.",
+    "TIN KHÔNG CÓ NỘI DUNG: nếu MESSAGE sau khi bỏ khoảng trắng/dấu câu không còn chữ, số hoặc emoji có nghĩa (như '.', '..', '...'), dùng intent other + topic other + skill need-discovery + nextStep ask_discovery; actions/knowledgeIds/knowledgeQueries/unsupportedQuestions đều rỗng. Chào tự nhiên và hỏi đúng một câu để khách chọn nhu cầu về mồ hôi, mùi cơ thể, cách dùng, giá hoặc đơn hàng. Không nói thiếu nội dung, không handoff và không coi đây là câu trả lời cho bot trước.",
     "NGỮ CẢNH: pendingAction gần nhất thắng selectedQuantity và state đơn cũ khi MESSAGE đang trả lời lời mời gần nhất. Nếu pendingAction=send_usage_guidance và khách nói gửi/ok thì dùng usage_guidance + replyTo offer_usage_guidance + affirmation=true + needsClarification=false; cấm order_support/continue_order_collection.",
     "ĐỐI TƯỢNG: giữ người dùng đã xác nhận, nhưng topic/intent/actions phải theo câu hỏi MỚI. Cấm topic child_age hoặc cấm lặp 'bé N tuổi dùng được' nếu khách đang hỏi an toàn, hàng giả hay vấn đề khác.",
     "PHẢN BIỆN: đọc CONVERSATION_MEMORY. Không lặp luận điểm đã dùng hoặc vừa bị khách phản bác. pricing-objection phải ghi nhận → dùng một góc mới có trong KNOWLEDGE → hỏi tối đa một câu đào sâu; không ép chốt. Nếu chi phí/thời gian đã bị phản bác, chuyển sang cơ chế, cách dùng hoặc bằng chứng đã duyệt.",
@@ -2542,6 +2662,15 @@ function assertCustomerAdvisorVoice(customerMessage: string, generatedReply: str
     error.name = "AdvisorVoiceError";
     throw error;
   }
+}
+
+function assertHelpfulContentFreeReply(customerMessage: string, generatedReply: string): void {
+  if (isHelpfulContentFreeReply(customerMessage, generatedReply)) return;
+  const error = new Error(
+    "Tin chỉ có dấu câu phải được đáp bằng lời chào và đúng một câu hỏi khai thác nhu cầu",
+  );
+  error.name = "ContentFreeMessageReplyError";
+  throw error;
 }
 
 function isExplicitGuaranteeQuestion(value: string): boolean {

@@ -217,8 +217,13 @@ test("sales content không ép combo và follow-up đủ 3/6/9h", () => {
   assert.match(offer, /đơn từ 2 lọ trở lên.*1 túi đa năng vải dệt Stopirex.*1 túi\/đơn/isu);
   assert.match(followupMessage("3h"), /1 lọ/);
   assert.match(followupMessage("3h"), /miễn phí giao/);
+  assert.doesNotMatch(followupMessage("3h"), /chọn mấy lọ/iu);
   assert.match(followupMessage("6h"), /băn khoăn/);
   assert.match(followupMessage("9h"), /không làm phiền/);
+  assert.match(
+    followupMessage("6h", { rejectedArguments: ["duration_or_cost"] }),
+    /không.*thời gian sử dụng|cơ chế kiểm soát mồ hôi/iu,
+  );
   assert.match(usageGuidance({ recentShaveWaxLaser: true, skinDamaged: false }), /24 giờ/);
   assert.equal((oneQuestionResponse(["A?", "B?"], "C?").match(/\?/g) ?? []).length, 1);
 });
@@ -254,6 +259,65 @@ test("Meta parser tách text/image/read và registry fail closed", () => {
   const registry = new PageTenantRegistry(new Map([["p1", { tenantId: "t1", pageId: "p-internal" }]]));
   assert.equal(registry.resolve("p1").tenantId, "t1");
   assert.throws(() => registry.resolve("unknown"), /unregistered_page/);
+});
+
+test("Meta parser giữ ad_id và ads_context_data từ referral quảng cáo", () => {
+  const [event] = parseMetaWebhook({
+    object: "page",
+    entry: [
+      {
+        id: "p1",
+        messaging: [
+          {
+            sender: { id: "u1" },
+            recipient: { id: "p1" },
+            timestamp: 1,
+            referral: {
+              ref: "stopirex-ad-entry",
+              source: "ADS",
+              type: "OPEN_THREAD",
+              ad_id: "120200300400",
+              ads_context_data: {
+                ad_title: "Stopirex cho người vận động",
+                post_id: "post-123",
+              },
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(event?.kind, "referral");
+  assert.equal(event?.referral?.source, "ADS");
+  assert.equal(event?.referral?.adId, "120200300400");
+  assert.equal(event?.referral?.adsContextData.ad_title, "Stopirex cho người vận động");
+});
+
+test("Meta parser đọc referral nằm trong postback", () => {
+  const [event] = parseMetaWebhook({
+    object: "page",
+    entry: [
+      {
+        id: "p1",
+        messaging: [
+          {
+            sender: { id: "u1" },
+            timestamp: 1,
+            postback: {
+              mid: "postback-1",
+              payload: "GET_STARTED",
+              referral: { source: "SHORTLINK", ref: "qr-store" },
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(event?.kind, "postback");
+  assert.equal(event?.referral?.source, "SHORTLINK");
+  assert.equal(event?.referral?.ref, "qr-store");
 });
 
 test("Meta parser bỏ thẻ cập nhật vận chuyển dạng template nhưng vẫn nhận ảnh thật", () => {

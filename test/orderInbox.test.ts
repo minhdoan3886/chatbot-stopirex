@@ -46,6 +46,7 @@ const savedRecord: OrderInboxRecord = {
   paymentMethod: validDraft.paymentMethod,
   status: "pending",
   trackingSendStatus: "not_sent",
+  changeHistory: [],
   confirmedAt: "2026-08-18T09:00:00.000Z",
   createdAt: "2026-08-18T09:00:00.000Z",
   updatedAt: "2026-08-18T09:00:00.000Z",
@@ -115,6 +116,58 @@ test("push() tự động điền channel mặc định là 'meta'", async () =>
   // Tham số thứ 3 (index 2) là channel; index 1 là idempotency key.
   assert.equal(capturedParams[0]?.[2], "meta");
   assert.equal(capturedParams[0]?.[1], `session-001:${capturedParams[0]?.[11]}`);
+});
+
+test("push() chỉ cập nhật đơn chưa có mã vận đơn và lưu dẫn chứng khách thay đổi", async () => {
+  const captured: Array<{ text: string; params?: unknown[] }> = [];
+  const updated = {
+    ...savedRecord,
+    quantity: 1,
+    totalVnd: 315_000,
+    changeHistory: [
+      {
+        at: "2026-08-30T01:00:00.000Z",
+        type: "customer_update" as const,
+        source: "customer_message" as const,
+        customerMessage: "Thôi đổi còn 1 lọ giúp anh",
+        changedFields: ["quantity", "totalVnd"],
+      },
+    ],
+  };
+  const pool = {
+    async query(text: string, params?: unknown[]) {
+      captured.push({ text, ...(params ? { params } : {}) });
+      return { rows: [updated] };
+    },
+  };
+  const service = new OrderInboxService(pool as never);
+  const result = await service.push({
+    sessionId: "session-001",
+    draft: { ...validDraft, quantity: 1, totalVnd: 315_000 },
+    confirmedAt: new Date("2026-08-18T09:00:00.000Z"),
+    changeEvidence: {
+      customerMessage: "Thôi đổi còn 1 lọ giúp anh",
+      changedFields: ["selectedQuantity", "quantity", "totalVnd"],
+    },
+  });
+
+  assert.equal(result.quantity, 1);
+  assert.match(captured[0]!.text, /tracking_number IS NULL/u);
+  assert.match(captured[0]!.text, /tracking_sent_at IS NULL/u);
+  assert.match(captured[0]!.text, /change_history/u);
+  assert.match(String(captured[0]!.params?.[12]), /Thôi đổi còn 1 lọ giúp anh/u);
+});
+
+test("canEditPending() chỉ cho sửa đơn pending chưa có mã vận đơn", async () => {
+  const service = new OrderInboxService(
+    makePool([{ status: "pending", trackingNumber: undefined, trackingSentAt: undefined } as never]) as never,
+  );
+  assert.equal(await service.canEditPending("session-001"), true);
+
+  const locked = new OrderInboxService(
+    makePool([{ status: "completed", trackingNumber: "VTP123", trackingSentAt: "2026-08-30" } as never]) as never,
+  );
+  assert.equal(await locked.canEditPending("session-001"), false);
 });
 
 // ---------------------------------------------------------------------------

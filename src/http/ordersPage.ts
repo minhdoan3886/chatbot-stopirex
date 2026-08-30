@@ -26,7 +26,7 @@ main{max-width:1320px;margin:0 auto;padding:24px}
 .filters{display:flex;gap:8px;flex-wrap:wrap}
 .filters input,.filters select{border:1px solid #cad3e0;background:#fff;border-radius:9px;padding:9px 11px;font:inherit;font-size:13px}
 .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px}
-table{width:100%;border-collapse:collapse;min-width:1120px}
+table{width:100%;border-collapse:collapse;min-width:1340px}
 th,td{text-align:left;padding:11px 12px;border-bottom:1px solid #e8ecf2;font-size:12px;vertical-align:middle}
 th{position:sticky;top:0;background:#f7f9fc;color:#5b6980;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
 tbody tr:hover{background:#f8faff}
@@ -47,6 +47,9 @@ tbody tr:hover{background:#f8faff}
 .tracking-controls .btn-send:hover{background:#dce7ff}
 .tracking-result{max-width:270px;word-break:break-word}.tracking-result a{color:var(--blue)}
 .tracking-error{display:block;color:var(--red);margin-bottom:5px}
+.change-log{min-width:210px;max-width:300px}.change-log summary{cursor:pointer;color:var(--blue);font-weight:700}
+.change-event{margin-top:7px;padding:8px;border-radius:8px;background:#f4f7fc;color:#35435a;line-height:1.4}
+.change-event q{display:block;margin-top:3px;color:#17243a}.change-fields{color:var(--muted);font-size:11px}
 .btn:disabled{opacity:.5;cursor:wait}
 .error-banner{display:none;margin:0 0 14px;padding:12px 14px;border-radius:11px;background:#ffeded;color:var(--red)}
 .loading{opacity:.55;pointer-events:none}
@@ -107,6 +110,7 @@ tbody tr:hover{background:#f8faff}
         <th>Tổng tiền</th>
         <th>Thanh toán</th>
         <th>Thời gian xác nhận</th>
+        <th>Thay đổi từ khách</th>
         <th>Vận đơn / Gửi khách</th>
       </tr></thead>
       <tbody id="orderRows"></tbody>
@@ -122,6 +126,7 @@ const relTime=v=>{if(!v)return'—';const ms=Date.now()-new Date(v).getTime();if
 const vnd=v=>v?new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(Number(v)):'—';
 const statusLabel={pending:'Chờ nhập vận đơn',completed:'Đã gửi vận đơn',cancelled:'Đã huỷ'};
 const payLabel={cod:'COD',bank_transfer:'Chuyển khoản'};
+const changeFieldLabel={recipientName:'người nhận',phone:'SĐT',legacyAddress:'địa chỉ',deliveryNote:'ghi chú giao hàng',quantity:'số lượng',selectedQuantity:'số lượng',totalVnd:'tổng tiền',sku:'sản phẩm',paymentMethod:'thanh toán'};
 
 let allRecords=[];
 
@@ -159,6 +164,14 @@ function renderRows(){
     const id=esc(r.id);
     const trackingState=r.trackingSendStatus??'not_sent';
     const carrierOption=(value,label)=>'<option value="'+value+'"'+((r.trackingCarrier??'viettel_post')===value?' selected':'')+'>'+label+'</option>';
+    const customerChanges=(Array.isArray(r.changeHistory)?r.changeHistory:[]).filter(item=>item&&item.type==='customer_update'&&item.customerMessage);
+    const changeCell=customerChanges.length
+      ?'<details class="change-log"><summary>'+customerChanges.length+' lần cập nhật</summary>'
+       +customerChanges.slice().reverse().slice(0,5).map(item=>{
+          const fields=[...new Set(item.changedFields??[])].map(field=>changeFieldLabel[field]??field).join(', ');
+          return '<div class="change-event"><span class="change-fields">'+esc(fullTime(item.at))+(fields?' · Đổi '+esc(fields):'')+'</span><q>'+esc(item.customerMessage)+'</q></div>';
+        }).join('')+'</details>'
+      :'<span class="sub">Chưa có thay đổi</span>';
     const actionCell=r.status==='pending'
       ?'<div class="tracking-controls" data-tracking-order-id="'+id+'">'
        +'<select aria-label="Đơn vị vận chuyển">'+carrierOption('viettel_post','Viettel Post')+'</select>'
@@ -180,9 +193,10 @@ function renderRows(){
       +'<td class="vnd">'+vnd(r.totalVnd)+'</td>'
       +'<td>'+esc(payLabel[r.paymentMethod??'']??r.paymentMethod??'—')+'</td>'
       +'<td>'+esc(fullTime(r.confirmedAt))+'<span class="sub">'+esc(relTime(r.confirmedAt))+'</span></td>'
+      +'<td>'+changeCell+'</td>'
       +'<td>'+actionCell+'</td>'
       +'</tr>';
-  }).join(''):'<tr><td colspan="8" class="empty">Không có đơn nào phù hợp bộ lọc.</td></tr>';
+  }).join(''):'<tr><td colspan="9" class="empty">Không có đơn nào phù hợp bộ lọc.</td></tr>';
 }
 
 

@@ -462,6 +462,54 @@ test("Meta brain xử lý dấu chấm bằng LLM một lần, không truy xuấ
   assert.doesNotMatch(response.reply, /chưa thấy nội dung|chuyển bộ phận/iu);
 });
 
+test("Meta brain không để trạng thái đơn đã tạo nuốt tin chỉ có dấu chấm", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "content-free-dot-after-created-order";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "2 lọ");
+  chat.chat(
+    sessionId,
+    "Hoàng 0824938877, số 82 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội",
+  );
+  chat.chat(sessionId, "Đồng ý");
+  assert.equal(chat.peek(sessionId).pipeline, "6.Đã tạo đơn");
+
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        summary: "Khách gửi tin chưa có nội dung",
+        skill: "need-discovery",
+        intent: "other",
+        topic: "other",
+        subject: "customer",
+        scenario: "unknown",
+        asksDirectAnswer: false,
+        confidence: 1,
+        needsClarification: false,
+        evidence: [],
+        actions: [],
+        uncertainties: [],
+        knowledgeIds: [],
+        knowledgeQueries: [],
+        unsupportedQuestions: [],
+        answeredQuestions: [],
+        nextStep: "ask_discovery",
+        groundingConfidence: 1,
+        draftReply:
+          "Dạ em chào mình ạ. Mình đang cần hỗ trợ về sản phẩm, cách dùng, giá hay đơn hàng ạ?",
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({ sessionId, text: "." });
+
+  assert.equal(response.state.pipeline, "6.Đã tạo đơn");
+  assert.match(response.reply, /đang cần hỗ trợ/iu);
+  assert.equal((response.reply.match(/[?？]/gu) ?? []).length, 1);
+  assert.doesNotMatch(response.reply, /đơn thử|đã tạo.*hoàn tất|chưa thấy nội dung/iu);
+});
+
 test("Meta brain buộc LLM tự sửa câu trả lời lạnh cho dấu chấm mà không chạy Knowledge retry", async () => {
   let llmCalls = 0;
   const chat = new DemoChatService();

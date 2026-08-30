@@ -9,6 +9,7 @@ import type {
 import { batchMessages } from "./messageBatcher.js";
 import type { DemoChatService } from "./demoChat.js";
 import { MetaChatBrain } from "./metaChatBrain.js";
+import { isContentFreeCustomerMessage, isHelpfulContentFreeReply } from "./codexLlm.js";
 import type { StructuredLogger } from "./logger.js";
 import type { FollowupContextSnapshot } from "../domain/followup.js";
 import type { FollowupCycleSchedule } from "./followupRepository.js";
@@ -281,7 +282,7 @@ export class MetaInboundProcessor {
     }
 
     void this.options.messenger.sendTyping(first.senderId).catch(() => undefined);
-    const result = await this.options.brain.reply({
+    let result = await this.options.brain.reply({
       sessionId,
       text,
       traceId: first.traceId,
@@ -290,6 +291,21 @@ export class MetaInboundProcessor {
       conversationId: conversation.conversationId,
       ...chatContext,
     });
+    if (isContentFreeCustomerMessage(text) && !isHelpfulContentFreeReply(text, result.reply)) {
+      const reply =
+        "Dạ em chào mình ạ. Mình đang cần hỗ trợ về mồ hôi, mùi cơ thể, cách dùng, giá hay đơn hàng ạ?";
+      const replies = [reply];
+      const state = this.options.chat.replaceLatestAssistantTurns(
+        sessionId,
+        result.replies,
+        replies,
+      );
+      this.options.logger.log("warn", "content_free_message_outbound_corrected", {
+        traceId: first.traceId,
+        rejectedReply: result.reply,
+      });
+      result = { ...result, reply, replies, state };
+    }
     const hasNewerInbound = await this.options.store.hasNewerInboundContent({
       tenantId: first.tenantId,
       pageId: first.pageId,

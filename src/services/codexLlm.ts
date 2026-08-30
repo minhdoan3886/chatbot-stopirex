@@ -54,9 +54,14 @@ export function isHelpfulContentFreeReply(customerMessage: string, reply: string
   if (!isContentFreeCustomerMessage(customerMessage)) return true;
   const questionCount = (reply.match(/[?？]/gu) ?? []).length;
   if (questionCount !== 1) return false;
-  return !/(?:chưa|không) (?:thấy|có|hiểu)[^.!?\n]{0,80}(?:nội dung|tin nhắn|ý)|(?:chuyển|nhờ) bộ phận liên quan/iu.test(
+  const asksForNeed = /cần hỗ trợ|muốn (?:được )?hỗ trợ|muốn hỏi|quan tâm|nhu cầu|cần tư vấn/iu.test(
     reply,
   );
+  const pushesClarificationBackToCustomer =
+    /(?:chưa|không) (?:thấy|có|hiểu)[^.!?\n]{0,100}(?:nội dung|tin nhắn|ý)|(?:chuyển|nhờ) bộ phận liên quan|diễn đạt|nói rõ|viết lại|gửi lại|chính câu này|dấu chấm|ngữ cảnh/iu.test(
+      reply,
+    );
+  return asksForNeed && !pushesClarificationBackToCustomer;
 }
 
 export type CodexInterpretResult = SemanticUnderstanding & {

@@ -29,6 +29,7 @@ function fixture(options: {
   dispatchCurrent?: boolean;
   profileName?: string;
   attribution?: boolean;
+  forceBrainReply?: string;
 }) {
   const sent: string[] = [];
   const processed: string[] = [];
@@ -155,6 +156,15 @@ function fixture(options: {
   };
   const chat = new DemoChatService();
   const brain = new MetaChatBrain(chat, new CodexLlmBridge({ enabled: false }));
+  if (options.forceBrainReply) {
+    const originalReply = brain.reply.bind(brain);
+    brain.reply = async (input) => {
+      const response = await originalReply(input);
+      const replies = [options.forceBrainReply!];
+      const state = chat.replaceLatestAssistantTurns(input.sessionId, response.replies, replies);
+      return { ...response, reply: replies[0]!, replies, state };
+    };
+  }
   const followups: FollowupCoordinator = {
     async cancelConversation(input) {
       followupCancellations.push(input);
@@ -324,6 +334,25 @@ test("Meta inbound dùng brain để trả lời và lưu state khi đã bật g
   assert.equal(context.runtimeUpdates.length, 1);
   assert.deepEqual(context.processed, ["message-1"]);
   assert.equal(context.sent.length, 2);
+});
+
+test("Meta sửa câu clarification lạnh cho dấu chấm tại ranh giới outbound cuối", async () => {
+  const context = fixture({
+    live: true,
+    forceBrainReply:
+      "Dạ em chưa hiểu chắc ý “.” trong ngữ cảnh hiện tại ạ. Mình diễn đạt rõ thêm chính câu này giúp em để em trả lời đúng nhé.",
+  });
+
+  const result = await context.processor.processBatch([
+    job({ eventId: "content-free-outbound-1", text: "." }),
+  ]);
+
+  assert.equal(result.status, "replied");
+  assert.deepEqual(context.sent, [
+    "Dạ em chào mình ạ. Mình đang cần hỗ trợ về mồ hôi, mùi cơ thể, cách dùng, giá hay đơn hàng ạ?",
+  ]);
+  assert.equal((context.sent[0]?.match(/[?？]/gu) ?? []).length, 1);
+  assert.doesNotMatch(context.sent[0] ?? "", /chưa hiểu|diễn đạt|ngữ cảnh/iu);
 });
 
 test("nhân viên tiếp quản trong lúc LLM xử lý thì chặn outbound bot đã chuẩn bị", async () => {

@@ -54,6 +54,17 @@ test("hậu kiểm buộc tin dấu chấm có đúng một câu hỏi hỗ tr�
     false,
   );
   assert.equal(
+    isHelpfulContentFreeReply(
+      ".",
+      "Dạ em chưa hiểu chắc ý trong ngữ cảnh hiện tại ạ. Mình diễn đạt rõ thêm chính câu này giúp em nhé?",
+    ),
+    false,
+  );
+  assert.equal(
+    isHelpfulContentFreeReply(".", "Dạ mình nói rõ hơn để em hỗ trợ đúng nhu cầu ạ?"),
+    false,
+  );
+  assert.equal(
     isHelpfulContentFreeReply(".", "Dạ mình cần hỗ trợ gì ạ? Hay mình muốn xem giá ạ?"),
     false,
   );

@@ -1658,11 +1658,14 @@ export class DemoChatService {
     }
 
     const directIntent = decision.intent;
-    if (session.pipeline === "6.Đã tạo đơn" && directIntent === "price_request") {
-      // A completed order is an immutable business record outside this runtime
-      // draft. A new price question starts a fresh sales cycle; the broad
-      // completed-order lock must not replace an LLM-understood product/price
-      // question with the stale “order completed” receipt.
+    if (
+      session.pipeline === "6.Đã tạo đơn" &&
+      !targetsExistingCompletedOrder(text, directIntent, actionPlan.accepted)
+    ) {
+      // A completed order is historical context, not the active goal of every
+      // later message. Only an explicit order/tracking/edit request may keep
+      // the completed-order lock. A greeting, a product question or a current
+      // price question starts a fresh conversational turn.
       clearOrderDraft(session);
       session.pipeline = "1.Phân loại";
       session.consultation = {
@@ -1670,6 +1673,11 @@ export class DemoChatService {
         stage: "S0.new",
       };
       session.orderCollectionPaused = false;
+      delete session.orderEditable;
+      delete session.pendingAction;
+      delete session.lastDecision.pendingActionAfter;
+      delete session.activeSkill;
+      delete session.skillReason;
     }
 
     if (session.pipeline === "6.Đã tạo đơn") {
@@ -3102,6 +3110,24 @@ function normalize(value: string): string {
     .trim();
 }
 
+function targetsExistingCompletedOrder(
+  text: string,
+  intent: CustomerIntent | undefined,
+  actions: readonly ConversationAction[],
+): boolean {
+  if (actions.some((action) => action.type === "update_order")) return true;
+  if (/^(?:dung|dung roi|dong y|ok|okay)$/.test(text)) return true;
+  if (/^[.!?…]+$/.test(text)) return true;
+  const explicitlyReferencesExistingOrder =
+    /(?:ma van don|tracking|van don|don (?:cua|minh|hang)|don nay|don vua|don truoc)/.test(text);
+  const explicitlyRequestsOrderMutation =
+    /(?:doi|sua|thay|huy|cap nhat).*(?:don|dia chi|sdt|so dien thoai|nguoi nhan|so luong)|(?:don|dia chi|sdt|so dien thoai|nguoi nhan|so luong).*(?:doi|sua|thay|huy|cap nhat)/.test(
+      text,
+    );
+  if (explicitlyReferencesExistingOrder || explicitlyRequestsOrderMutation) return true;
+  return intent === "order_support" && /(?:giao|nhan|huy|doi|sua|van don|don)/.test(text);
+}
+
 function isReset(text: string): boolean {
   return /^(reset|lam moi|bat dau lai)$/.test(text);
 }
@@ -4278,6 +4304,21 @@ type GroundedReply = {
 
 function priceChangeReply(raw: string, semantic: SemanticUnderstanding): GroundedReply {
   const mentioned = [...raw.matchAll(/(\d{2,3})\s*k/gi)].map((match) => Number(match[1]) * 1_000);
+  const text = normalize(raw);
+  const explicitlyHistorical =
+    (semantic.priceFromVnd !== undefined && semantic.priceToVnd !== undefined) ||
+    mentioned.length >= 2 ||
+    /gia cu|tu\s+\d{2,3}\s*k?.*(?:len|thanh|sang)\s+\d{2,3}\s*k?|(?:vi sao|tai sao|sao).*(?:tang|len|dieu chinh).*gia|gia.*(?:tang|len|dieu chinh).*(?:vi sao|tai sao)/.test(
+      text,
+    );
+  if (!explicitlyHistorical) {
+    const entity = demoKnowledge.find((candidate) => candidate.id === "pricing-approved-options-2026-08");
+    return {
+      reply:
+        "Dạ giá hiện tại chưa có thay đổi mới ạ: 1 lọ Stopirex 285.000đ + 30.000đ phí giao; combo 2 lọ 510.000đ và combo 3 lọ 750.000đ, đều miễn phí giao.",
+      knowledgeEntityIds: entity ? [entity.id] : [],
+    };
+  }
   const from = semantic.priceFromVnd ?? mentioned[0];
   const to = semantic.priceToVnd ?? mentioned[1] ?? 285_000;
   const comparison = from

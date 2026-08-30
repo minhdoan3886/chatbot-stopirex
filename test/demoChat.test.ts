@@ -1255,6 +1255,21 @@ test("hỏi vì sao tăng giá được trả lời đúng ý, không gửi lạ
   assert.doesNotMatch(result.reply, /Combo 2 lọ/);
 });
 
+test("hỏi giá hôm nay có đổi không chỉ trả trạng thái hiện tại, không kể lịch sử tăng giá", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat("current-price-status", "nay giá có đổi ko e", {
+    intent: "price_change",
+    topic: "price",
+    asksDirectAnswer: true,
+    confidence: 0.99,
+    slots: {},
+  });
+
+  assert.match(result.reply, /chưa có thay đổi mới/iu);
+  assert.match(result.reply, /285\.000đ/iu);
+  assert.doesNotMatch(result.reply, /nhập khẩu|Pháp|lý do điều chỉnh/iu);
+});
+
 test("câu hỏi dùng buổi sáng được trả lời trước và ghi nhận tình trạng", () => {
   const chat = new DemoChatService();
   const result = chat.chat(
@@ -3284,6 +3299,34 @@ test("hỏi giá sau đơn đã tạo bắt đầu chu kỳ mới và trả đ�
   assert.match(followup.replies[1] ?? "", /Herbal Body Wash 500ml: 525\.000đ/iu);
   assert.match(followup.replies[1] ?? "", /mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai/iu);
   assert.doesNotMatch(followup.reply, /đơn thử.*đã hoàn tất/iu);
+});
+
+test("tin chào ngắn sau đơn cũ bắt đầu lượt tư vấn mới thay vì khẳng định có mã vận đơn", () => {
+  const chat = new DemoChatService();
+  const sessionId = "completed-order-neutral-message";
+  chat.chat(sessionId, "Giá bao nhiêu?");
+  chat.chat(sessionId, "1 lọ");
+  chat.chat(
+    sessionId,
+    "Hoàng 0824938877, số 82 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội",
+  );
+  chat.chat(sessionId, "Đồng ý");
+
+  const followup = chat.chat(
+    sessionId,
+    "ib",
+    {
+      intent: "other",
+      topic: "other",
+      confidence: 0.99,
+      asksDirectAnswer: false,
+      slots: {},
+    },
+    { orderEditable: false },
+  );
+
+  assert.notEqual(followup.state.pipeline, "6.Đã tạo đơn");
+  assert.doesNotMatch(followup.reply, /đã có mã vận đơn|chưa thể tự sửa/iu);
 });
 
 test("kết quả nhân viên có thể mở khóa ca CSKH và trả session về flow trước đó", () => {

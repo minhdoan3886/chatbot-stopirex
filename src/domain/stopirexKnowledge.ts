@@ -10,6 +10,8 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       title: "Lý do điều chỉnh giá từ 245.000đ lên 285.000đ",
       content:
         "Do chi phí nhập khẩu sản phẩm từ Pháp tăng, bên em đã điều chỉnh giá bán để phù hợp với chi phí đầu vào.",
+      responseGuidance:
+        "Chỉ dùng nguồn này khi khách nêu rõ giá cũ và giá mới, hoặc hỏi trực tiếp vì sao giá đã tăng/điều chỉnh. Không dùng cho câu hỏi trạng thái hiện tại như 'nay giá có đổi không'; trường hợp đó phải đối chiếu bảng giá đang áp dụng.",
       sourceRow: 1,
     },
     {
@@ -277,7 +279,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
         "Herbal Body Wash",
       ],
       responseGuidance:
-        "Nếu khách hỏi giá chung, chỉ báo phương án 1–3 lọ; trình bày thành danh sách dễ đọc gồm quà tặng và combo chăm sóc mùi cơ thể, đồng thời nói rõ Herbal Body Wash chưa bán lẻ. Chỉ báo combo 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó. Chỉ nhắc chuyển tư vấn viên khi khách thực sự hỏi từ 6 lọ trở lên. Kết thúc bằng đúng một câu hỏi nối tiếp phù hợp ngữ cảnh, không tự chốt đơn.",
+        "Nếu khách hỏi giá chung, chỉ báo phương án 1–3 lọ; trình bày thành danh sách dễ đọc gồm quà tặng và combo chăm sóc mùi cơ thể, đồng thời nói rõ Herbal Body Wash chưa bán lẻ. Nếu khách hỏi giá hôm nay/hiện tại có đổi không mà không nêu giá cũ, nói chưa có thay đổi mới và báo giá đang áp dụng; tuyệt đối không tự kể lý do tăng giá lịch sử. Chỉ báo combo 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó. Chỉ nhắc chuyển tư vấn viên khi khách thực sự hỏi từ 6 lọ trở lên. Kết thúc bằng đúng một câu hỏi nối tiếp phù hợp ngữ cảnh, không tự chốt đơn.",
       sourceRow: 25,
     },
     {

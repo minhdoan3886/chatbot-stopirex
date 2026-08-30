@@ -1238,6 +1238,38 @@ test("single-pass draft bị loại nếu chốt số lượng nhưng bỏ mất
   assert.match(composed.reply, /kiểm soát mồ hôi/iu);
 });
 
+test("single-pass draft không được biến câu hỏi giá hiện tại thành lịch sử tăng giá", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "nay giá có đổi ko e",
+    draftReply:
+      "Dạ có ạ, hiện giá 1 lọ Stopirex là 285.000đ, phí giao 30.000đ. Lý do điều chỉnh là do chi phí nhập khẩu từ Pháp tăng ạ.",
+    baseReply:
+      "Dạ giá hiện tại chưa có thay đổi mới ạ: 1 lọ Stopirex 285.000đ + 30.000đ phí giao.",
+    state,
+  });
+
+  assert.equal(composed.status, "fallback");
+  assert.equal(composed.reason, "price_change_guard");
+  assert.match(composed.reply, /chưa có thay đổi mới/iu);
+  assert.doesNotMatch(composed.reply, /nhập khẩu|Pháp/iu);
+});
+
+test("single-pass draft không được khẳng định có mã vận đơn khi state không có mã", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "ib",
+    draftReply:
+      "Dạ đơn của mình đã có mã vận đơn nên em chưa thể tự sửa thông tin ạ.",
+    baseReply: "Dạ em chào mình ạ. Mình cần em hỗ trợ về sản phẩm hay đơn hàng ạ?",
+    state,
+  });
+
+  assert.equal(composed.status, "fallback");
+  assert.equal(composed.reason, "action_grounding_guard");
+  assert.doesNotMatch(composed.reply, /đã có mã vận đơn/iu);
+});
+
 test("Codex composer nhận lịch sử, quyết định và kiến thức được duyệt", async () => {
   let prompt = "";
   const bridge = new CodexLlmBridge({

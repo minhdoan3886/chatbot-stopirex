@@ -482,6 +482,8 @@ export class CodexLlmBridge {
       assertRequiredFactsPreserved(input.baseReply, reply);
       assertNoUnapprovedCommerceFacts(input.baseReply, reply);
       assertConversationDirectionPreserved(input.baseReply, reply, input.state);
+      assertCurrentPriceStatusGrounded(input.customerMessage, reply);
+      assertActionClaimsGrounded(input.state, reply);
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       if (cacheAllowed) remember(this.cache, prompt, reply);
       return this.result(reply, "enhanced", startedAt);
@@ -493,8 +495,12 @@ export class CodexLlmBridge {
             ? "commerce_guard"
             : error instanceof Error && error.name === "ConversationDirectionError"
               ? "direction_guard"
-              : error instanceof Error && error.name === "AdvisorVoiceError"
+            : error instanceof Error && error.name === "AdvisorVoiceError"
                 ? "advisor_voice_guard"
+                : error instanceof Error && error.name === "PriceChangeGroundingError"
+                  ? "price_change_guard"
+                  : error instanceof Error && error.name === "ActionGroundingError"
+                    ? "action_grounding_guard"
                 : error instanceof Error && error.name === "FactPreservationError"
                   ? "fact_guard"
                   : llmFailureReason(error);
@@ -595,6 +601,7 @@ export class CodexLlmBridge {
       // Validate claims about executed state before checking conversational
       // wording so false order/handoff assertions keep their precise reason.
       assertActionClaimsGrounded(input.state, reply);
+      assertCurrentPriceStatusGrounded(input.customerMessage, reply);
       const citedKnowledge = (input.knowledge ?? [])
         .filter((entity) => input.knowledgeIds?.includes(entity.id))
         .map((entity) => entity.content)
@@ -621,6 +628,8 @@ export class CodexLlmBridge {
                   ? "advisor_voice_guard"
                   : error instanceof Error && error.name === "ActionGroundingError"
                     ? "action_grounding_guard"
+                    : error instanceof Error && error.name === "PriceChangeGroundingError"
+                      ? "price_change_guard"
                     : error instanceof Error && error.name === "ContentFreeMessageReplyError"
                       ? "content_free_message_guard"
                     : error instanceof Error && error.name === "SkillResponseError"
@@ -661,6 +670,7 @@ export class CodexLlmBridge {
         .join("\n");
       assertNoUnapprovedCommerceFacts([input.baseReply, citedKnowledge].filter(Boolean).join("\n"), reply);
       assertActionClaimsGrounded(input.state, reply);
+      assertCurrentPriceStatusGrounded(input.customerMessage, reply);
       assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       assertHelpfulContentFreeReply(input.customerMessage, reply);
@@ -1556,6 +1566,8 @@ function buildInterpretPrompt(input: {
     "Không nhắc lại nguyên câu khách, không viết nhiều lớp giải thích và không dùng câu phòng thủ dài. Chỉ giữ kết luận, một lý do ngắn và hướng dẫn cần thiết.",
     "Ví dụ: 'em là AI à?', 'đây có phải chatbot không?' hoặc 'đang nói chuyện với người hay bot?' => intent bot_identity, asksDirectAnswer true. Chỉ trả lời đúng câu hỏi về danh tính; không kéo về câu hỏi tình trạng.",
     "Ví dụ: '245k giờ lên 285k' => intent price_change, asksDirectAnswer true, priceFromVnd 245000, priceToVnd 285000.",
+    "Ví dụ: 'nay giá có đổi không em?' là hỏi TRẠNG THÁI GIÁ HIỆN TẠI: đối chiếu bảng giá đang áp dụng và nói có/chưa có thay đổi mới. Không tự gán priceFromVnd/priceToVnd, không dùng lý do tăng giá lịch sử nếu khách không nêu giá cũ hoặc hỏi vì sao đã tăng.",
+    "Tin chào/ngắn trung tính như 'ib', 'inbox', 'alo' không mặc nhiên nói về đơn cũ. Trạng thái đơn hoàn tất chỉ là bối cảnh; chỉ khẳng định mã vận đơn hoặc khóa sửa đơn khi MESSAGE hiện tại nhắc rõ đơn, vận đơn, giao hàng hoặc yêu cầu sửa/hủy đơn.",
     "Ví dụ: 'dùng buổi sáng được không' => intent usage_time và asksDirectAnswer true.",
     "Ví dụ: 'sáng dùng thêm nước hoa hoặc lăn khử mùi có hương có bị lẫn mùi không?' => intent usage_guidance, topic usage, subject customer, asksDirectAnswer true, needsClarification false. Đây là câu hỏi dùng kết hợp, không phải dữ liệu đơn hàng.",
     "Ví dụ: 'giá vẫn hơi cao, một lọ dùng được mấy tháng?' => intent usage_frequency, topic usage, asksDirectAnswer true, needsClarification false. Kho tri thức đã duyệt mốc khoảng 3–4 tháng/lọ. Trả lời thời gian dùng trước; không coi đây là xác nhận combo hoặc dữ liệu đơn hàng.",
@@ -1902,9 +1914,15 @@ function compactExamplesFor(customerMessage: string, state: DemoChatState): stri
   if (/\b(?:ai|bot|chatgpt|prompt|api key)\b/.test(text)) {
     add("'em là AI à?' → bot_identity; chỉ trả lời danh tính, không kéo về form cũ.");
   }
+  if (/^(?:ib|inbox|alo|hello|hi|chao)(?:\s+(?:a|e|em|shop))?$/.test(text)) {
+    add(
+      "Tin chào/ngắn trung tính không mặc nhiên nói về đơn cũ. Không được khẳng định đã có mã vận đơn hoặc khóa sửa đơn nếu MESSAGE hiện tại không nhắc đơn, vận đơn, giao hàng hay yêu cầu sửa/hủy đơn.",
+    );
+  }
   if (/\b(?:gia|giam|khuyen mai|uu dai|voucher|ship|freeship|re|dat)\b/.test(text)) {
     add(
       "'245k giờ lên 285k' → price_change + asksDirectAnswer; không gửi bảng giá thay cho lời giải thích.",
+      "'nay giá có đổi không em?' → hỏi trạng thái giá hiện tại: dùng bảng giá đang áp dụng, không gán giá cũ/mới và không kể lý do tăng giá lịch sử nếu khách chưa nêu giá cũ hoặc hỏi vì sao tăng.",
       "'giảm 75k phải không?' → promotion_inquiry; không xác nhận nếu knowledge chưa có.",
     );
   }
@@ -2691,6 +2709,14 @@ function isExplicitGuaranteeQuestion(value: string): boolean {
 
 function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string): void {
   const normalized = generatedReply.toLocaleLowerCase("vi-VN");
+  if (
+    /(?:đơn|đơn hàng)[^.!?\n]{0,100}đã có mã vận đơn|đã có mã vận đơn[^.!?\n]{0,100}(?:đơn|đơn hàng)/iu.test(
+      generatedReply,
+    ) &&
+    !state.trackingNumber
+  ) {
+    throw actionGroundingError("Câu trả lời nói đơn đã có mã vận đơn nhưng state không có mã vận đơn");
+  }
   const orderPaused = state.decisionTrace?.actionPlan?.accepted.some(
     (action) => action.type === "pause_order",
   );
@@ -2751,6 +2777,41 @@ function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string
   ) {
     throw actionGroundingError("Câu trả lời nói đã duyệt freeship nhưng state chưa phê duyệt");
   }
+}
+
+function assertCurrentPriceStatusGrounded(customerMessage: string, generatedReply: string): void {
+  const message = normalizeGuardText(customerMessage);
+  const reply = normalizeGuardText(generatedReply);
+  const asksCurrentPriceStatus =
+    /\b(?:nay|hom nay|hien tai|bay gio|gio)\b/.test(message) &&
+    /\bgia\b/.test(message) &&
+    /\b(?:doi|thay doi|tang|khac)\b/.test(message);
+  const explicitHistoricalTransition =
+    /\bgia cu\b|\btu\s+\d{2,3}\s*k?.*(?:len|thanh|sang)\s+\d{2,3}\s*k?/.test(message) ||
+    (message.match(/\b\d{2,3}\s*k\b/g)?.length ?? 0) >= 2 ||
+    /(?:vi sao|tai sao|sao).*(?:tang|len|dieu chinh).*gia|gia.*(?:tang|len|dieu chinh).*(?:vi sao|tai sao)/.test(
+      message,
+    );
+  if (!asksCurrentPriceStatus || explicitHistoricalTransition) return;
+  const falselyClaimsChange =
+    /\bda co\b/.test(reply) ||
+    /\bly do dieu chinh\b/.test(reply) ||
+    /chi phi nhap khau[^.!?\n]{0,80}tang/.test(reply) ||
+    /(?:da|vua|moi)[^.!?\n]{0,60}(?:dieu chinh|tang) gia/.test(reply);
+  if (!falselyClaimsChange) return;
+  const error = new Error("Câu hỏi trạng thái giá hiện tại bị trả lời thành câu chuyện tăng giá lịch sử");
+  error.name = "PriceChangeGroundingError";
+  throw error;
+}
+
+function normalizeGuardText(value: string): string {
+  return value
+    .toLocaleLowerCase("vi-VN")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/gu, "d")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function actionGroundingError(message: string): Error {

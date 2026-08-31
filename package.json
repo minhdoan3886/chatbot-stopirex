@@ -20,6 +20,7 @@
     "test": "tsx --test test/*.test.ts",
     "test:coverage": "tsx --test --experimental-test-coverage test/*.test.ts",
     "test:prompt-shadow": "node --env-file-if-exists=.env --import tsx scripts/prompt-shadow.ts",
+    "test:product-memory": "node --env-file-if-exists=.env --import tsx scripts/product-memory-smoke.ts",
     "migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
     "migrate:prod": "node dist/scripts/migrate.js",
     "seed": "node --env-file-if-exists=.env --import tsx scripts/seed.ts",

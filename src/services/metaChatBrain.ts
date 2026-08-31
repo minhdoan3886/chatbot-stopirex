@@ -1,6 +1,10 @@
 import { retrieveKnowledgeMatches, type KnowledgeMatch } from "../domain/knowledge.js";
 import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
 import {
+  allowedConversationCtas,
+  extractRequiredResponseFacts,
+} from "../domain/responseContract.js";
+import {
   missingRequiredAnswerTopics,
   replyCoversRequiredAnswerTopic,
   requiredAnswerTopics,
@@ -103,7 +107,7 @@ export class MetaChatBrain {
             entities: liveKnowledge,
             // Compound customer messages need breadth. The retriever keeps a leader
             // for every detected concept, while the LLM remains the semantic owner.
-            limit: 6,
+            limit: 4,
           });
       knowledge = knowledgeContexts(matches);
       let rawLlmResult = await this.llm.interpret({
@@ -126,7 +130,7 @@ export class MetaChatBrain {
             limit: 3,
           }),
         );
-        const mergedMatches = mergeKnowledgeMatches(matches, expandedMatches, 8);
+        const mergedMatches = mergeKnowledgeMatches(matches, expandedMatches, 6);
         const previousIds = matches.map((match) => match.entity.id).join("|");
         const mergedIds = mergedMatches.map((match) => match.entity.id).join("|");
         if (mergedIds !== previousIds) {
@@ -193,6 +197,9 @@ export class MetaChatBrain {
         })),
         citedKnowledgeIds: llmResult.knowledgeIds ?? [],
         unsupportedQuestionCount: llmResult.unsupportedQuestions?.length ?? 0,
+        selectedCtaId: llmResult.selectedCtaId ?? "none",
+        allowedCtaIds: allowedConversationCtas(before).map((cta) => cta.id),
+        beneficiaryUpdateCount: llmResult.beneficiaryUpdates?.length ?? 0,
         groundingConfidence: llmResult.groundingConfidence,
         knowledgeRetry,
         semanticKnowledgeQueryCount: semanticQueries.length,
@@ -499,6 +506,7 @@ export class MetaChatBrain {
       maxCharacters: responseCharacterBudget,
       maxBubbles: responseBubbleBudget,
       preserveFullText:
+        extractRequiredResponseFacts(base.reply).length > 0 ||
         responseCharacterBudget > 360 ||
         base.state.mode === "care" ||
         Boolean(base.state.selectedQuantity) ||

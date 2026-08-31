@@ -16,6 +16,9 @@
     "newAngle",
     "rejectedArguments",
     "nextStep",
+    "selectedCtaId",
+    "ctaText",
+    "beneficiaryUpdates",
     "groundingConfidence",
     "draftReply",
     "confidence",
@@ -215,6 +218,48 @@
     "nextStep": {
       "type": "string",
       "enum": ["answer_only", "ask_discovery", "offer_guidance", "collect_order", "handoff", "none"]
+    },
+    "selectedCtaId": {
+      "type": "string",
+      "enum": [
+        "none",
+        "ask_primary_symptom",
+        "offer_usage_guidance",
+        "offer_price",
+        "ask_quantity",
+        "ask_recipient_name",
+        "ask_phone",
+        "ask_address",
+        "confirm_order_review",
+        "ask_care_symptom",
+        "ask_clarification"
+      ]
+    },
+    "ctaText": { "type": "string", "maxLength": 300 },
+    "beneficiaryUpdates": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation", "id", "type", "label", "age", "ageGroup", "confirmed", "evidence"],
+        "properties": {
+          "operation": { "type": "string", "enum": ["upsert", "activate"] },
+          "id": { "type": ["string", "null"] },
+          "type": {
+            "type": "string",
+            "enum": ["self", "spouse", "child", "mother", "father", "other"]
+          },
+          "label": { "type": "string", "maxLength": 80 },
+          "age": { "type": ["integer", "null"], "minimum": 0, "maximum": 120 },
+          "ageGroup": {
+            "type": "string",
+            "enum": ["child", "adolescent", "adult", "older_adult", "unknown"]
+          },
+          "confirmed": { "type": "boolean" },
+          "evidence": { "type": "string", "maxLength": 180 }
+        }
+      }
     },
     "groundingConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
     "draftReply": { "type": "string", "maxLength": 1000 },

@@ -144,7 +144,7 @@ test("follow-up LLM vi phạm hướng chốt số lượng bị hạ về fallb
   assert.equal(result.text, baseReply);
 });
 
-test("Response Planner ghép câu trả lời nhiều ý với trạng thái đơn đã thực thi", () => {
+test("Response Planner không để workflow nối CTA thu đơn vào câu LLM", () => {
   const merged = mergeDraftWithExecutedState({
     draftReply:
       "Dạ sáng hôm sau mình tắm lại bằng xà phòng không làm mất tác dụng khi đã dùng đúng vào tối hôm trước. Hóa đơn VAT em cần nhân viên kiểm tra ạ.",
@@ -178,8 +178,8 @@ test("Response Planner ghép câu trả lời nhiều ý với trạng thái đ�
 
   assert.match(merged, /xà phòng/iu);
   assert.match(merged, /VAT/iu);
-  assert.match(merged, /ghi nhận mình lấy 1 lọ/iu);
-  assert.match(merged, /tên người nhận, SĐT và địa chỉ trước sáp nhập/iu);
+  assert.doesNotMatch(merged, /ghi nhận mình lấy 1 lọ/iu);
+  assert.doesNotMatch(merged, /tên người nhận, SĐT và địa chỉ trước sáp nhập/iu);
 });
 
 test("Response Planner giữ xác nhận số lượng sau handoff nhưng chưa thu địa chỉ", () => {
@@ -473,16 +473,15 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
 
   assert.ok(compact.length < legacy.length * 0.7, `${compact.length}/${legacy.length}`);
   for (const required of [
-    '"intent"',
-    '"actions"',
-    '"evidence"',
-    '"draftReply"',
-    '"needsClarification"',
+    "intent, topic, actions và draftReply",
+    "confidence và evidence nguyên văn",
+    "selectedCtaId",
+    "Structured Outputs",
     '"selectedQuantity":1',
     '"pendingAction":"choose_quantity"',
     "Dữ liệu đã duyệt",
     "Mình lấy 1 lọ",
-    "product_comparison",
+    "tiêm botox",
   ]) {
     assert.match(compact, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"));
   }
@@ -495,7 +494,7 @@ test("prompt compact giảm kích thước nhưng giữ nguyên hợp đồng h�
   assert.match(compact, /chai\/lọ/u);
   assert.match(compact, /CONVERSATION_MEMORY/u);
   assert.match(compact, /answeredQuestions\/newAngle\/rejectedArguments\/nextStep/u);
-  assert.match(compact, /chỉ đặt câu hỏi hoặc lời mời tiếp theo khi nextStep/u);
+  assert.match(compact, /workflow cung cấp ALLOWED_CTAS/u);
   assert.doesNotMatch(compact, /SỰ THẬT CỐT LÕI/u);
 });
 
@@ -516,6 +515,7 @@ test("prompt compact gửi bộ nhớ ngữ nghĩa và trạng thái đơn có c
         conversationMemory: {
           currentGoal: "resolve_price_objection",
           activeSubject: "customer",
+          beneficiaries: [],
           usedArguments: ["duration_or_cost"],
           rejectedArguments: ["duration_or_cost"],
           answeredQuestions: ["price_comparison"],
@@ -1575,10 +1575,10 @@ test("Tone guard chặn cách bác bỏ cộc lốc hoặc tranh cãi", () => {
   assert.equal(composed.reason, "advisor_voice_guard");
 });
 
-test("prompt giữ 5 lượt hội thoại và che PII trước khi gửi LLM", () => {
-  const recentTurns = Array.from({ length: 12 }, (_, index) => ({
+test("prompt giữ 6 trao đổi hoàn chỉnh và che PII trước khi gửi LLM", () => {
+  const recentTurns = Array.from({ length: 16 }, (_, index) => ({
     role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
-    text: index === 10 ? "SĐT của mình 0987654321" : `lượt-${index}`,
+    text: index === 14 ? "SĐT của mình 0987654321" : `lượt-${index}`,
   }));
   const prompt = buildInterpretPromptForDiagnostics(
     {
@@ -1589,8 +1589,8 @@ test("prompt giữ 5 lượt hội thoại và che PII trước khi gửi LLM", 
     "compact",
   );
 
-  assert.doesNotMatch(prompt, /"lượt-[01]"/);
-  assert.match(prompt, /lượt-2/);
+  assert.doesNotMatch(prompt, /lượt-[0-3]"/);
+  assert.match(prompt, /lượt-4/);
   assert.match(prompt, /\[SĐT ĐÃ ẨN\]/u);
   assert.doesNotMatch(prompt, /0987654321/);
 });
@@ -2021,4 +2021,12 @@ test("semantic parser phân biệt giả định với tình trạng đang xảy
   assert.equal(result.intent, "safety");
   assert.equal(result.topic, "irritation");
   assert.equal(result.scenario, "hypothetical");
+});
+
+test("semantic parser không chấp nhận JSON rỗng hoặc thiếu contract bắt buộc", () => {
+  assert.throws(() => parseSemanticUnderstanding("{}"), /không có intent, action hoặc draftReply/u);
+  assert.throws(
+    () => parseSemanticUnderstanding('{"intent":"other"}', { strict: true }),
+    /Structured Output thiếu trường/u,
+  );
 });

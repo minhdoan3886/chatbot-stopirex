@@ -124,7 +124,11 @@ test("E2E 5 lượt kiểm soát NBA từ khám phá tới đơn và chính sác
     "Khoan đã chưa chốt vội. Đứa bạn mình đợt trước mua bảo dùng bị xót rát nách lắm, nếu mình bôi mà cũng bị thế thì có được trả hàng hoàn tiền không?",
   );
   assert.equal(t5.state.lastIntent, "order_support");
-  assert.match(t5.reply, /xót rát.*ngưng dùng.*đủ 2 tuần.*clip nhúng hủy.*không cần gửi lại/isu);
+  assert.match(t5.reply, /^Dạ có ạ\..*bảo hành.*hoàn tiền/isu);
+  assert.match(t5.reply, /dùng đúng hướng dẫn.*đủ 2 tuần/isu);
+  assert.match(t5.reply, /clip nhúng hủy.*không cần gửi lại sản phẩm/isu);
+  assert.match(t5.reply, /xót hoặc rát.*ngưng dùng.*nhắn bên em/isu);
+  assert.doesNotMatch(t5.reply, /chọn mấy lọ|chốt đơn|gửi thông tin nhận hàng/iu);
   assert.deepEqual(t5.state.orderDraft, orderBeforeConcern);
   assert.equal(t5.state.nextBestAction?.state, "stopped_due_to_handoff_or_complaint");
 });

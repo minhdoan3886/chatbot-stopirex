@@ -1526,7 +1526,7 @@ test("Meta brain giữ quyền LLM cho câu nối tiếp an toàn và hàng gi�
         unsupportedQuestions: [],
         groundingConfidence: 0.99,
         draftReply:
-          "Dạ về an toàn, Stopirex có Alcohol làm dung môi trong ngưỡng an toàn của công thức và mẫu thử ghi mức kích ứng da không đáng kể; với da nhạy cảm mình nên thử trên vùng nhỏ, dùng trên da lành, sạch, khô hoàn toàn, chỉ lăn một lớp mỏng vào buổi tối, không dùng khi da trầy, đỏ, rát hoặc ngay sau cạo, nhổ, wax ạ. Về hàng chính hãng, sản phẩm bên em cung cấp là hàng chính hãng; khi nhận mình đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi giúp em nhé.",
+          "Dạ về an toàn, Stopirex có Alcohol làm dung môi trong ngưỡng an toàn của công thức và mẫu thử ghi mức kích ứng da không đáng kể; với da nhạy cảm mình nên thử trên vùng nhỏ, dùng trên da lành, sạch, khô hoàn toàn, chỉ lăn một lớp mỏng vào buổi tối, không dùng khi da trầy, đỏ, rát hoặc ngay sau cạo, nhổ, wax. Nếu da khó chịu thì mình tạm ngưng và không lăn lại khi da còn khó chịu ạ. Về hàng chính hãng, sản phẩm bên em cung cấp là hàng chính hãng; khi nhận mình đối chiếu bao bì, tem, đúng tên sản phẩm và thông tin người gửi giúp em nhé.",
         slots: {},
       });
     },

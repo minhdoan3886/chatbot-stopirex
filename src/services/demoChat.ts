@@ -12,6 +12,9 @@ import {
   type SemanticUnderstanding,
   type SemanticNewAngle,
   type SemanticNextStep,
+  type BeneficiaryAgeGroup,
+  type BeneficiaryType,
+  type SemanticBeneficiaryUpdate,
 } from "../domain/consultation.js";
 import {
   resolveConversationDecision,
@@ -69,6 +72,7 @@ import {
   questionTopic,
   type ConversationTopic,
 } from "../domain/responseGovernor.js";
+import { extractRequiredResponseFacts } from "../domain/responseContract.js";
 import { InMemoryCareCaseRepository } from "./careCaseRepository.js";
 import { createDemoProductCatalog, demoCommerceEffectiveAt } from "../config/demoCommerce.js";
 import type { FollowupStage } from "../domain/followup.js";
@@ -126,11 +130,24 @@ type DemoSession = {
 export type ConversationMemory = {
   currentGoal?: string;
   activeSubject?: "customer" | "child" | "product" | "order";
+  beneficiaries: ConversationBeneficiary[];
+  activeBeneficiaryId?: string;
   usedArguments: SemanticNewAngle[];
   rejectedArguments: SemanticNewAngle[];
   answeredQuestions: string[];
   openQuestions: string[];
   nextStep?: SemanticNextStep;
+};
+
+export type ConversationBeneficiary = {
+  id: string;
+  type: BeneficiaryType;
+  label: string;
+  age?: number;
+  ageGroup: BeneficiaryAgeGroup;
+  confirmed: boolean;
+  evidence: string;
+  sourceTurn: number;
 };
 
 export type CustomerProfileMemory = {
@@ -2487,6 +2504,13 @@ export class DemoChatService {
       conversationMemory: {
         ...base.conversationMemory,
         ...(candidate.conversationMemory ?? {}),
+        beneficiaries: sanitizeBeneficiaries(candidate.conversationMemory?.beneficiaries),
+        ...(isKnownBeneficiaryId(
+          candidate.conversationMemory?.activeBeneficiaryId,
+          candidate.conversationMemory?.beneficiaries,
+        )
+          ? { activeBeneficiaryId: candidate.conversationMemory?.activeBeneficiaryId }
+          : {}),
         usedArguments: [...(candidate.conversationMemory?.usedArguments ?? [])].slice(-8),
         rejectedArguments: [...(candidate.conversationMemory?.rejectedArguments ?? [])].slice(-8),
         answeredQuestions: [...(candidate.conversationMemory?.answeredQuestions ?? [])].slice(-12),
@@ -2495,6 +2519,14 @@ export class DemoChatService {
       answeredTopics: [...(candidate.answeredTopics ?? [])],
       askedTopics: [...(candidate.askedTopics ?? [])],
     };
+    if (
+      restored.conversationMemory.activeBeneficiaryId &&
+      !restored.conversationMemory.beneficiaries.some(
+        (item) => item.id === restored.conversationMemory.activeBeneficiaryId,
+      )
+    ) {
+      delete restored.conversationMemory.activeBeneficiaryId;
+    }
     if (typeof restored.order.customerConfirmedAt === "string") {
       restored.order.customerConfirmedAt = new Date(restored.order.customerConfirmedAt);
     }
@@ -2631,10 +2663,10 @@ function stateOf(session: DemoSession): DemoChatState {
       : {}),
     ...(session.previousSalesPipeline ? { previousSalesPipeline: session.previousSalesPipeline } : {}),
     botPaused: session.care?.case.botPaused ?? false,
-    // Five complete user/assistant exchanges are enough to resolve references
-    // such as “cái này”, “loại kia” and “như trên” without sending the full
-    // lifetime of the conversation to the model.
-    recentTurns: session.history.slice(-10),
+    // Keep enough raw turns to reconstruct six complete exchanges. The prompt
+    // layer groups these turns, so multi-bubble assistant replies do not evict
+    // the customer context that introduced the active subject.
+    recentTurns: session.history.slice(-36),
     ...(session.lastIntent ? { lastIntent: session.lastIntent } : {}),
     ...(session.activeSkill ? { activeSkill: session.activeSkill } : {}),
     ...(session.skillReason ? { skillReason: session.skillReason } : {}),
@@ -2671,6 +2703,7 @@ function stateOf(session: DemoSession): DemoChatState {
     },
     conversationMemory: {
       ...session.conversationMemory,
+      beneficiaries: session.conversationMemory.beneficiaries.map((item) => ({ ...item })),
       usedArguments: [...session.conversationMemory.usedArguments],
       rejectedArguments: [...session.conversationMemory.rejectedArguments],
       answeredQuestions: [...session.conversationMemory.answeredQuestions],
@@ -2683,6 +2716,7 @@ function shouldPreserveFullResponse(session: DemoSession, replies: readonly stri
   if (session.mode === "care") return true;
   if (session.selectedQuantity || session.orderId) return true;
   const text = replies.join("\n");
+  if (extractRequiredResponseFacts(text).length > 0) return true;
   const answerTopicCount = new Set(session.lastDecision?.actionPlan?.answerTopics ?? []).size;
   if (answerTopicCount >= 3) return true;
   if (/không bết/iu.test(text) && /hoàn tiền/iu.test(text)) return true;
@@ -2766,6 +2800,7 @@ function newSession(id: string, context: DemoChatContext = {}): DemoSession {
     customerProfile: {},
     locationMemory: {},
     conversationMemory: {
+      beneficiaries: [],
       usedArguments: [],
       rejectedArguments: [],
       answeredQuestions: [],
@@ -3009,7 +3044,7 @@ function extractAgeMention(normalizedText: string, allowBareNumber = false): num
 
 function rememberTurn(session: DemoSession, turn: { role: "user" | "assistant"; text: string }): void {
   session.history.push(turn);
-  if (session.history.length > 12) session.history.splice(0, session.history.length - 12);
+  if (session.history.length > 40) session.history.splice(0, session.history.length - 40);
 }
 
 function rememberSemanticPlan(session: DemoSession, semantic: SemanticUnderstanding): void {
@@ -3048,6 +3083,112 @@ function rememberSemanticPlan(session: DemoSession, semantic: SemanticUnderstand
       (item) => !answered.has(normalize(item)),
     );
   }
+  applyBeneficiaryUpdates(session, semantic.beneficiaryUpdates ?? []);
+}
+
+function applyBeneficiaryUpdates(
+  session: DemoSession,
+  updates: readonly SemanticBeneficiaryUpdate[],
+): void {
+  if (updates.length === 0) return;
+  const latestMessage = [...session.history].reverse().find((turn) => turn.role === "user")?.text ?? "";
+  const normalizedMessage = normalize(latestMessage);
+  for (const update of updates) {
+    const evidence = update.evidence.trim();
+    if (!evidence || !normalizedMessage.includes(normalize(evidence))) continue;
+    const byId = update.id
+      ? session.conversationMemory.beneficiaries.find((item) => item.id === update.id)
+      : undefined;
+    const byIdentity = session.conversationMemory.beneficiaries.find(
+      (item) => item.type === update.type && normalize(item.label) === normalize(update.label),
+    );
+    let beneficiary = byId ?? byIdentity;
+    if (update.operation === "activate" && !beneficiary) continue;
+    if (!beneficiary) {
+      beneficiary = {
+        id: nextBeneficiaryId(session.conversationMemory.beneficiaries, update.type),
+        type: update.type,
+        label: update.label.trim(),
+        ageGroup: update.ageGroup,
+        confirmed: update.confirmed,
+        evidence,
+        sourceTurn: session.messages + 1,
+        ...(update.age !== undefined ? { age: update.age } : {}),
+      };
+      session.conversationMemory.beneficiaries.push(beneficiary);
+    } else if (update.operation === "upsert") {
+      beneficiary.type = update.type;
+      beneficiary.label = update.label.trim();
+      beneficiary.ageGroup = update.ageGroup;
+      beneficiary.confirmed = update.confirmed;
+      beneficiary.evidence = evidence;
+      beneficiary.sourceTurn = session.messages + 1;
+      if (update.age !== undefined) beneficiary.age = update.age;
+    }
+    session.conversationMemory.activeBeneficiaryId = beneficiary.id;
+  }
+  session.conversationMemory.beneficiaries = session.conversationMemory.beneficiaries.slice(-6);
+  if (
+    session.conversationMemory.activeBeneficiaryId &&
+    !session.conversationMemory.beneficiaries.some(
+      (item) => item.id === session.conversationMemory.activeBeneficiaryId,
+    )
+  ) {
+    delete session.conversationMemory.activeBeneficiaryId;
+  }
+}
+
+function nextBeneficiaryId(
+  beneficiaries: readonly ConversationBeneficiary[],
+  type: BeneficiaryType,
+): string {
+  let suffix = beneficiaries.filter((item) => item.type === type).length + 1;
+  while (beneficiaries.some((item) => item.id === `beneficiary-${type}-${suffix}`)) suffix += 1;
+  return `beneficiary-${type}-${suffix}`;
+}
+
+function sanitizeBeneficiaries(value: unknown): ConversationBeneficiary[] {
+  if (!Array.isArray(value)) return [];
+  const validTypes: readonly BeneficiaryType[] = ["self", "spouse", "child", "mother", "father", "other"];
+  const validAgeGroups: readonly BeneficiaryAgeGroup[] = [
+    "child",
+    "adolescent",
+    "adult",
+    "older_adult",
+    "unknown",
+  ];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+    .flatMap((item) => {
+      if (
+        typeof item.id !== "string" ||
+        typeof item.label !== "string" ||
+        !validTypes.includes(item.type as BeneficiaryType) ||
+        !validAgeGroups.includes(item.ageGroup as BeneficiaryAgeGroup) ||
+        typeof item.confirmed !== "boolean" ||
+        typeof item.evidence !== "string" ||
+        !Number.isInteger(item.sourceTurn)
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: item.id,
+          type: item.type as BeneficiaryType,
+          label: item.label,
+          ageGroup: item.ageGroup as BeneficiaryAgeGroup,
+          confirmed: item.confirmed,
+          evidence: item.evidence,
+          sourceTurn: Number(item.sourceTurn),
+          ...(Number.isInteger(item.age) ? { age: Number(item.age) } : {}),
+        },
+      ];
+    })
+    .slice(-6);
+}
+
+function isKnownBeneficiaryId(id: unknown, beneficiaries: unknown): id is string {
+  return typeof id === "string" && sanitizeBeneficiaries(beneficiaries).some((item) => item.id === id);
 }
 
 function groundSemanticSlots(session: DemoSession, proposed: ConsultationSlots): ConsultationSlots {
@@ -4208,7 +4349,7 @@ export function isActualIrritationMessage(value: string): boolean {
 
 function returnsPolicyReply(text: string): string {
   if (isHypotheticalIrritationRefundQuestion(text)) {
-    return "Dạ em hiểu mình lo vì bạn từng bị xót rát ạ. Stopirex có công thức dịu nhẹ; mình chỉ dùng trên da lành, sạch và khô hoàn toàn. Nếu bôi thấy rát kéo dài, mình ngưng dùng và nhắn bên em kiểm tra. Chính sách hoàn tiền do chưa hiệu quả áp dụng khi đã dùng đúng hướng dẫn đủ 2 tuần; hồ sơ gồm thông tin tài khoản và clip nhúng hủy sản phẩm xuống nước, không cần gửi lại sản phẩm ạ.";
+    return "Dạ có ạ. Stopirex có chính sách bảo hành và hỗ trợ hoàn tiền nếu sản phẩm không đạt hiệu quả sau khi mình dùng đúng hướng dẫn đủ 2 tuần. Hồ sơ gồm thông tin đơn hàng, thông tin tài khoản và clip nhúng hủy sản phẩm; mình không cần gửi lại sản phẩm. Nếu bôi thấy xót hoặc rát kéo dài, mình ngưng dùng và nhắn bên em kiểm tra ngay ạ.";
   }
   if (isUsedIneffectiveRefundQuestion(text)) {
     if (isHypotheticalIneffectiveRefundQuestion(text)) {

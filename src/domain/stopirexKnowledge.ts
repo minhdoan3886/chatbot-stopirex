@@ -8,6 +8,9 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       tenantId,
       type: "price",
       title: "Lý do điều chỉnh giá từ 245.000đ lên 285.000đ",
+      status: "active",
+      scope: "historical",
+      priority: 1,
       content:
         "Do chi phí nhập khẩu sản phẩm từ Pháp tăng, bên em đã điều chỉnh giá bán để phù hợp với chi phí đầu vào.",
       responseGuidance:
@@ -219,7 +222,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       type: "policy",
       title: "Hoàn tiền khi đã dùng đúng nhưng chưa hiệu quả",
       content:
-        "Chỉ áp dụng khi khách xác nhận đã dùng đúng hướng dẫn và đủ 2 tuần. Khách cần cung cấp số tài khoản, tên ngân hàng, tên người thụ hưởng và clip nhúng hủy sản phẩm xuống nước. Đây là quy trình hủy sản phẩm để xử lý hoàn tiền nên khách không cần giữ vỏ hộp, không cần gửi sản phẩm về và không phát sinh bước thu hồi hàng. Khi nhận đủ bộ hồ sơ, chuyển bộ phận liên quan xử lý tiếp.",
+        "Stopirex có chính sách bảo hành và hỗ trợ hoàn tiền khi sản phẩm không đạt hiệu quả, sau khi khách xác nhận đã dùng đúng hướng dẫn và đủ 2 tuần. Khách cần cung cấp thông tin đơn hàng, số tài khoản, tên ngân hàng, tên người thụ hưởng và clip nhúng hủy sản phẩm xuống nước. Đây là quy trình hủy sản phẩm để xử lý hoàn tiền nên khách không cần giữ vỏ hộp, không cần gửi sản phẩm về và không phát sinh bước thu hồi hàng. Khi nhận đủ bộ hồ sơ, chuyển bộ phận liên quan xử lý tiếp.",
       searchAliases: ["dùng không đỡ có hoàn tiền không", "không khỏi hoàn xèng", "hoàn tiền sau 2 tuần"],
       sourceRow: 23,
     },
@@ -267,6 +270,10 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       tenantId,
       type: "price",
       title: "Giá và phương án mua đã duyệt",
+      status: "active",
+      scope: "current",
+      validFrom: "2026-08-01T00:00:00+07:00",
+      priority: 3,
       content:
         "Giá Facebook đã duyệt: 1 lọ 285.000đ và phí giao 30.000đ; combo 2 lọ 510.000đ; combo 3 lọ 750.000đ; combo 4 lọ 1.000.000đ; combo 5 lọ 1.250.000đ. Combo 2–5 lọ miễn phí giao. Mọi đơn từ 2 lọ trở lên được tặng đúng 1 túi đa năng vải dệt Stopirex; quà tính theo đơn hàng, không tính theo số lọ. Combo chăm sóc mùi cơ thể gồm 1 lăn Stopirex và 1 chai Stopirex Herbal Body Wash 500ml có giá 525.000đ, miễn phí giao; Herbal Body Wash hiện chưa bán lẻ. Đơn 1 lọ được miễn phí giao khi khách mặc cả hoặc từ lúc hệ thống bắt đầu gửi follow-up.",
       searchAliases: [

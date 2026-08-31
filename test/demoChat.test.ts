@@ -2226,6 +2226,72 @@ test("reset xóa toàn bộ trạng thái hội thoại", () => {
   assert.deepEqual(reset.state.slots, {});
 });
 
+test("bộ nhớ người sử dụng giữ mẹ của khách và tách khỏi người nhận đơn", () => {
+  const chat = new DemoChatService();
+  const first = chat.chat(
+    undefined,
+    "chị mua cho mẹ",
+    {
+      intent: "consultation",
+      slots: {},
+      beneficiaryUpdates: [
+        {
+          operation: "upsert",
+          type: "mother",
+          label: "mẹ của khách",
+          ageGroup: "adult",
+          confirmed: true,
+          evidence: "chị mua cho mẹ",
+        },
+      ],
+    },
+  );
+  const beneficiary = first.state.conversationMemory?.beneficiaries[0];
+  assert.equal(beneficiary?.type, "mother");
+  assert.equal(first.state.conversationMemory?.activeBeneficiaryId, beneficiary?.id);
+
+  const second = chat.chat(
+    first.sessionId,
+    "mẹ em da nhạy cảm",
+    {
+      intent: "safety",
+      slots: {},
+      beneficiaryUpdates: [
+        {
+          operation: "activate",
+          id: beneficiary?.id,
+          type: "mother",
+          label: "mẹ của khách",
+          ageGroup: "adult",
+          confirmed: true,
+          evidence: "mẹ",
+        },
+      ],
+    },
+  );
+  assert.equal(second.state.conversationMemory?.activeBeneficiaryId, beneficiary?.id);
+  assert.equal(second.state.conversationMemory?.beneficiaries.length, 1);
+  assert.equal(second.state.orderDraft?.recipientName, undefined);
+});
+
+test("bộ nhớ người sử dụng không được suy ra từ tên người nhận đơn", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat(undefined, "Tài", {
+    intent: "order_support",
+    slots: {},
+    actions: [
+      {
+        type: "update_order",
+        fields: { recipientName: "Tài" },
+        confidence: 0.99,
+        evidence: ["Tài"],
+        source: "llm",
+      },
+    ],
+  });
+  assert.deepEqual(result.state.conversationMemory?.beneficiaries, []);
+});
+
 test("hiểu cách nói tắt chơi pick là vận động và không hỏi lại bối cảnh", () => {
   const chat = new DemoChatService();
   chat.chat("pickleball", "Tư vấn giúp mình");

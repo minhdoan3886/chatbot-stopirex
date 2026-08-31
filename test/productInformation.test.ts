@@ -216,6 +216,9 @@ test("retrieval ưu tiên đúng knowledge hẹp và không để hướng dẫn
     );
 
   assert.equal(topIds("giá bao nhiêu")[0], "pricing-approved-options-2026-08");
+  assert.deepEqual(topIds("nay giá có đổi ko e"), ["pricing-approved-options-2026-08"]);
+  assert.equal(topIds("trước em mua 245k sao giờ giá tăng")[0], "price-adjustment-france-import");
+  assert.equal(topIds("cảm giác khi lăn thế nào").includes("pricing-approved-options-2026-08"), false);
   assert.equal(topIds("có cồn không")[0], "business-approved-alcohol-odor-guidance-2026-08");
   assert.equal(topIds("bao lâu thấy hiệu quả")[0], "effectiveness-usage-journey");
   assert.deepEqual(topIds("bao lâu thì thấy hiệu quả"), ["effectiveness-usage-journey"]);

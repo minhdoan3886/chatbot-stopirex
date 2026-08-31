@@ -1,5 +1,10 @@
 export type RequiredAnswerTopic =
-  "alcohol_fact" | "product_scent" | "permanent_effect" | "application_feel" | "ineffective_refund";
+  | "alcohol_fact"
+  | "product_scent"
+  | "permanent_effect"
+  | "application_feel"
+  | "ineffective_refund"
+  | "hypothetical_irritation_refund";
 
 export function requiredAnswerTopics(customerMessage: string): RequiredAnswerTopic[] {
   const text = normalize(customerMessage);
@@ -27,6 +32,13 @@ export function requiredAnswerTopics(customerMessage: string): RequiredAnswerTop
     /\b(?:hoan tien|hoan xeng|tra tien|tra hang|doi tra)\b/.test(text)
   ) {
     topics.push("ineffective_refund");
+  }
+  if (
+    /\b(?:neu|lo ma|gia su|dua ban|ban minh|nguoi khac|minh nghe|neu minh boi)\b/.test(text) &&
+    /\b(?:xot|rat|ngua|kich ung|do da)\b/.test(text) &&
+    /\b(?:bao hanh|hoan tien|tra tien|tra hang|doi tra)\b/.test(text)
+  ) {
+    topics.push("hypothetical_irritation_refund");
   }
 
   return [...new Set(topics)];
@@ -61,6 +73,19 @@ export function replyCoversRequiredAnswerTopic(topic: RequiredAnswerTopic, custo
         /\b(?:du )?2 tuan\b/.test(text) &&
         /\bhoan tien\b/.test(text)
       );
+    case "hypothetical_irritation_refund": {
+      const directConfirmation = /^(?:da\s+)?co\b.{0,80}\b(?:bao hanh|hoan tien)\b/.test(text);
+      const conditions =
+        /\bdung dung huong dan\b/.test(text) && /\b(?:du )?2 tuan\b/.test(text);
+      const evidenceAndNoReturn =
+        /\bclip\b.{0,35}\bnhung huy\b/.test(text) &&
+        /\bkhong can gui (?:lai )?san pham\b/.test(text);
+      const irritationSafety =
+        /\b(?:xot|rat)\b/.test(text) &&
+        /\bngung dung\b/.test(text) &&
+        /\b(?:nhan|lien he)\b/.test(text);
+      return directConfirmation && conditions && evidenceAndNoReturn && irritationSafety;
+    }
   }
 }
 

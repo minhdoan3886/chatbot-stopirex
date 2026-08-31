@@ -74,6 +74,40 @@ export type SemanticNewAngle =
 export type SemanticNextStep =
   "answer_only" | "ask_discovery" | "offer_guidance" | "collect_order" | "handoff" | "none";
 
+export type ConversationCtaId =
+  | "none"
+  | "ask_primary_symptom"
+  | "offer_usage_guidance"
+  | "offer_price"
+  | "ask_quantity"
+  | "ask_recipient_name"
+  | "ask_phone"
+  | "ask_address"
+  | "confirm_order_review"
+  | "ask_care_symptom"
+  | "ask_clarification";
+
+export type BeneficiaryType =
+  | "self"
+  | "spouse"
+  | "child"
+  | "mother"
+  | "father"
+  | "other";
+
+export type BeneficiaryAgeGroup = "child" | "adolescent" | "adult" | "older_adult" | "unknown";
+
+export type SemanticBeneficiaryUpdate = {
+  operation: "upsert" | "activate";
+  id?: string;
+  type: BeneficiaryType;
+  label: string;
+  age?: number;
+  ageGroup: BeneficiaryAgeGroup;
+  confirmed: boolean;
+  evidence: string;
+};
+
 export type SemanticUnderstanding = {
   slots: ConsultationSlots;
   status?: "interpreted" | "fallback" | "skipped" | "unavailable";
@@ -89,6 +123,9 @@ export type SemanticUnderstanding = {
   newAngle?: SemanticNewAngle;
   rejectedArguments?: SemanticNewAngle[];
   nextStep?: SemanticNextStep;
+  selectedCtaId?: ConversationCtaId;
+  ctaText?: string;
+  beneficiaryUpdates?: SemanticBeneficiaryUpdate[];
   groundingConfidence?: number;
   draftReply?: string;
   skill?: ConversationSkillId;

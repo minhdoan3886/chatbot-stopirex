@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import readXlsxFile from "read-excel-file/node";
 import type { TenantId } from "./types.js";
+import type { CustomerIntent } from "./consultation.js";
 import { ClaimRegistry } from "./claims.js";
 import { detectPromptInjection } from "../services/policies.js";
 
@@ -15,6 +16,13 @@ export type KnowledgeEntity = {
   searchAliases?: readonly string[];
   /** Internal response constraints, kept separate from customer-facing facts. */
   responseGuidance?: string;
+  status?: "active" | "inactive";
+  scope?: "current" | "historical";
+  validFrom?: string;
+  validTo?: string;
+  allowedIntents?: readonly CustomerIntent[];
+  excludedIntents?: readonly CustomerIntent[];
+  priority?: number;
   sourceRow: number;
 };
 
@@ -162,6 +170,18 @@ export function validateKnowledgeVersion(entities: readonly KnowledgeEntity[]): 
   }
   for (const [key, values] of unique)
     if (values.size > 1) conflicts.push(`${key}: có nội dung active mâu thuẫn`);
+  const activeCurrentPrices = entities.filter(
+    (entity) =>
+      entity.type === "price" &&
+      entity.status !== "inactive" &&
+      entity.scope !== "historical" &&
+      isEntityEffective(entity, new Date()),
+  );
+  if (activeCurrentPrices.length > 1) {
+    conflicts.push(
+      `price: có ${activeCurrentPrices.length} nguồn giá hiện hành; chỉ được phép có một nguồn current`,
+    );
+  }
   return conflicts;
 }
 
@@ -232,6 +252,8 @@ export function retrieveKnowledgeMatches(input: {
   query: string;
   entities: readonly KnowledgeEntity[];
   limit?: number;
+  intent?: CustomerIntent;
+  now?: Date;
 }): KnowledgeMatch[] {
   if (detectPromptInjection(input.query)) return [];
   const queryText = normalizeSearchText(input.query);
@@ -252,8 +274,21 @@ export function retrieveKnowledgeMatches(input: {
     hasCompoundNonPrecisionConcept &&
     (precisionQueryConcepts.has("price") || precisionQueryConcepts.has("general_usage"));
   const queryNgrams = characterNgrams(queryText);
+  const historicalPriceQuery = isHistoricalPriceQuery(queryText);
+  const now = input.now ?? new Date();
   const ranked = input.entities
-    .filter((entity) => entity.tenantId === input.tenantId)
+    .filter(
+      (entity) =>
+        entity.tenantId === input.tenantId &&
+        entity.status !== "inactive" &&
+        isEntityEffective(entity, now) &&
+        (!input.intent || !entity.allowedIntents || entity.allowedIntents.includes(input.intent)) &&
+        (!input.intent || !entity.excludedIntents?.includes(input.intent)) &&
+        (entity.scope !== "historical" || historicalPriceQuery) &&
+        (entity.type !== "price" ||
+          historicalPriceQuery ||
+          ["price", "promotion", "shipping"].some((concept) => queryConcepts.has(concept))),
+    )
     .map((entity): KnowledgeMatch => {
       const titleText = normalizeSearchText(`${entity.title} ${(entity.searchAliases ?? []).join(" ")}`);
       // responseGuidance deliberately stays out of the searchable corpus. Internal
@@ -280,7 +315,9 @@ export function retrieveKnowledgeMatches(input: {
         matchedTitleTerms.length * 2 +
         tokenCoverage * 4 +
         matchedConcepts.length * 4 +
-        semanticSimilarity * 3 -
+        semanticSimilarity * 3 +
+        (entity.priority ?? 0) +
+        (entity.scope === "historical" && historicalPriceQuery ? 8 : 0) -
         unmatchedExclusiveConcepts.length * 6;
       return {
         entity,
@@ -456,9 +493,10 @@ function normalizeSearchText(value: string): string {
       // Removing accents first would otherwise rank breastfeeding content for an
       // alcohol question.
       .replace(/cồn/giu, " alcohol ")
-      .replace(/giá trị/giu, " value ")
-      .replace(/giả/giu, " counterfeit ")
-      .replace(/giá/giu, " price ")
+      .replace(/(?<!\p{L})đánh giá(?!\p{L})/giu, " review ")
+      .replace(/(?<!\p{L})giá trị(?!\p{L})/giu, " value ")
+      .replace(/(?<!\p{L})giả(?!\p{L})/giu, " counterfeit ")
+      .replace(/(?<!\p{L})giá(?!\p{L})/giu, " price ")
       .replace(/quà/giu, " gift ")
       .normalize("NFD")
       .replace(/\p{M}/gu, "")
@@ -468,6 +506,24 @@ function normalizeSearchText(value: string): string {
       .replace(/\s+/gu, " ")
       .trim()
   );
+}
+
+function isHistoricalPriceQuery(normalizedQuery: string): boolean {
+  const compact = normalizedQuery.replace(/\s+/gu, "");
+  return (
+    /(?:245000|245k)/u.test(compact) ||
+    /(?:gia cu|truoc day|lan truoc|tang price|dieu chinh price|vi sao.*price|ly do.*price)/u.test(
+      normalizedQuery,
+    )
+  );
+}
+
+function isEntityEffective(entity: KnowledgeEntity, now: Date): boolean {
+  const nowMs = now.getTime();
+  const from = entity.validFrom ? Date.parse(entity.validFrom) : Number.NEGATIVE_INFINITY;
+  const to = entity.validTo ? Date.parse(entity.validTo) : Number.POSITIVE_INFINITY;
+  if (Number.isNaN(from) || Number.isNaN(to)) return false;
+  return from <= nowMs && nowMs <= to;
 }
 
 function tokenizeForSearch(normalizedText: string): string[] {

@@ -3394,6 +3394,71 @@ test("tin chào ngắn sau đơn cũ bắt đầu lượt tư vấn mới thay v
   assert.doesNotMatch(followup.reply, /đã có mã vận đơn|chưa thể tự sửa/iu);
 });
 
+test("đơn inbox chưa có mã vận đơn không bị xóa khi khách đổi chủ đề rồi quay lại", () => {
+  const chat = new DemoChatService();
+  const sessionId = "editable-inbox-order-survives-topic-switch";
+  const context = {
+    orderConfirmationMode: "inbox" as const,
+    orderEditable: true,
+    actionExecutionMode: "multi_action" as const,
+  };
+
+  chat.chat(sessionId, "Giá bao nhiêu?", {}, context);
+  chat.chat(sessionId, "Mình lấy 2 lọ", {}, context);
+  const created = chat.chat(
+    sessionId,
+    "Nguyễn Ngọc Mai, 0912345678, 15 Nguyễn Trãi, Thanh Xuân, Hà Nội",
+    {},
+    context,
+  );
+  assert.equal(created.state.pipeline, "6.Đã tạo đơn");
+
+  const productQuestion = chat.chat(
+    sessionId,
+    "Mình có thể dùng chung một lọ với em không?",
+    {
+      slots: {},
+      intent: "usage_guidance",
+      topic: "usage",
+      confidence: 0.99,
+      evidence: ["dùng chung một lọ với em"],
+      actions: [
+        {
+          type: "answer_question",
+          topic: "usage",
+          confidence: 0.99,
+          evidence: ["dùng chung một lọ với em"],
+          source: "llm",
+        },
+      ],
+    },
+    context,
+  );
+  assert.equal(productQuestion.state.selectedQuantity, 2);
+  assert.equal(productQuestion.state.orderDraft?.phone, "0912345678");
+
+  chat.chat(sessionId, "Khoan, đổi số điện thoại nhé", {}, context);
+  const changed = chat.chat(sessionId, "0987654321 mới đúng", {}, context);
+  assert.equal(changed.state.orderDraft?.phone, "0987654321");
+  assert.deepEqual(
+    changed.state.conversationMemory?.phoneHistory.map(({ value, status }) => ({ value, status })),
+    [
+      { value: "0912345678", status: "historical" },
+      { value: "0987654321", status: "current" },
+    ],
+  );
+
+  const quantityRecall = chat.chat(sessionId, "Ban đầu mình đặt mấy lọ nhỉ?", {}, context);
+  assert.match(quantityRecall.reply, /ban đầu mình đặt (?:combo )?2 lọ/iu);
+  assert.equal(quantityRecall.state.selectedQuantity, 2);
+
+  const phoneRecall = chat.chat(sessionId, "À số lúc đầu của mình là gì nhỉ?", {}, context);
+  assert.match(phoneRecall.reply, /0912345678/iu);
+  assert.match(phoneRecall.reply, /0987654321/iu);
+  assert.doesNotMatch(phoneRecall.reply, /ĐÃ ẨN/iu);
+  assert.equal(phoneRecall.state.orderDraft?.phone, "0987654321");
+});
+
 test("kết quả nhân viên có thể mở khóa ca CSKH và trả session về flow trước đó", () => {
   const chat = new DemoChatService();
   chat.chat("care-resume-session", "Mình dùng bị rát và da đang đỏ");

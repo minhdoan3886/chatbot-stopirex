@@ -286,10 +286,14 @@ export class DemoChatService {
     if (session.pipeline === "7.Chờ followup") session.freeShippingApproved = true;
     const raw = input.trim();
     const text = normalize(raw);
+    // Order lifecycle and conversational focus are independent. An inbox
+    // order remains editable until a real tracking code is attached even when
+    // the customer temporarily asks a product question and the sales pipeline
+    // moves away from `6.Đã tạo đơn`.
     const canEditCreatedInboxOrder =
-      session.pipeline === "6.Đã tạo đơn" &&
       session.orderConfirmationMode === "inbox" &&
-      session.orderEditable === true;
+      session.orderEditable === true &&
+      Boolean(session.order.customerConfirmedAt);
     const orderMutationAllowed = session.pipeline !== "6.Đã tạo đơn" || canEditCreatedInboxOrder;
     const observedEntities = observeGlobalEntities(session, raw, orderMutationAllowed);
     const requestedQuantity = extractRequestedQuantity(text);
@@ -1772,14 +1776,26 @@ export class DemoChatService {
       // later message. Only an explicit order/tracking/edit request may keep
       // the completed-order lock. A greeting, a product question or a current
       // price question starts a fresh conversational turn.
-      clearOrderDraft(session);
-      session.pipeline = "1.Phân loại";
-      session.consultation = {
-        ...session.consultation,
-        stage: "S0.new",
-      };
-      session.orderCollectionPaused = false;
-      delete session.orderEditable;
+      if (canEditCreatedInboxOrder) {
+        // Do not erase a pending operational order just because the active
+        // conversational goal changed. Park collection while retaining the
+        // authoritative order aggregate and its audit history.
+        session.pipeline = "4.XL băn khoăn";
+        session.consultation = {
+          ...session.consultation,
+          stage: "S5.guidance",
+        };
+        session.orderCollectionPaused = true;
+      } else {
+        clearOrderDraft(session);
+        session.pipeline = "1.Phân loại";
+        session.consultation = {
+          ...session.consultation,
+          stage: "S0.new",
+        };
+        session.orderCollectionPaused = false;
+        delete session.orderEditable;
+      }
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
       delete session.activeSkill;

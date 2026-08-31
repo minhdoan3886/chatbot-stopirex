@@ -11,6 +11,7 @@ import {
   MetaChatBrain,
   reconcileKnowledgeBackedPopulationSafety,
   reconcilePendingConsultationAnswer,
+  reconcilePriorAddressConfirmation,
 } from "../src/services/metaChatBrain.js";
 import {
   MetaInboundProcessor,
@@ -1888,4 +1889,79 @@ test("tham chiếu địa chỉ trên có lỗi gõ phải đi qua LLM trước 
   const state = chat.peek(sessionId);
   assert.deepEqual(state.orderMissing, []);
   assert.equal(isFastTransition("Uh\nGuit về địa chỉ trên cho a", state), false);
+});
+
+test("Meta brain sửa action giao hàng sai thành xác nhận giữ địa chỉ hiện hành", async () => {
+  const chat = new DemoChatService();
+  const sessionId = "prior-address-reference-state-reconciler";
+  const context = { orderConfirmationMode: "inbox" as const, orderEditable: true };
+  chat.chat(sessionId, "Giá bao nhiêu?", {}, context);
+  chat.chat(sessionId, "Mình lấy 2 lọ", {}, context);
+  chat.chat(
+    sessionId,
+    "Nguyễn Ngọc Mai, 0987654321, 15 Nguyễn Trãi, Thanh Xuân, Hà Nội",
+    {},
+    context,
+  );
+
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    runner: async () =>
+      JSON.stringify({
+        intent: "order_support",
+        topic: "order",
+        asksDirectAnswer: true,
+        confidence: 0.99,
+        needsClarification: false,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "delivery",
+            confidence: 0.99,
+            evidence: ["Địa chỉ lúc nãy giữ nguyên nha"],
+          },
+        ],
+        knowledgeIds: ["care-irritation"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.99,
+        selectedCtaId: "none",
+        draftReply: "Dạ đơn của mình đang được giao theo đơn vị vận chuyển ạ.",
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(chat, llm);
+  const response = await brain.reply({
+    sessionId,
+    text: "Địa chỉ lúc nãy giữ nguyên nha",
+    ...context,
+  });
+
+  assert.equal(response.state.selectedQuantity, 2);
+  assert.equal(response.state.orderDraft?.phone, "0987654321");
+  assert.match(response.state.orderDraft?.legacyAddress ?? "", /15 Nguyễn Trãi.*Thanh Xuân.*Hà Nội/isu);
+  assert.match(response.reply, /giữ nguyên địa chỉ.*15 Nguyễn Trãi.*Thanh Xuân.*Hà Nội/isu);
+  assert.doesNotMatch(response.reply, /chưa đủ thông tin|chuyển bộ phận|giao theo đơn vị vận chuyển/iu);
+});
+
+test("reconciler chỉ sửa tham chiếu địa chỉ khẳng định, không sửa câu hỏi giao hàng", () => {
+  const semantic = {
+    slots: {},
+    intent: "order_support" as const,
+    topic: "delivery" as const,
+    actions: [
+      {
+        type: "answer_question" as const,
+        topic: "delivery" as const,
+        confidence: 0.99,
+        evidence: ["Địa chỉ cũ giao mất bao lâu?"],
+        source: "llm" as const,
+      },
+    ],
+  };
+  const state = { orderDraft: { legacyAddress: "15 Nguyễn Trãi, Thanh Xuân, Hà Nội" } };
+
+  assert.equal(
+    reconcilePriorAddressConfirmation(semantic, state, "Địa chỉ cũ giao mất bao lâu?"),
+    semantic,
+  );
 });

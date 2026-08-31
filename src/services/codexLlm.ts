@@ -629,7 +629,7 @@ export class CodexLlmBridge {
         .join("\n");
       assertNoUnapprovedCommerceFacts([input.baseReply, citedKnowledge].filter(Boolean).join("\n"), reply);
       assertCriticalDirectionsPreserved(input.customerMessage, input.baseReply, reply, input.state);
-      assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply);
+      assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply, input.state);
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       assertHelpfulContentFreeReply(input.customerMessage, reply);
       if (input.skillId && !groundedKnowledgeFirst) {
@@ -694,7 +694,7 @@ export class CodexLlmBridge {
       assertActionClaimsGrounded(input.state, reply);
       assertCurrentPriceStatusGrounded(input.customerMessage, reply);
       assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
-      assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply);
+      assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply, input.state);
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       assertHelpfulContentFreeReply(input.customerMessage, reply);
       if (input.skillId && !isApprovedPriceCatalogBase(input.baseReply)) {
@@ -2633,6 +2633,7 @@ function assertRequiredFactsForCustomerTurn(
   customerMessage: string,
   baseReply: string,
   generatedReply: string,
+  state?: DemoChatState,
 ): void {
   if (isApprovedPriceCatalogBase(baseReply)) {
     assertRequiredFactsPreserved(baseReply, generatedReply);
@@ -2641,6 +2642,10 @@ function assertRequiredFactsForCustomerTurn(
   const message = normalizeGuardText(customerMessage);
   const facts = extractRequiredResponseFacts(baseReply);
   const isOrderReceipt = /người nhận:|sđt:|địa chỉ:|sản phẩm:|tổng thanh toán:/iu.test(baseReply);
+  const asksOrderRecap = /\b(?:tong ket|doc lai|xac nhan|kiem tra)\b.{0,35}\bdon\b|\bdon\b.{0,35}\b(?:gom|co|thong tin|dung chua)\b/.test(
+    message,
+  );
+  const orderChangedThisTurn = (state?.orderTransactionTrace?.changedFields.length ?? 0) > 0;
   const asksPrice = /\b(?:gia|combo|bao nhieu tien|tong tien|thanh toan)\b/.test(message);
   const asksShipping = /\b(?:ship|giao|van chuyen|freeship|free ship|mien phi giao)\b/.test(message);
   const asksDuration = /\b(?:bao lau|may ngay|khi nao|bao gio|tan suat|may lan|thang|gio)\b/.test(
@@ -2649,7 +2654,11 @@ function assertRequiredFactsForCustomerTurn(
   const asksGift = /\b(?:qua|tang|uu dai|khuyen mai)\b/.test(message) || asksPrice;
   const safetyTurn = /\b(?:rat|ngua|do da|kich ung|kho tho|sung moi|sung mat|choang)\b/.test(message);
   const required = facts.filter((fact) => {
-    if (isOrderReceipt) return true;
+    // A receipt-shaped workflow base is often only execution evidence. Require
+    // the whole receipt when this turn actually changed the order or the
+    // customer explicitly asked for a recap; do not force it over a simple
+    // "keep the previous address" acknowledgement.
+    if (isOrderReceipt) return asksOrderRecap || orderChangedThisTurn;
     if (fact.kind === "money") return asksPrice;
     if (fact.kind === "shipping") return asksShipping || asksPrice;
     if (fact.kind === "duration") return asksDuration || asksShipping;

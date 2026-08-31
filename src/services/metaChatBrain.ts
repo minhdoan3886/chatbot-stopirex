@@ -167,8 +167,12 @@ export class MetaChatBrain {
         validCitations.length > 0
           ? { ...rawLlmResult, knowledgeIds: validCitations }
           : repairMissingKnowledgeCitations(withoutRawCitations, citationCandidates);
-      const llmResult = reconcilePendingConsultationAnswer(
-        reconcileKnowledgeBackedPopulationSafety(groundedLlmResult, matches[0]?.entity.id),
+      const llmResult = reconcilePriorAddressConfirmation(
+        reconcilePendingConsultationAnswer(
+          reconcileKnowledgeBackedPopulationSafety(groundedLlmResult, matches[0]?.entity.id),
+          before,
+          input.text,
+        ),
         before,
         input.text,
       );
@@ -290,7 +294,8 @@ export class MetaChatBrain {
         ? { groundingConfidence: interpreted.groundingConfidence }
         : {}),
       knowledgeGroundingRequired:
-        requiresKnowledgeGrounding(base.state.decisionTrace?.selectedIntent) ||
+        (requiresKnowledgeGrounding(base.state.decisionTrace?.selectedIntent) &&
+          Boolean(interpreted.actions?.some((action) => action.type === "answer_question"))) ||
         Boolean(
           interpreted.knowledgeIds?.length &&
           interpreted.actions?.some((action) => action.type === "answer_question"),
@@ -604,6 +609,61 @@ export function reconcilePendingConsultationAnswer<T extends SemanticUnderstandi
   const remainingActions = semantic.actions?.filter((action) => action.type !== "answer_question");
   if (remainingActions?.length) reconciled.actions = remainingActions;
   else delete reconciled.actions;
+  return reconciled;
+}
+
+/**
+ * A reference such as "địa chỉ lúc nãy giữ nguyên" is an order-state command,
+ * not a delivery-policy question. The LLM still reads the turn first; this
+ * reconciler only rejects an action that conflicts with the authoritative
+ * order aggregate and emits the execution receipt from that state.
+ */
+export function reconcilePriorAddressConfirmation<T extends SemanticUnderstanding>(
+  semantic: T,
+  state: Pick<DemoChatState, "orderDraft">,
+  customerMessage: string,
+): T {
+  const currentAddress = state.orderDraft?.legacyAddress;
+  if (
+    !currentAddress ||
+    !isPriorAddressReference(customerMessage) ||
+    /[?？]/u.test(customerMessage)
+  ) {
+    return semantic;
+  }
+
+  const evidence = customerMessage.trim();
+  const retainedActions = (semantic.actions ?? []).filter(
+    (action) =>
+      action.type !== "answer_question" &&
+      action.type !== "handoff_to_human" &&
+      action.type !== "start_customer_care",
+  );
+  if (!retainedActions.some((action) => action.type === "continue_order_collection")) {
+    retainedActions.push({
+      type: "continue_order_collection",
+      confidence: 1,
+      evidence: [evidence],
+      source: "state",
+    });
+  }
+
+  const reconciled: T = {
+    ...semantic,
+    intent: "order_support",
+    topic: "order",
+    subject: "order",
+    asksDirectAnswer: false,
+    confidence: 1,
+    needsClarification: false,
+    actions: retainedActions,
+    unsupportedQuestions: [],
+    knowledgeIds: [],
+    groundingConfidence: 1,
+    selectedCtaId: "none",
+    draftReply: `Dạ em giữ nguyên địa chỉ ${currentAddress} cho đơn ạ.`,
+  };
+  delete reconciled.replyTo;
   return reconciled;
 }
 

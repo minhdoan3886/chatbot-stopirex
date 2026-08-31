@@ -51,40 +51,46 @@ export function reduceOrderTransaction(
 
   for (const action of accepted) {
     switch (action.type) {
-      case "set_quantity":
+      case "set_quantity": {
+        const nextTotal = options.totalForQuantity(action.quantity);
+        if (after.selectedQuantity !== action.quantity) changedFields.add("selectedQuantity");
+        if (after.order.sku !== options.sku) changedFields.add("sku");
+        if (after.order.quantity !== action.quantity) changedFields.add("quantity");
+        if (after.order.totalVnd !== nextTotal) changedFields.add("totalVnd");
+        if (after.order.paymentMethod !== options.paymentMethod) changedFields.add("paymentMethod");
         after.selectedQuantity = action.quantity;
         after.order.sku = options.sku;
         after.order.quantity = action.quantity;
-        after.order.totalVnd = options.totalForQuantity(action.quantity);
+        after.order.totalVnd = nextTotal;
         after.order.paymentMethod = options.paymentMethod;
-        changedFields.add("selectedQuantity");
-        changedFields.add("sku");
-        changedFields.add("quantity");
-        changedFields.add("totalVnd");
-        changedFields.add("paymentMethod");
         break;
+      }
       case "set_phone":
+        if (after.order.phone !== action.phone) changedFields.add("phone");
         after.order.phone = action.phone;
-        changedFields.add("phone");
         break;
       case "set_recipient_name":
+        if (after.order.recipientName !== action.recipientName) changedFields.add("recipientName");
         after.order.recipientName = action.recipientName;
-        changedFields.add("recipientName");
         break;
-      case "set_address":
-        after.order.legacyAddress =
+      case "set_address": {
+        const nextAddress =
           action.operation === "replace"
             ? action.address
             : appendUniqueAddress(after.order.legacyAddress, action.address);
-        changedFields.add("legacyAddress");
+        if (after.order.legacyAddress !== nextAddress) changedFields.add("legacyAddress");
+        after.order.legacyAddress = nextAddress;
         break;
+      }
       case "set_delivery_note":
+        if (after.order.deliveryNote !== action.deliveryNote) changedFields.add("deliveryNote");
         after.order.deliveryNote = action.deliveryNote;
-        changedFields.add("deliveryNote");
         break;
       case "confirm_order":
+        if (after.order.customerConfirmedAt?.getTime() !== action.confirmedAt.getTime()) {
+          changedFields.add("customerConfirmedAt");
+        }
         after.order.customerConfirmedAt = action.confirmedAt;
-        changedFields.add("customerConfirmedAt");
         break;
     }
   }

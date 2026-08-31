@@ -42,6 +42,11 @@ export function missingLegacyAddressComponents(address?: string): LegacyAddressC
     /\btinh\b/.test(value) ||
     /\b(ha noi|ho chi minh|tp hcm|tphcm|hai phong|da nang|can tho|hue)\b/.test(value);
   if (!hasDetail) missing.push("detail");
+  // Khách không cần phải viết đủ nhãn hành chính như một tờ khai. Một điểm
+  // giao có số nhà/đường/thôn và tỉnh/thành đã đủ để tiếp nhận đơn; đơn vị
+  // vận chuyển sẽ chuẩn hóa tiếp. Chỉ yêu cầu phường/quận khi địa chỉ còn
+  // thiếu một trong hai tín hiệu cốt lõi trên.
+  if (hasDetail && hasProvince) return missing;
   if (!hasWard) missing.push("ward");
   if (!hasDistrict) missing.push("district");
   if (!hasProvince) missing.push("province");

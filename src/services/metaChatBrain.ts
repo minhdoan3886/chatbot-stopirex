@@ -82,11 +82,13 @@ export class MetaChatBrain {
     identity?: ConversationIdentity;
     openingVariantId?: OpeningVariantId;
     orderConfirmationMode?: "sandbox" | "inbox";
+    orderEditable?: boolean;
   }): Promise<DemoChatResponse> {
     const context = {
       ...(input.identity ? { identity: input.identity } : {}),
       ...(input.openingVariantId ? { openingVariantId: input.openingVariantId } : {}),
       ...(input.orderConfirmationMode ? { orderConfirmationMode: input.orderConfirmationMode } : {}),
+      ...(input.orderEditable !== undefined ? { orderEditable: input.orderEditable } : {}),
     };
     const before = this.chat.peek(input.sessionId);
     // Every customer message goes through semantic interpretation when the LLM
@@ -595,12 +597,13 @@ export function reconcilePendingConsultationAnswer<T extends SemanticUnderstandi
   }
 
   const reconciled: T = { ...semantic, asksDirectAnswer: false };
+  // `replyTo` is workflow metadata from the model, not customer copy. Once the
+  // turn is known to answer a pending discovery question, discard stale FAQ
+  // routing while retaining the grounded LLM draft itself.
+  delete reconciled.replyTo;
   const remainingActions = semantic.actions?.filter((action) => action.type !== "answer_question");
   if (remainingActions?.length) reconciled.actions = remainingActions;
   else delete reconciled.actions;
-  delete reconciled.draftReply;
-  delete reconciled.replyTo;
-  delete reconciled.skill;
   return reconciled;
 }
 
@@ -630,8 +633,6 @@ export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnder
   const topic = supported[0]?.[1];
   if (!topic) return semantic;
   const reconciled: T = { ...semantic };
-  delete reconciled.draftReply;
-  delete reconciled.replyTo;
   reconciled.skill = "safety-first";
   reconciled.intent = "safety";
   reconciled.topic = topic;
@@ -644,6 +645,7 @@ export function reconcileKnowledgeBackedPopulationSafety<T extends SemanticUnder
     .filter((action) => action.type === "answer_question")
     .map((action) => (action.type === "answer_question" ? { ...action, topic } : action));
   reconciled.unsupportedQuestions = [];
+  delete reconciled.replyTo;
   return reconciled;
 }
 

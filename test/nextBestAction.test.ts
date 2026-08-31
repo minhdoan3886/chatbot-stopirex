@@ -186,10 +186,10 @@ test("E2E FAQ thực chiến: đối tượng đặc biệt, thâm nách, routin
   assert.equal(t5.state.orderDraft?.recipientName, "Dũng");
   assert.equal(t5.state.orderDraft?.phone, "0988777666");
   assert.match(t5.state.orderDraft?.legacyAddress ?? "", /10 Nguyễn Trãi.*Quận Thanh Xuân.*Hà Nội/isu);
-  assert.match(t5.reply, /phường\/xã/iu);
+  assert.match(t5.reply, /tổng hợp đơn hàng/iu);
   assert.doesNotMatch(
     t5.reply,
-    /bổ sung[\s\S]*(?:tên người nhận|SĐT|quận\/huyện|tỉnh\/thành phố)/iu,
+    /bổ sung[\s\S]*(?:tên người nhận|SĐT|phường\/xã|quận\/huyện|tỉnh\/thành phố)/iu,
   );
   assert.equal(t5.state.nextBestAction?.state, "stopped_due_to_order");
 });

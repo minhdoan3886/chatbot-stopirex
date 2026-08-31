@@ -831,7 +831,13 @@ function explicitQuantityAppears(text: string, quantity: SupportedOrderQuantity)
     4: "bon",
     5: "nam",
   };
-  if (quantity === 2 && /\bcombo\b/.test(text) && !/[1-5]\s+lo\b/.test(text)) return true;
+  if (
+    quantity === 2 &&
+    /\b(?:lay|chon|chot|mua|dat|gui)\b.{0,20}\bcombo\b/.test(text) &&
+    !/[1-5]\s+lo\b/.test(text)
+  ) {
+    return true;
+  }
   return new RegExp(`(?:${quantity}|${words[quantity]})\\s+lo\\b`).test(text);
 }
 

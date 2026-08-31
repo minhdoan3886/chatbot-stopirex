@@ -629,7 +629,7 @@ export class CodexLlmBridge {
         .join("\n");
       assertNoUnapprovedCommerceFacts([input.baseReply, citedKnowledge].filter(Boolean).join("\n"), reply);
       assertCriticalDirectionsPreserved(input.customerMessage, input.baseReply, reply, input.state);
-      assertRequiredFactsPreserved(input.baseReply, reply);
+      assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply);
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       assertHelpfulContentFreeReply(input.customerMessage, reply);
       if (input.skillId && !groundedKnowledgeFirst) {
@@ -694,7 +694,7 @@ export class CodexLlmBridge {
       assertActionClaimsGrounded(input.state, reply);
       assertCurrentPriceStatusGrounded(input.customerMessage, reply);
       assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
-      assertRequiredFactsPreserved(input.baseReply, reply);
+      assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply);
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       assertHelpfulContentFreeReply(input.customerMessage, reply);
       if (input.skillId && !isApprovedPriceCatalogBase(input.baseReply)) {
@@ -1708,7 +1708,8 @@ function buildCompactInterpretPrompt(input: {
     "ACTION: mỗi ý có nghĩa cần action riêng, confidence và evidence nguyên văn. Ưu tiên an toàn/chuyển người → answer_question → record_fact → select_quantity/update_order → continue_order_collection. Không tự tạo đơn, freeship, hoàn tiền hay nói đã thực hiện việc chưa có trong state.",
     "Bất biến số lượng: khi khách thật sự chốt/mua 1–5 chai/lọ, kể cả lỗi gõ, phải có select_quantity với số chuẩn và continue_order_collection; evidence giữ nguyên cả cụm khách viết. Câu hỏi giả định 'mua mà không đỡ có hoàn tiền không' không phải chốt mua.",
     "Bất biến mâu thuẫn mua: nếu cùng MESSAGE vừa chốt số lượng vừa từ chối, xuất select_quantity, continue_order_collection và decline_purchase với evidence riêng, needsClarification=true và không tự chọn vế cuối.",
-    "ĐƠN HÀNG: update_order.fields chỉ chứa recipientName, phone, legacyAddress, deliveryNote xuất hiện trong MESSAGE. Nhận từng phần, không hỏi lại trường đã có. Tên một từ hợp lệ. phone phải đúng 10 số bắt đầu 0; số sai chỉ xin lại phone và vẫn lưu các trường hợp lệ khác. Câu dùng/gửi về địa chỉ trên dùng state đã lưu, không chép PII từ HISTORY.",
+    "ĐƠN HÀNG: update_order.fields chỉ chứa recipientName, phone, legacyAddress, deliveryNote xuất hiện trong MESSAGE. Nhận từng phần, không hỏi lại trường đã có. Tên một từ hợp lệ. phone phải đúng 10 số bắt đầu 0; số sai chỉ xin lại phone và vẫn lưu các trường hợp lệ khác. Địa chỉ có điểm giao cụ thể và tỉnh/thành được tiếp nhận, không bắt khách viết đủ nhãn phường/quận. Khi đủ dữ liệu, hệ thống tiếp nhận đơn ngay và gửi recap để đối chiếu; không bắt khách gõ ĐỒNG Ý. Trước khi có mã vận đơn, khách được sửa và mỗi update_order phải giữ evidence của MESSAGE. Câu dùng/gửi về địa chỉ trên dùng state đã lưu, không chép PII từ HISTORY.",
+    "STATE ĐƠN LÀ DỮ LIỆU CHÍNH XÁC: orderDraft.current chứa giá trị hiện hành; phoneHistory phân biệt số current và historical. Khi khách hỏi lại tên, SĐT cũ/mới, địa chỉ hoặc số lượng, trả lời trực tiếp từ STATE, không handoff và không nói thiếu Knowledge. Việc nhắc lại một combo được tư vấn chưa phải quyết định mua; chỉ select_quantity khi MESSAGE thể hiện chốt/lấy/mua rõ ràng.",
     "Nếu đơn đang dở nhưng khách hỏi việc khác: answer_question + pause_order, giữ đơn nhưng draftReply chỉ trả lời việc mới; cấm xin số lượng/Tên/SĐT/Địa chỉ trong lượt đó.",
     "AN TOÀN/KHIẾU NẠI: đỏ-rát-ngứa thật phải start_customer_care + answer_question + pause_order và không chốt. Khiếu nại/sự cố đơn/dọa phản ánh phải start_customer_care(issue complaint) + handoff_to_human, không bán hàng. Xác định đúng sản phẩm gây sự cố; phản ứng với sản phẩm khác chỉ là băn khoăn trước mua.",
     "HẬU KIỂM CỨNG: không bịa giá/ưu đãi/chính sách/công dụng, không lộ PII hoặc dữ liệu nội bộ, không tạo hành động đơn hàng sai, không đưa hướng dẫn an toàn trái KNOWLEDGE. Mọi dữ kiện sản phẩm cụ thể chỉ lấy từ KNOWLEDGE của lượt hiện tại.",
@@ -1853,9 +1854,26 @@ function promptArgumentMemory(state: DemoChatState): {
   openQuestions: string[];
   orderDraft: {
     selectedQuantity: number | null;
+    recipientName: string | null;
+    phone: string | null;
+    legacyAddress: string | null;
+    deliveryNote: string | null;
+    phoneHistory: Array<{
+      value: string;
+      status: "current" | "historical";
+      evidence: string;
+      sourceTurn: number;
+    }>;
     missingFields: string[];
     flowStatus: string | null;
     lastChangedFields: string[];
+  };
+  consultationFacts: {
+    sweatConcern: boolean | null;
+    odorSeverity: string | null;
+    triggers: string[];
+    sensitiveSkin: boolean | null;
+    recommendedQuantity: number | null;
   };
   latestAssistantTurn: string | null;
 } {
@@ -1927,9 +1945,27 @@ function promptArgumentMemory(state: DemoChatState): {
     ].slice(-8),
     orderDraft: {
       selectedQuantity: state.selectedQuantity ?? null,
+      recipientName: state.orderDraft?.recipientName ?? null,
+      phone: state.orderDraft?.phone ?? null,
+      legacyAddress: state.orderDraft?.legacyAddress ?? null,
+      deliveryNote: state.orderDraft?.deliveryNote ?? null,
+      phoneHistory: (state.conversationMemory?.phoneHistory ?? []).map((item) => ({
+        value: item.value,
+        status: item.status,
+        evidence: redactPromptPii(item.evidence).slice(0, 120),
+        sourceTurn: item.sourceTurn,
+      })),
       missingFields: [...state.orderMissing],
       flowStatus: state.orderFlowStatus ?? null,
       lastChangedFields: [...(state.orderTransactionTrace?.changedFields ?? [])],
+    },
+    consultationFacts: {
+      sweatConcern: state.conversationMemory?.consultationFacts.sweatConcern ?? null,
+      odorSeverity: state.conversationMemory?.consultationFacts.odorSeverity ?? null,
+      triggers: [...(state.conversationMemory?.consultationFacts.triggers ?? [])],
+      sensitiveSkin: state.conversationMemory?.consultationFacts.sensitiveSkin ?? null,
+      recommendedQuantity:
+        state.conversationMemory?.consultationFacts.recommendedQuantity ?? null,
     },
     latestAssistantTurn: latestAssistantTurn ? redactPromptPii(latestAssistantTurn).slice(0, 300) : null,
   };
@@ -2587,6 +2623,51 @@ function assertRequiredFactsPreserved(baseReply: string, generatedReply: string)
   }
 }
 
+/**
+ * The workflow reply is execution evidence, not a script the LLM must copy.
+ * Preserve only facts that are hard for this customer turn. This prevents an
+ * unrelated deterministic fallback (for example a return-policy template on
+ * an inspection question) from overriding a correct grounded LLM answer.
+ */
+function assertRequiredFactsForCustomerTurn(
+  customerMessage: string,
+  baseReply: string,
+  generatedReply: string,
+): void {
+  if (isApprovedPriceCatalogBase(baseReply)) {
+    assertRequiredFactsPreserved(baseReply, generatedReply);
+    return;
+  }
+  const message = normalizeGuardText(customerMessage);
+  const facts = extractRequiredResponseFacts(baseReply);
+  const isOrderReceipt = /người nhận:|sđt:|địa chỉ:|sản phẩm:|tổng thanh toán:/iu.test(baseReply);
+  const asksPrice = /\b(?:gia|combo|bao nhieu tien|tong tien|thanh toan)\b/.test(message);
+  const asksShipping = /\b(?:ship|giao|van chuyen|freeship|free ship|mien phi giao)\b/.test(message);
+  const asksDuration = /\b(?:bao lau|may ngay|khi nao|bao gio|tan suat|may lan|thang|gio)\b/.test(
+    message,
+  );
+  const asksGift = /\b(?:qua|tang|uu dai|khuyen mai)\b/.test(message) || asksPrice;
+  const safetyTurn = /\b(?:rat|ngua|do da|kich ung|kho tho|sung moi|sung mat|choang)\b/.test(message);
+  const required = facts.filter((fact) => {
+    if (isOrderReceipt) return true;
+    if (fact.kind === "money") return asksPrice;
+    if (fact.kind === "shipping") return asksShipping || asksPrice;
+    if (fact.kind === "duration") return asksDuration || asksShipping;
+    if (fact.kind === "gift") return asksGift;
+    if (fact.kind === "safety") return safetyTurn;
+    return false;
+  });
+  try {
+    assertRequiredResponseFactsPresent(required, generatedReply);
+  } catch (error) {
+    const wrapped = new Error(
+      error instanceof Error ? error.message : "LLM làm mất dữ kiện bắt buộc của lượt hiện tại",
+    );
+    wrapped.name = "FactPreservationError";
+    throw wrapped;
+  }
+}
+
 function isApprovedPriceCatalogBase(value: string): boolean {
   return (
     /Dạ giá hiện tại:/u.test(value) &&
@@ -2698,11 +2779,6 @@ function assertCriticalDirectionsPreserved(
     .replace(/\p{M}/gu, "")
     .replace(/đ/gu, "d");
   const requiredPatterns = [
-    { pattern: /ĐỒNG Ý/iu, relevant: state.pendingAction === "confirm_order" },
-    {
-      pattern: /địa chỉ trước sáp nhập/iu,
-      relevant: Boolean(state.selectedQuantity) && state.orderMissing.length > 0,
-    },
     {
       pattern: /chuyển (?:nhân viên|bộ phận liên quan)/iu,
       relevant:

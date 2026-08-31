@@ -87,8 +87,9 @@ export const conversationSkills: Readonly<Record<ConversationSkillId, Conversati
   "order-closing": {
     id: "order-closing",
     label: "Chốt và đơn hàng",
-    objective: "Thu đúng dữ liệu, recap đủ và chỉ tạo đơn sau xác nhận rõ ràng.",
-    responsePattern: "xác nhận lựa chọn → dữ liệu còn thiếu/recap → yêu cầu xác nhận",
+    objective:
+      "Thu đúng dữ liệu; khi đủ tên, SĐT và địa chỉ thì tiếp nhận đơn ngay, gửi recap để khách đối chiếu và vẫn cho phép sửa trước khi có mã vận đơn.",
+    responsePattern: "xác nhận lựa chọn → xin đúng dữ liệu còn thiếu hoặc recap dữ liệu vừa tiếp nhận",
     maxCharacters: 900,
     maxBubbles: 3,
     maxQuestions: 1,
@@ -257,10 +258,7 @@ function forcedSkill(
       reason: "Phiên CSKH đang hoạt động nên dùng skill chăm sóc sau bán.",
     };
   }
-  if (
-    input.intent === "knowledge_unknown" ||
-    input.intent === "promotion_inquiry"
-  ) {
+  if (input.intent === "knowledge_unknown") {
     return {
       id: "knowledge-handoff",
       reason: "Thông tin chưa được xác nhận phải fail closed và chuyển người.",

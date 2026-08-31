@@ -41,6 +41,26 @@ test("CTA phải do workflow cấp và phải nằm trong câu trả lời LLM",
   );
 });
 
+test("phản đối giá được phép chọn CTA hỏi bối cảnh công việc", () => {
+  const ctaText = "Tình trạng này rõ nhất khi mình vận động, trời nóng hay căng thẳng ạ?";
+  assert.doesNotThrow(() =>
+    assertSelectedCtaAllowed(
+      {
+        slots: {},
+        intent: "price_objection",
+        selectedCtaId: "ask_work_context",
+        ctaText,
+        draftReply: `Dạ em hiểu mình đang cân nhắc về giá. ${ctaText}`,
+      },
+      allowedConversationCtas({
+        mode: "sales",
+        botPaused: false,
+        orderMissing: [],
+      }),
+    ),
+  );
+});
+
 test("required facts giữ dữ kiện nhưng cho phép đổi lời dẫn linh hoạt", () => {
   const facts = extractRequiredResponseFacts(
     "Combo 2 lọ: 510.000đ, miễn phí giao. Quà tặng: 1 túi. Dùng 2–3 lần/tuần.",

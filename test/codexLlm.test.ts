@@ -521,6 +521,8 @@ test("prompt compact gửi bộ nhớ ngữ nghĩa và trạng thái đơn có c
           answeredQuestions: ["price_comparison"],
           openQuestions: ["difference_in_mechanism"],
           nextStep: "ask_discovery",
+          phoneHistory: [],
+          consultationFacts: { triggers: [] },
         },
       },
       knowledge: [],

@@ -79,7 +79,7 @@ test("kích ứng thật luôn dùng safety-first nhưng giả định thì khô
   assert.equal(hypothetical.skill.id, "direct-answer");
 });
 
-test("khuyến mại chưa xác nhận luôn chuyển skill knowledge-handoff", () => {
+test("khuyến mại dùng LLM và Knowledge trước, chỉ handoff khi intent thật sự không có nguồn", () => {
   const result = resolveConversationSkill({
     suggestedSkill: "pricing-objection",
     route: "direct_intent",
@@ -88,7 +88,7 @@ test("khuyến mại chưa xác nhận luôn chuyển skill knowledge-handoff", 
     pipeline: "3.Đã báo giá",
   });
 
-  assert.equal(result.skill.id, "knowledge-handoff");
+  assert.equal(result.skill.id, "direct-answer");
 });
 
 test("skill shape guard chặn câu dài hoặc nhiều câu hỏi", () => {

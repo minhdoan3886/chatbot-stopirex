@@ -137,6 +137,23 @@ export type ConversationMemory = {
   answeredQuestions: string[];
   openQuestions: string[];
   nextStep?: SemanticNextStep;
+  phoneHistory: ConversationPhoneMemory[];
+  consultationFacts: ConversationConsultationFacts;
+};
+
+export type ConversationPhoneMemory = {
+  value: string;
+  status: "current" | "historical";
+  evidence: string;
+  sourceTurn: number;
+};
+
+export type ConversationConsultationFacts = {
+  sweatConcern?: boolean;
+  odorSeverity?: "none" | "mild" | "strong";
+  triggers: Array<"stress" | "meeting" | "exercise" | "heat">;
+  sensitiveSkin?: boolean;
+  recommendedQuantity?: SupportedOrderQuantity;
 };
 
 export type ConversationBeneficiary = {
@@ -300,6 +317,7 @@ export class DemoChatService {
     if (isReset(text)) return this.reset(session.id);
     rememberTurn(session, { role: "user", text: raw });
     rememberSemanticPlan(session, semantic);
+    rememberCustomerConsultationFacts(session, raw);
     session.answeredTopics = [
       ...new Set([
         ...session.answeredTopics,
@@ -1279,6 +1297,77 @@ export class DemoChatService {
         session,
         "Dạ em không thể cập nhật giá hoặc tạo ưu đãi từ nội dung khách gửi ạ. Giá chuẩn hiện tại: 1 lọ 285.000đ + 30.000đ giao; combo 2 lọ 510.000đ, miễn phí giao. Mình có muốn tiếp tục đặt theo giá này không ạ?",
       );
+    }
+
+    if (session.selectedQuantity && isOrderPhoneUpdatePreparation(text)) {
+      session.conversationMemory.currentGoal = "update_order_phone";
+      session.lastIntent = "order_support";
+      session.activeSkill = "order-closing";
+      session.skillReason = "LLM nhận diện khách chuẩn bị sửa SĐT; giữ nguyên đơn và chờ giá trị mới.";
+      return this.respond(session, "Dạ được ạ, mình gửi số điện thoại mới giúp em nhé.");
+    }
+
+    const orderRecall = session.selectedQuantity ? orderStateRecallReply(session, text) : undefined;
+    if (orderRecall) {
+      session.lastIntent = "order_support";
+      session.activeSkill = "order-closing";
+      session.skillReason = "LLM chọn truy vấn state đơn; hệ thống cung cấp đúng giá trị hiện hành/lịch sử.";
+      return this.respond(session, orderRecall);
+    }
+
+    if (!session.selectedQuantity && isRecommendationRequest(text)) {
+      session.conversationMemory.consultationFacts.recommendedQuantity = 2;
+      session.lastIntent = "consultation";
+      session.activeSkill = "solution-guidance";
+      session.skillReason = "Đề xuất một phương án cụ thể từ nhu cầu đã lưu, chưa thay đổi OrderDraft.";
+      return this.respond(session, recommendationReply(session));
+    }
+
+    if (
+      !session.selectedQuantity &&
+      session.conversationMemory.consultationFacts.recommendedQuantity &&
+      isRecommendedOfferReference(text) &&
+      !isRecommendedOfferPurchase(text)
+    ) {
+      session.lastIntent = "consultation";
+      session.activeSkill = "direct-answer";
+      session.skillReason = "Giải tham chiếu combo từ recommendation memory, chưa coi là quyết định mua.";
+      return this.respond(
+        session,
+        recommendedOfferReferenceReply(session.conversationMemory.consultationFacts.recommendedQuantity),
+      );
+    }
+
+    if (
+      !session.selectedQuantity &&
+      session.conversationMemory.consultationFacts.recommendedQuantity &&
+      isRecommendationSuitabilityQuestion(text)
+    ) {
+      session.lastIntent = "consultation";
+      session.activeSkill = "solution-guidance";
+      session.skillReason = "Đối chiếu sản phẩm với structured consultation memory thay vì hỏi lại khách.";
+      return this.respond(session, recommendationSuitabilityReply(session));
+    }
+
+    if (
+      !session.selectedQuantity &&
+      session.conversationMemory.consultationFacts.recommendedQuantity &&
+      isRecommendedOfferPurchase(text)
+    ) {
+      const recommendation = session.conversationMemory.consultationFacts.recommendedQuantity;
+      selectQuantity(session, recommendation);
+      this.move(session, "agreed_to_buy");
+      session.lastIntent = "buying";
+      session.activeSkill = "order-closing";
+      session.skillReason = "Khách chấp nhận chính phương án đã lưu trong recommendation memory.";
+      return this.respond(session, orderCollectionReply(session));
+    }
+
+    if (isBeneficiaryUsageResolution(text)) {
+      session.lastIntent = "consultation";
+      session.activeSkill = "direct-answer";
+      session.skillReason = "Khách xác nhận lại người dùng sản phẩm; giữ beneficiary đang hoạt động.";
+      return this.respond(session, beneficiaryUsageResolutionReply(session));
     }
 
     const knowledgeFullyCoversQuestion = isKnowledgeFullyCoveredQuestion(text, semantic);
@@ -2515,6 +2604,12 @@ export class DemoChatService {
         rejectedArguments: [...(candidate.conversationMemory?.rejectedArguments ?? [])].slice(-8),
         answeredQuestions: [...(candidate.conversationMemory?.answeredQuestions ?? [])].slice(-12),
         openQuestions: [...(candidate.conversationMemory?.openQuestions ?? [])].slice(-8),
+        phoneHistory: sanitizePhoneHistory(candidate.conversationMemory?.phoneHistory),
+        consultationFacts: {
+          ...base.conversationMemory.consultationFacts,
+          ...(candidate.conversationMemory?.consultationFacts ?? {}),
+          triggers: [...(candidate.conversationMemory?.consultationFacts?.triggers ?? [])].slice(-4),
+        },
       },
       answeredTopics: [...(candidate.answeredTopics ?? [])],
       askedTopics: [...(candidate.askedTopics ?? [])],
@@ -2708,6 +2803,11 @@ function stateOf(session: DemoSession): DemoChatState {
       rejectedArguments: [...session.conversationMemory.rejectedArguments],
       answeredQuestions: [...session.conversationMemory.answeredQuestions],
       openQuestions: [...session.conversationMemory.openQuestions],
+      phoneHistory: session.conversationMemory.phoneHistory.map((item) => ({ ...item })),
+      consultationFacts: {
+        ...session.conversationMemory.consultationFacts,
+        triggers: [...session.conversationMemory.consultationFacts.triggers],
+      },
     },
   };
 }
@@ -2805,6 +2905,8 @@ function newSession(id: string, context: DemoChatContext = {}): DemoSession {
       rejectedArguments: [],
       answeredQuestions: [],
       openQuestions: [],
+      phoneHistory: [],
+      consultationFacts: { triggers: [] },
     },
   };
 }
@@ -3086,6 +3188,24 @@ function rememberSemanticPlan(session: DemoSession, semantic: SemanticUnderstand
   applyBeneficiaryUpdates(session, semantic.beneficiaryUpdates ?? []);
 }
 
+function rememberCustomerConsultationFacts(session: DemoSession, raw: string): void {
+  const text = normalize(raw);
+  const facts = session.conversationMemory.consultationFacts;
+  if (/mo hoi|tiet mo hoi|uot ao|o ao/.test(text)) facts.sweatConcern = true;
+  if (/(?:khong|ko|k|chua)\s+(?:bi\s+)?mui\s+(?:nang|nhieu)|mui\s+(?:khong|ko|k)\s+(?:nang|nhieu)/.test(text)) {
+    facts.odorSeverity = "mild";
+  } else if (/mui\s+(?:nang|nhieu)|hoi nach\s+(?:nang|nhieu)/.test(text)) {
+    facts.odorSeverity = "strong";
+  }
+  if (/da\s+(?:minh\s+)?(?:hoi\s+)?nhay cam|da nhay cam/.test(text)) facts.sensitiveSkin = true;
+  const triggers = new Set(facts.triggers);
+  if (/cang thang/.test(text)) triggers.add("stress");
+  if (/\bhop\b|gap khach/.test(text)) triggers.add("meeting");
+  if (/van dong|the thao|gym|chay bo/.test(text)) triggers.add("exercise");
+  if (/ngoai troi|troi nong|nong buc/.test(text)) triggers.add("heat");
+  facts.triggers = [...triggers].slice(-4);
+}
+
 function applyBeneficiaryUpdates(
   session: DemoSession,
   updates: readonly SemanticBeneficiaryUpdate[],
@@ -3187,6 +3307,32 @@ function sanitizeBeneficiaries(value: unknown): ConversationBeneficiary[] {
     .slice(-6);
 }
 
+function sanitizePhoneHistory(value: unknown): ConversationPhoneMemory[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+    .flatMap((item) => {
+      if (
+        typeof item.value !== "string" ||
+        !/^0\d{9}$/u.test(item.value) ||
+        (item.status !== "current" && item.status !== "historical") ||
+        typeof item.evidence !== "string" ||
+        !Number.isInteger(item.sourceTurn)
+      ) {
+        return [];
+      }
+      return [
+        {
+          value: item.value,
+          status: item.status as ConversationPhoneMemory["status"],
+          evidence: item.evidence,
+          sourceTurn: Number(item.sourceTurn),
+        },
+      ];
+    })
+    .slice(-6);
+}
+
 function isKnownBeneficiaryId(id: unknown, beneficiaries: unknown): id is string {
   return typeof id === "string" && sanitizeBeneficiaries(beneficiaries).some((item) => item.id === id);
 }
@@ -3229,7 +3375,10 @@ function groundSemanticSlots(session: DemoSession, proposed: ConsultationSlots):
   const contextualSymptomAnswer =
     session.pendingQuestionTopic === "symptom" &&
     !/[?？]/u.test(latestCustomerText) &&
-    !isUnknownAnswer(latestCustomerText);
+    !isUnknownAnswer(latestCustomerText) &&
+    /^(?:1|2|3|ca\s*(?:hai|2)|hai cai|2 cai|deu bi|bi ca\s*(?:hai|2)|mo hoi|mui|mui co the|uot ao|o ao)$/u.test(
+      latestCustomerText,
+    );
   if (
     !contextualSymptomAnswer &&
     ((grounded.primarySymptom === "sweat" && !sweatEvidence) ||
@@ -4886,9 +5035,129 @@ function isPriceRequest(text: string): boolean {
 }
 
 function isOrderRecapRequest(text: string): boolean {
-  return /\b(?:nhac lai|xem lai|check lai|kiem tra lai|tom tat)\b.{0,40}\b(?:don|don hang|thong tin don)\b|\b(?:bao nhieu tien|bao tien)\b.{0,20}\b(?:don|don nay|don hang)\b|\bdoc lai\b.{0,100}\b(?:(?:chot|lay).{0,30}(?:may|bao nhieu)\s*lo|tien bao nhieu|ship ve dau)\b/.test(
+  return /\b(?:nhac lai|xem lai|check lai|kiem tra lai|tom tat|tong ket)\b.{0,40}\b(?:don|don hang|thong tin don)\b|\b(?:bao nhieu tien|bao tien)\b.{0,20}\b(?:don|don nay|don hang)\b|\bdoc lai\b.{0,100}\b(?:(?:chot|lay).{0,30}(?:may|bao nhieu)\s*lo|tien bao nhieu|ship ve dau)\b/.test(
     text,
   );
+}
+
+function isOrderPhoneUpdatePreparation(text: string): boolean {
+  return /\b(?:khoan|doi|thay|cap nhat)\b.{0,35}\b(?:sdt|so dien thoai|so phone)\b/.test(text) &&
+    !/(?<!\d)0\d{9}(?!\d)/u.test(text);
+}
+
+function orderStateRecallReply(session: DemoSession, text: string): string | undefined {
+  if (/\b(?:ban dau|luc dau|truoc do)\b.{0,45}\b(?:dat|chot|lay)\b.{0,25}\b(?:may|bao nhieu)\s*lo\b|\bban dau minh dat may lo\b/.test(text)) {
+    return session.selectedQuantity
+      ? `Dạ ban đầu mình đặt ${quantityLabel(session.selectedQuantity)} ạ.`
+      : undefined;
+  }
+  if (/\b(?:nguoi nhan|ten nguoi nhan)\b.{0,30}\b(?:ai|gi|nhi|nhe)\b|^nguoi nhan la ai/.test(text)) {
+    return session.order.recipientName
+      ? `Dạ người nhận hiện tại là ${session.order.recipientName} ạ.`
+      : "Dạ đơn hiện chưa có tên người nhận ạ.";
+  }
+  if (/\b(?:so|sdt|so dien thoai)\b.{0,25}\b(?:luc dau|ban dau|dau tien|cu)\b|\b(?:luc dau|ban dau)\b.{0,25}\b(?:so|sdt|so dien thoai)\b/.test(text)) {
+    const historical = session.conversationMemory.phoneHistory.find(
+      (item) => item.status === "historical",
+    )?.value;
+    const current = session.order.phone;
+    if (historical && current) {
+      return `Dạ số ban đầu mình gửi là ${historical}; sau đó mình đã đổi sang ${current}. Hiện đơn đang dùng số ${current} ạ.`;
+    }
+    if (current) return `Dạ từ đầu đơn đang dùng số ${current} ạ.`;
+  }
+  if (/^(?:so dien thoai|sdt|so phone)(?: la gi)?(?: nhi| nhe| a)?\??$/.test(text)) {
+    return session.order.phone
+      ? `Dạ số điện thoại hiện đang dùng cho đơn là ${session.order.phone} ạ.`
+      : "Dạ đơn hiện chưa có số điện thoại ạ.";
+  }
+  if (/\b(?:cu|van|giu)\b.{0,25}\b(?:so moi|sdt moi|so dien thoai moi)\b|\b(?:so moi|sdt moi)\b.{0,20}\b(?:nhe|nha|a|dung|nguyen)\b/.test(text)) {
+    return session.order.phone
+      ? `Dạ em giữ nguyên số mới ${session.order.phone} cho đơn ạ.`
+      : "Dạ đơn hiện chưa có số điện thoại mới để giữ lại ạ.";
+  }
+  if (/\bdia chi\b.{0,30}\b(?:luc nay|truoc do|la gi|dau|nao)\b/.test(text)) {
+    return session.order.legacyAddress
+      ? `Dạ địa chỉ hiện đang dùng cho đơn là ${session.order.legacyAddress} ạ.`
+      : "Dạ đơn hiện chưa có địa chỉ nhận hàng ạ.";
+  }
+  if (
+    session.pipeline === "6.Đã tạo đơn" &&
+    /^(?:dung roi|dong y|ok|oke|uh|u|vang|da)(?: nhe| nha| a)?$/.test(text)
+  ) {
+    return "Dạ đơn đã được ghi nhận đúng theo thông tin mình vừa gửi ạ. Khi có mã vận đơn, bên em sẽ gửi lại cho mình.";
+  }
+  return undefined;
+}
+
+function isRecommendationRequest(text: string): boolean {
+  if (extractExplicitOrderQuantity(text)) return false;
+  return /\b(?:theo (?:ban|em)|tu van)\b.{0,40}\b(?:nen|chon|lay)\b|\bnen (?:lay|chon) (?:loai|combo|phuong an) nao\b/.test(
+    text,
+  );
+}
+
+function isRecommendedOfferReference(text: string): boolean {
+  return /\b(?:quay lai|noi lai|nhac lai)\b.{0,50}\bcombo\b.{0,40}\b(?:khuyen|tu van|noi)\b|\bcombo\b.{0,40}\b(?:vua khuyen|vua tu van)\b/.test(
+    text,
+  );
+}
+
+function isRecommendedOfferPurchase(text: string): boolean {
+  return /\b(?:lay|chot|dat|mua|gui)\b.{0,35}\b(?:combo|phuong an)\s*(?:do|ay|vua khuyen|vua tu van)\b/.test(
+    text,
+  );
+}
+
+function isRecommendationSuitabilityQuestion(text: string): boolean {
+  return /\b(?:no|combo|phuong an|loai do)\b.{0,35}\b(?:co )?hop\b.{0,35}\b(?:tinh trang|minh|toi)\b|\bco hop voi tinh trang\b/.test(
+    text,
+  );
+}
+
+function recommendationReply(session: DemoSession): string {
+  const facts = session.conversationMemory.consultationFacts;
+  const reasons = [
+    facts.sweatConcern ? "mình đang ưu tiên kiểm soát mồ hôi" : undefined,
+    facts.triggers.includes("stress") || facts.triggers.includes("meeting")
+      ? "tình trạng rõ hơn khi căng thẳng hoặc họp"
+      : undefined,
+    facts.odorSeverity === "mild" ? "mùi không phải vấn đề chính" : undefined,
+    facts.sensitiveSkin ? "da hơi nhạy cảm nên cần bắt đầu mỏng và theo dõi" : undefined,
+  ].filter((item): item is string => Boolean(item));
+  return `Dạ với ${reasons.join(", ") || "nhu cầu mình đã chia sẻ"}, em nghiêng về combo 2 lọ 510.000đ, miễn phí giao và tặng 1 túi đa năng ạ. Hai lọ cùng một sản phẩm; combo phù hợp nếu mình muốn dùng ổn định và tiết kiệm hơn, còn muốn thử trước thì 1 lọ vẫn được ạ.`;
+}
+
+function recommendedOfferReferenceReply(quantity: SupportedOrderQuantity): string {
+  const selected = quote(quantity);
+  return `Dạ combo em vừa khuyên là ${quantityLabel(quantity)} giá ${formatVnd(selected.total.amount)}, miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex ạ.`;
+}
+
+function recommendationSuitabilityReply(session: DemoSession): string {
+  const facts = session.conversationMemory.consultationFacts;
+  const context = [
+    facts.sweatConcern ? "mồ hôi nách khá nhiều" : undefined,
+    facts.triggers.includes("stress") ? "rõ hơn khi căng thẳng" : undefined,
+    facts.triggers.includes("meeting") ? "hoặc lúc họp" : undefined,
+    facts.odorSeverity === "mild" ? "mùi không nặng" : undefined,
+    facts.sensitiveSkin ? "da hơi nhạy cảm" : undefined,
+  ].filter((item): item is string => Boolean(item));
+  return `Dạ phù hợp với nhu cầu mình đã mô tả: ${context.join(", ")} ạ. Stopirex hướng đến hỗ trợ kiểm soát mồ hôi; vì da hơi nhạy cảm, mình lăn thật mỏng trên da lành, sạch và khô, rồi theo dõi phản ứng trong giai đoạn đầu nhé.`;
+}
+
+function isBeneficiaryUsageResolution(text: string): boolean {
+  // Only resolve an already discussed beneficiary. Generic purchase language
+  // such as “thôi cho mình 1 lọ dùng thử” must remain an order mutation.
+  if (extractExplicitOrderQuantity(text)) return false;
+  return /\b(?:thoi|van)\s+(?:de|cho)\s+(?:em gai|em minh|vo|me|bo|con)\s+(?:dung rieng|dung)\b/.test(text);
+}
+
+function beneficiaryUsageResolutionReply(session: DemoSession): string {
+  const beneficiary = session.conversationMemory.beneficiaries.find(
+    (item) => item.id === session.conversationMemory.activeBeneficiaryId,
+  );
+  const label = beneficiary?.label || "người mình đang hỏi giúp";
+  return `Dạ em ghi nhận mình giữ sản phẩm để ${label} dùng riêng ạ; thông tin đơn hiện tại vẫn được giữ nguyên.`;
 }
 
 function isUnverifiedGiftClaim(text: string): boolean {
@@ -5024,7 +5293,7 @@ function quantityUpdatePriceReply(quantity: SupportedOrderQuantity): string {
 function detectQuantity(text: string): SupportedOrderQuantity | undefined {
   const explicit = extractRequestedQuantity(text);
   if (explicit && explicit <= 5) return explicit as SupportedOrderQuantity;
-  if (/\bcombo\b/.test(text) && !explicit) return 2;
+  if (/\b(?:lay|chon|chot|mua|dat|gui)\b.{0,20}\bcombo\b/.test(text) && !explicit) return 2;
   return undefined;
 }
 
@@ -5039,12 +5308,13 @@ function resolveQuantitySelection(
 ): SupportedOrderQuantity | undefined {
   const explicit = detectQuantity(text);
   if (explicit) return explicit;
-  if (!isBareQuantityReply(text)) return undefined;
   const expectsQuantity =
     session.pendingAction === "choose_quantity" ||
     session.pendingQuestionTopic === "quantity" ||
     semantic.replyTo === "choose_quantity" ||
     (semantic.intent === "buying" && semantic.affirmation === true);
+  if (text === "combo" && expectsQuantity) return 2;
+  if (!isBareQuantityReply(text)) return undefined;
   if (!expectsQuantity) return undefined;
   return Number(text) as SupportedOrderQuantity;
 }
@@ -5781,6 +6051,7 @@ function commitOrderMutations(
   session: DemoSession,
   actions: readonly OrderMutationAction[],
 ): ReturnType<typeof reduceOrderTransaction> {
+  const previousPhone = session.order.phone;
   const transaction = reduceOrderTransaction(
     {
       ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
@@ -5807,6 +6078,25 @@ function commitOrderMutations(
     transaction.after.order.legacyAddress = canonicalizeLegacyAddress(transaction.after.order.legacyAddress);
   }
   session.order = transaction.after.order;
+  if (session.order.phone && session.order.phone !== previousPhone) {
+    session.conversationMemory.phoneHistory = [
+      ...session.conversationMemory.phoneHistory.map((item) => ({
+        ...item,
+        status: "historical" as const,
+      })),
+      {
+        value: session.order.phone,
+        status: "current" as const,
+        evidence:
+          actions.find((action) => action.type === "set_phone")?.evidence ?? "Cập nhật SĐT đơn hàng",
+        sourceTurn: session.messages + 1,
+      },
+    ]
+      .filter((item, index, all) =>
+        all.slice(index + 1).every((candidate) => candidate.value !== item.value),
+      )
+      .slice(-6);
+  }
   const priorTrace = session.orderTransactionTrace;
   session.orderTransactionTrace = {
     acceptedActions: [
@@ -5842,6 +6132,7 @@ function selectedOrderPriceReply(quantity: SupportedOrderQuantity): string {
 
 function clearOrderDraft(session: DemoSession): void {
   session.order = {};
+  session.conversationMemory.phoneHistory = [];
   session.orderCollectionPaused = false;
   delete session.selectedQuantity;
   delete session.orderId;
@@ -6007,7 +6298,7 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
     if (!addressHandled && combinedBeforePhone) {
       found = commitLegacyAddress(session, combinedBeforePhone.address, "append", raw) || found;
       addressHandled = true;
-    } else if (!addressHandled && looksLikeAddress(afterPhone)) {
+    } else if (!addressHandled && isAcceptableDeliveryAddress(afterPhone)) {
       found = commitLegacyAddress(session, afterPhone, "append", raw) || found;
     }
   }
@@ -6133,12 +6424,58 @@ function observeGlobalEntities(
         evidence: raw,
       });
     }
+    if (phone) {
+      const phoneIndex = raw.indexOf(phone);
+      const beforePhone = phoneIndex >= 0 ? cleanLabel(raw.slice(0, phoneIndex).replace(/[,;:\s-]+$/gu, "")) : "";
+      const afterPhone =
+        phoneIndex >= 0
+          ? cleanLabel(raw.slice(phoneIndex + phone.length).replace(/^[,;:\s-]+/gu, ""))
+          : "";
+      const combined = splitUnlabelledNameAndAddress(beforePhone);
+      const candidateName = combined?.recipientName ?? beforePhone;
+      if (
+        !session.order.recipientName &&
+        !cleanedExplicitName &&
+        candidateName &&
+        looksLikeOrderRecipientCandidate(candidateName)
+      ) {
+        actions.push({
+          type: "set_recipient_name",
+          recipientName: formatRecipientName(candidateName),
+          evidence: raw,
+        });
+      }
+      if (combined?.address && !session.order.legacyAddress) {
+        actions.push({
+          type: "set_address",
+          address: canonicalizeLegacyAddress(combined.address),
+          operation: "replace",
+          evidence: raw,
+        });
+      } else if (afterPhone && !session.order.legacyAddress && isAcceptableDeliveryAddress(afterPhone)) {
+        actions.push({
+          type: "set_address",
+          address: canonicalizeLegacyAddress(afterPhone),
+          operation: "replace",
+          evidence: raw,
+        });
+      }
+    }
     const observedDeliveryNote = extractDeliveryNote(raw);
     if (observedDeliveryNote) {
       actions.push({ type: "set_delivery_note", deliveryNote: observedDeliveryNote, evidence: raw });
     }
     const changedDestination = extractChangedAddress(raw);
-    const destination = changedDestination ?? extractDeliveryDestination(raw);
+    const explicitDestination = changedDestination ?? extractDeliveryDestination(raw);
+    const standaloneOrderAddress =
+      collectingOrderBeforeTurn &&
+      !phone &&
+      !isPriorAddressReference(raw) &&
+      !explicitDestination &&
+      missingLegacyAddressComponents(canonicalizeLegacyAddress(raw)).length === 0
+        ? cleanAddressCandidate(raw)
+        : undefined;
+    const destination = explicitDestination ?? standaloneOrderAddress;
     const administrativeAddress = extractExplicitAdministrativeAddress(raw);
     const singleMissingAdministrativeAddress = collectingOrderBeforeTurn
       ? extractSingleMissingAdministrativeAddress(raw, session.order)
@@ -6179,14 +6516,17 @@ function observeGlobalEntities(
     if (actions.length > 0) {
       commitOrderMutations(session, actions);
       if (phone && session.order.phone) changes.phone = session.order.phone;
-      if (cleanedExplicitName && session.order.recipientName) {
+      if (actions.some((action) => action.type === "set_recipient_name") && session.order.recipientName) {
         changes.recipientName = session.order.recipientName;
       }
       if (observedDeliveryNote && session.order.deliveryNote) {
         changes.deliveryNote = session.order.deliveryNote;
       }
       if (
-        (destination || administrativeAddress || singleMissingAdministrativeAddress) &&
+        (destination ||
+          administrativeAddress ||
+          singleMissingAdministrativeAddress ||
+          actions.some((action) => action.type === "set_address")) &&
         session.order.legacyAddress
       ) {
         rememberLocation(
@@ -6266,6 +6606,9 @@ export function isPriorAddressReference(raw: string): boolean {
       text,
     ) ||
     /\b(?:gui|guit|giao|ship|chuyen|dung|lay)\b.{0,50}\b(?:ve|toi|den|theo)\b.{0,35}\b(?:tren|dia chi\s+cu|truoc|vua gui|vua noi|luc truoc|truoc do)\b/.test(
+      text,
+    ) ||
+    /\bdia chi\b.{0,25}\b(?:van|giu)\b.{0,15}\b(?:nhu cu|nguyen|nhu luc truoc)\b|\bdia chi\b.{0,25}\bgiu nguyen\b/.test(
       text,
     )
   );
@@ -6428,6 +6771,7 @@ export function extractDeliveryDestination(raw: string): string | undefined {
   const destination = match
     .replace(/\s+(?:cho\s+(?:anh|chị|chi|em|mình|minh)\s+)?(?:nhé|nhe|ạ|a)\s*$/iu, "")
     .replace(/\s+cho\s+(?:anh|chị|chi|em|mình|minh)\s*$/iu, "")
+    .replace(/\s+(?:mất|mat)?\s*(?:bao lâu|bao lau|mấy ngày|may ngay|khi nào|khi nao|bao giờ|bao gio).*$/iu, "")
     .trim();
   const normalized = normalize(destination);
   if (normalized === "cau giay" || normalized === "quan cau giay") {
@@ -6642,10 +6986,19 @@ function cleanExplicitRecipientName(value: string): string {
  * while also asking a product or delivery question.
  */
 function extractRecipientName(raw: string): string | undefined {
+  if (
+    /\b(?:nguoi nhan|ten nguoi nhan)\b.{0,25}\b(?:ai|gi|nhi)\b/.test(normalize(raw))
+  ) {
+    return undefined;
+  }
+  const recipientLabel = raw.match(
+    /(?:^|[.!?]\s*)(?:tên\s+người nhận|ten\s+nguoi nhan|người nhận|nguoi nhan)\s*(?:(?:là|la|tên|ten)\s+|[:：-]\s*)([\p{L}][\p{L}\s]{0,48}?)(?=[,;.?!\n]|\s+(?:nhé|nhe|nha|ạ|a)\b|$)/iu,
+  )?.[1];
   const changedName = raw.match(
     /(?:đổi|doi)\s+(?:tên|ten)(?:\s+(?:người nhận|nguoi nhan))?\s+(?:thành|thanh|là|la)\s+([\p{L}][\p{L}\s]{0,48}?)(?=[,;.?!\n]|\s+(?:nhé|nhe|nha|ạ|a)\b|$)/iu,
   )?.[1];
   const match =
+    recipientLabel ??
     changedName ??
     raw.match(
       /(?:^|[.!?]\s*)(?:(?:mình|minh|tôi|toi|em|anh|chị|chi)\s+)?(?:đổi|doi)?\s*(?:tên|ten)(?:\s+(?:người nhận|nguoi nhan))?\s*(?:(?:là|la|thành|thanh)\s+|[:：-]\s*)?([\p{L}][\p{L}\s]{0,48}?)(?=[,;.?!\n]|\s+(?:nhé|nhe|nha|ạ|a)\b|$)/iu,
@@ -6667,7 +7020,7 @@ function looksLikeStandaloneRecipientName(value: string): boolean {
   const words = value.trim().split(/\s+/).filter(Boolean);
   if (words.length < 2 || words.length > 5) return false;
   const normalized = normalize(value);
-  if (/\b(y|kia|nay|co|minh|anh|chi|em|shop|san pham|dung|duoc|khong|sao|nhe|nha|a)\b/.test(normalized)) {
+  if (/\b(y|kia|nay|co|shop|san pham|dung|duoc|khong|sao|nhe|nha|a)\b/.test(normalized)) {
     return false;
   }
   const commonSurname = /^(nguyen|tran|le|pham|hoang|huynh|phan|vu|vo|dang|bui|do|ho|ngo|duong|ly)\b/.test(
@@ -6698,7 +7051,13 @@ function splitUnlabelledNameAndAddress(
   const address = [addressHasLeadingAbbreviation ? possibleAddressAbbreviation : undefined, numericAddress]
     .filter(Boolean)
     .join(" ");
-  if (!looksLikeOrderRecipientCandidate(recipientName) || !looksLikeAddress(address)) {
+  const strongAbbreviatedAddress =
+    addressHasLeadingAbbreviation &&
+    /\d/u.test(address) &&
+    /\b(?:Hà Nội|Ha Noi|Hồ Chí Minh|Ho Chi Minh|Hải Phòng|Hai Phong|Đà Nẵng|Da Nang|Cần Thơ|Can Tho|Huế|Hue)\b/iu.test(
+      address,
+    );
+  if (!looksLikeOrderRecipientCandidate(recipientName) || (!looksLikeAddress(address) && !strongAbbreviatedAddress)) {
     return undefined;
   }
   return { recipientName, address };
@@ -6731,6 +7090,11 @@ function looksLikeAddress(value: string): boolean {
   return value.trim().length >= 4 && (hasAddressWord || hasStreetNumberAndName);
 }
 
+function isAcceptableDeliveryAddress(value: string): boolean {
+  const canonical = canonicalizeLegacyAddress(value);
+  return looksLikeAddress(canonical) || missingLegacyAddressComponents(canonical).length === 0;
+}
+
 function stripRepeatedRecipientName(value: string, recipientName?: string): string {
   if (!recipientName) return value.trim();
   const normalizedName = recipientName.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -6744,7 +7108,7 @@ function commitLegacyAddress(
   evidence: string,
 ): boolean {
   const cleaned = cleanLabel(candidate);
-  if (cleaned.length > 160 || !looksLikeAddress(cleaned)) return false;
+  if (cleaned.length > 160 || !isAcceptableDeliveryAddress(cleaned)) return false;
   const canonical = canonicalizeLegacyAddress(cleaned);
   const before = session.order.legacyAddress;
   commitOrderMutations(session, [{ type: "set_address", address: canonical, operation, evidence }]);
@@ -6887,9 +7251,9 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
   applyProfileRecipientFallback(session, raw);
   if (orderHasAllFields(session.order)) {
     const updatingExistingOrder =
-      session.pipeline === "6.Đã tạo đơn" &&
       session.orderConfirmationMode === "inbox" &&
       session.orderEditable === true &&
+      Boolean(session.order.customerConfirmedAt) &&
       hasOrderTransactionChanges(session);
     const selected = quote(session.selectedQuantity ?? 1);
     const shippingFeeVnd =

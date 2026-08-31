@@ -905,7 +905,7 @@ test("citation mang thai của LLM được ưu tiên hơn retrieval cho con bú
   assert.equal(reconciled.topic, "pregnancy");
   assert.equal(reconciled.affirmation, false);
   assert.equal(reconciled.replyTo, undefined);
-  assert.equal(reconciled.draftReply, undefined);
+  assert.equal(reconciled.draftReply, "Dạ phụ nữ mang thai nên tham khảo ý kiến bác sĩ trước khi dùng ạ.");
   const answerAction = reconciled.actions?.find((action) => action.type === "answer_question");
   assert.equal(answerAction?.type === "answer_question" ? answerAction.topic : undefined, "pregnancy");
   assert.deepEqual(
@@ -941,9 +941,9 @@ test("câu mô tả tình trạng trả lời câu hỏi đang chờ không bị
   assert.equal(reconciled.asksDirectAnswer, false);
   assert.deepEqual(reconciled.slots, { primarySymptom: "both" });
   assert.equal(reconciled.actions, undefined);
-  assert.equal(reconciled.draftReply, undefined);
+  assert.equal(reconciled.draftReply, "Bản nháp bị gắn nhầm là câu trả lời FAQ.");
   assert.equal(reconciled.replyTo, undefined);
-  assert.equal(reconciled.skill, undefined);
+  assert.equal(reconciled.skill, "direct-answer");
 });
 
 test("câu hỏi mới vẫn giữ nguyên phân loại trả lời trực tiếp", () => {
@@ -999,7 +999,10 @@ test("Meta tiếp tục tư vấn khi khách trả lời tình trạng sau báo 
             evidence: ["mồ hôi làm ướt áo và mùi cơ thể"],
           },
         ],
-        draftReply: "Dạ Stopirex hỗ trợ giảm mồ hôi và mùi ạ.",
+        selectedCtaId: "ask_work_context",
+        ctaText: "Tình trạng này rõ nhất khi mình vận động, trời nóng hay lúc căng thẳng ạ?",
+        draftReply:
+          "Dạ Stopirex hỗ trợ giảm mồ hôi và mùi ạ. Tình trạng này rõ nhất khi mình vận động, trời nóng hay lúc căng thẳng ạ?",
       }),
   });
   const brain = new MetaChatBrain(chat, llm);
@@ -1865,14 +1868,14 @@ test("cửa hàng offline và ship hỏa tốc là chính sách vận hành ch�
   assert.equal(isFastTransition("Có ship hỏa tốc trong ngày không?", state), true);
 });
 
-test("phần bổ sung địa chỉ đang thu đơn dùng rule nội bộ, không gửi PII lên LLM", () => {
+test("địa chỉ tự nhiên vẫn đi LLM-first khi state đã đủ để hiểu", () => {
   const chat = new DemoChatService();
   const sessionId = "address-fast";
   chat.chat(sessionId, "Giá bao nhiêu?");
   chat.chat(sessionId, "Mình lấy combo 2 lọ");
   chat.chat(sessionId, "Tai Tran 0392842288 ntt14 Nguyen Tuan Hà Nội");
 
-  assert.equal(isFastTransition("thanh xuan trung thanh xuan", chat.peek(sessionId)), true);
+  assert.equal(isFastTransition("thanh xuan trung thanh xuan", chat.peek(sessionId)), false);
 });
 
 test("tham chiếu địa chỉ trên có lỗi gõ phải đi qua LLM trước state reducer", () => {
@@ -1883,6 +1886,6 @@ test("tham chiếu địa chỉ trên có lỗi gõ phải đi qua LLM trước 
   chat.chat(sessionId, "Tài Test\n0900000000\n82 Nguyễn Tuân, Quận Thanh Xuân, Hà Nội");
 
   const state = chat.peek(sessionId);
-  assert.deepEqual(state.orderMissing, ["legacyAddress"]);
+  assert.deepEqual(state.orderMissing, []);
   assert.equal(isFastTransition("Uh\nGuit về địa chỉ trên cho a", state), false);
 });

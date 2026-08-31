@@ -224,6 +224,7 @@
       "enum": [
         "none",
         "ask_primary_symptom",
+        "ask_work_context",
         "offer_usage_guidance",
         "offer_price",
         "ask_quantity",
@@ -262,7 +263,7 @@
       }
     },
     "groundingConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "draftReply": { "type": "string", "maxLength": 1000 },
+    "draftReply": { "type": "string", "minLength": 1, "maxLength": 1000 },
     "topic": {
       "type": ["string", "null"],
       "enum": [

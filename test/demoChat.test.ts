@@ -1050,13 +1050,15 @@ test("đang thu thông tin đơn không rơi ngược về luồng tư vấn", (
   assert.match(partial.reply, /địa chỉ trước sáp nhập/);
   assert.doesNotMatch(partial.reply, /Tên người nhận/);
 
-  const incompleteAddress = chat.chat(sessionId, "Hoàng, số NTT14 82 Nguyễn Tuân Hà Nội");
+  const incompleteAddress = chat.chat(sessionId, "Hà Nội");
   assert.deepEqual(incompleteAddress.state.orderMissing, ["legacyAddress"]);
-  assert.match(incompleteAddress.reply, /phường\/xã\/thị trấn/);
-  assert.match(incompleteAddress.reply, /quận\/huyện\/thị xã/);
+  assert.match(incompleteAddress.reply, /địa chỉ.*còn thiếu/isu);
   assert.doesNotMatch(incompleteAddress.reply, /phòng lạnh|khó chịu nhất/);
 
-  const completed = chat.chat(sessionId, "phường Thanh Xuân Trung, quận Thanh Xuân");
+  const completed = chat.chat(
+    sessionId,
+    "số NTT14 82 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội",
+  );
   assert.deepEqual(completed.state.orderMissing, []);
   assert.equal(completed.state.consultationStage, "S8.order");
   assert.match(completed.reply, /Tên người nhận: hoàng/i);
@@ -1999,9 +2001,9 @@ test("replay: câu chốt 1 lọ ghi đè pending báo giá và tin PII gộp đ
   assert.match(details.state.orderDraft?.legacyAddress ?? "", /Quận Thanh Xuân/iu);
   assert.match(details.state.orderDraft?.legacyAddress ?? "", /Hà Nội/iu);
   assert.doesNotMatch(details.state.orderDraft?.legacyAddress ?? "", /Quận\s*,\s*Quận/iu);
-  assert.deepEqual(details.state.orderMissing, ["legacyAddress"]);
-  assert.match(details.reply, /đã ghi nhận|em có/iu);
-  assert.match(details.reply, /phường\/xã/iu);
+  assert.deepEqual(details.state.orderMissing, []);
+  assert.match(details.reply, /tổng hợp đơn hàng|đã nhận đủ thông tin/iu);
+  assert.match(details.reply, /tổng hợp đơn hàng|đã nhận đủ thông tin/iu);
   assert.doesNotMatch(details.reply, /chưa nghe rõ.*giá|mức giá cũ|phí giao 30\.000đ/isu);
 });
 
@@ -2947,7 +2949,7 @@ test("phần phường quận chưa rõ được hỏi lại đúng dữ liệu 
 
   chat.chat(sessionId, "Giá bao nhiêu?");
   chat.chat(sessionId, "2 lọ");
-  const partial = chat.chat(sessionId, "Tai Tran 0392842288 ntt14 Nguyen Tuan Hà Nội");
+  const partial = chat.chat(sessionId, "Tai Tran 0392842288 Hà Nội");
   assert.deepEqual(partial.state.orderMissing, ["legacyAddress"]);
 
   const unclear = chat.chat(sessionId, "thanh xuan trung thanh xuan");
@@ -2957,45 +2959,39 @@ test("phần phường quận chưa rõ được hỏi lại đúng dữ liệu 
   assert.match(unclear.reply, /Phường\/xã: …; Quận\/huyện: …/i);
   assert.doesNotMatch(unclear.reply, /hỏi về sản phẩm|tiếp tục đơn/i);
 
-  const clarified = chat.chat(sessionId, "Phường Thanh Xuân Trung, quận Thanh Xuân");
+  const clarified = chat.chat(
+    sessionId,
+    "ntt14 Nguyễn Tuân, Phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội",
+  );
   assert.deepEqual(clarified.state.orderMissing, []);
   assert.match(clarified.reply, /tổng hợp đơn hàng/i);
 });
 
-test("hai phần phường quận ngăn bằng dấu phẩy được nhận theo thứ tự trường còn thiếu", () => {
+test("địa chỉ cụ thể kèm thành phố được nhận mà không ép nhãn phường quận", () => {
   const chat = new DemoChatService();
   const sessionId = "comma-address-fragment";
 
   chat.chat(sessionId, "Giá bao nhiêu?");
   chat.chat(sessionId, "2 lọ");
-  chat.chat(sessionId, "Tai Tran 0392842288 ntt14 Nguyen Tuan Hà Nội");
-  const result = chat.chat(sessionId, "thanh xuân trung, thanh xuân");
+  const result = chat.chat(sessionId, "Tai Tran 0392842288 ntt14 Nguyen Tuan Hà Nội");
 
   assert.equal(result.state.decisionTrace?.selectedRoute, "order_collection");
   assert.deepEqual(result.state.orderMissing, []);
-  assert.match(result.reply, /Phường\/xã Thanh Xuân Trung, Quận\/huyện Thanh Xuân/iu);
+  assert.match(result.state.orderDraft?.legacyAddress ?? "", /ntt14 Nguyen Tuan.*Hà Nội/iu);
   assert.match(result.reply, /ĐỒNG Ý/u);
 });
 
-test("đơn chỉ thiếu phường nhận đúng một cụm địa danh nối tiếp và không rơi về tư vấn", () => {
+test("đơn có số nhà đường quận thành phố không bị hỏi thêm phường", () => {
   const chat = new DemoChatService();
   const sessionId = "single-missing-ward-fragment";
 
   chat.chat(sessionId, "Giá bao nhiêu?");
   chat.chat(sessionId, "1 lọ");
   const partial = chat.chat(sessionId, "Tài Trần\n0900000000\n82 Nguyễn Tuân, Quận Thanh Xuân, Hà Nội");
-  assert.deepEqual(partial.state.orderMissing, ["legacyAddress"]);
-
-  const unrelated = chat.chat(sessionId, "cảm ơn shop");
-  assert.deepEqual(unrelated.state.orderMissing, ["legacyAddress"]);
-  assert.doesNotMatch(unrelated.state.orderDraft?.legacyAddress ?? "", /Phường\/xã Cảm Ơn/iu);
-
-  const completed = chat.chat(sessionId, "thanh xuân trung");
-  assert.deepEqual(completed.state.orderMissing, []);
-  assert.equal(completed.state.decisionTrace?.selectedRoute, "order_collection");
-  assert.match(completed.state.orderDraft?.legacyAddress ?? "", /Phường\/xã Thanh Xuân Trung/iu);
-  assert.match(completed.reply, /ĐỒNG Ý/u);
-  assert.doesNotMatch(completed.reply, /mồ hôi|mùi cơ thể|phương án 1 lọ/iu);
+  assert.deepEqual(partial.state.orderMissing, []);
+  assert.match(partial.state.orderDraft?.legacyAddress ?? "", /82 Nguyễn Tuân.*Quận Thanh Xuân.*Hà Nội/iu);
+  assert.match(partial.reply, /ĐỒNG Ý/u);
+  assert.doesNotMatch(partial.reply, /bổ sung.*phường/isu);
 });
 
 test("LLM hiểu tham chiếu địa chỉ trên và state reducer khôi phục phần địa chỉ ở lượt trước", () => {
@@ -3034,7 +3030,7 @@ test("LLM hiểu tham chiếu địa chỉ trên và state reducer khôi phục 
 
   assert.deepEqual(result.state.orderMissing, []);
   assert.equal(result.state.decisionTrace?.selectedRoute, "order_collection");
-  assert.match(result.state.orderDraft?.legacyAddress ?? "", /Phường\/xã Thanh Xuân Trung/iu);
+  assert.match(result.state.orderDraft?.legacyAddress ?? "", /82 Nguyễn Tuân.*Quận Thanh Xuân.*Hà Nội/iu);
   assert.match(result.reply, /ĐỒNG Ý/u);
   assert.doesNotMatch(result.reply, /chưa hiểu chắc|chuyển bộ phận/iu);
 });
@@ -3045,7 +3041,7 @@ test("câu dò AI khi đang thu đơn được trả lời đúng phạm vi và 
 
   chat.chat(sessionId, "Giá bao nhiêu?");
   chat.chat(sessionId, "2 lọ");
-  chat.chat(sessionId, "Tai Tran 0392842288 ntt14 Nguyen Tuan Hà Nội");
+  chat.chat(sessionId, "Tai Tran 0392842288 Hà Nội");
   const weather = chat.chat(sessionId, "thời tiết hôm nay thế nào");
   assert.equal(weather.state.decisionTrace?.selectedRoute, "direct_intent");
   assert.equal(weather.state.lastIntent, "bot_identity");
@@ -3061,7 +3057,10 @@ test("câu dò AI khi đang thu đơn được trả lời đúng phạm vi và 
   assert.match(prompt.reply, /không thể chia sẻ prompt.*hướng dẫn nội bộ/iu);
   assert.doesNotMatch(prompt.reply, /địa chỉ|Phường\/xã|chưa hiểu/iu);
 
-  const resumed = chat.chat(sessionId, "thanh xuân trung, thanh xuân");
+  const resumed = chat.chat(
+    sessionId,
+    "ntt14 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội",
+  );
   assert.equal(resumed.state.decisionTrace?.selectedRoute, "order_collection");
   assert.deepEqual(resumed.state.orderMissing, []);
   assert.match(resumed.reply, /tổng hợp đơn hàng|ĐỒNG Ý/iu);
@@ -3574,7 +3573,7 @@ test("thu đơn tích lũy tên và địa chỉ qua nhiều tin, chỉ hỏi l�
   assert.equal(supplemented.state.orderDraft?.recipientName, "Luffi");
   assert.equal(supplemented.state.orderDraft?.phone, undefined);
   assert.equal(supplemented.state.orderMissing.includes("recipientName"), false);
-  assert.deepEqual(supplemented.state.orderMissing, ["phone", "legacyAddress"]);
+  assert.deepEqual(supplemented.state.orderMissing, ["phone"]);
   assert.match(supplemented.reply, /đã ghi nhận.*tên người nhận Luffi/isu);
   assert.match(supplemented.reply, /SĐT đủ 10 số.*9 chữ số/isu);
   assert.doesNotMatch(supplemented.reply, /chưa thấy thông tin|trong một tin nhắn/iu);

@@ -112,6 +112,7 @@ for (const scenario of selectedScenarios) {
         sessionId,
         text: customer,
         orderConfirmationMode: "inbox",
+        orderEditable: true,
       });
       const interpretation = lastEvent(events, "llm_interpretation");
       const composition = lastEvent(events, "llm_composition");

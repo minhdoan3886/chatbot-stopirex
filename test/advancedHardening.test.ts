@@ -548,7 +548,7 @@ test("khách kỹ tính đi đủ knowledge rồi chốt đơn trong một trans
   assert.equal(t5.state.orderDraft?.quantity, 1);
   assert.equal(t5.state.orderDraft?.phone, "0988111222");
   assert.match(t5.state.orderDraft?.legacyAddress ?? "", /số 10 Duy Tân.*Quận Cầu Giấy.*Hà Nội/isu);
-  assert.deepEqual(t5.state.orderMissing, ["recipientName", "legacyAddress"]);
+  assert.deepEqual(t5.state.orderMissing, ["recipientName"]);
   assert.deepEqual(
     t5.state.orderTransactionTrace?.changedFields.sort(),
     ["legacyAddress", "paymentMethod", "phone", "quantity", "selectedQuantity", "sku", "totalVnd"].sort(),

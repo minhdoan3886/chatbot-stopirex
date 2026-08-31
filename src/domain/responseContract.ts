@@ -26,6 +26,7 @@ export type ResponseContractState = {
 const ctaPurposes: Readonly<Record<ConversationCtaId, string>> = {
   none: "Không đặt câu hỏi hoặc lời mời tiếp theo.",
   ask_primary_symptom: "Hỏi khách khó chịu vì mồ hôi, mùi cơ thể hay cả hai.",
+  ask_work_context: "Hỏi bối cảnh làm mồ hôi rõ nhất: vận động, nóng, căng thẳng hoặc ngồi điều hòa.",
   offer_usage_guidance: "Đề nghị gửi hoặc tiếp tục hướng dẫn sử dụng.",
   offer_price: "Đề nghị gửi bảng giá hiện hành.",
   ask_quantity: "Hỏi số lượng khi khách đã thể hiện rõ ý định mua.",
@@ -49,6 +50,7 @@ export function allowedConversationCtas(state: ResponseContractState): AllowedCo
   // the intent/CTA compatibility check below prevents these from being used on
   // an actual order-support turn.
   ids.add("ask_primary_symptom");
+  ids.add("ask_work_context");
   ids.add("offer_usage_guidance");
   ids.add("offer_price");
   if (state.selectedQuantity) {
@@ -170,7 +172,11 @@ function toAllowedCta(id: ConversationCtaId): AllowedConversationCta {
 function ctaMatchesIntent(id: ConversationCtaId, intent: CustomerIntent | undefined): boolean {
   if (!intent || id === "none" || id === "ask_clarification") return true;
   if (["price_objection", "efficacy_objection", "negotiation"].includes(intent)) {
-    return id === "ask_primary_symptom" || id === "offer_usage_guidance";
+    return (
+      id === "ask_primary_symptom" ||
+      id === "ask_work_context" ||
+      id === "offer_usage_guidance"
+    );
   }
   if (intent === "safety" || intent === "ineffective") {
     return id === "ask_care_symptom" || id === "offer_usage_guidance";

@@ -77,6 +77,7 @@ export type SemanticNextStep =
 export type ConversationCtaId =
   | "none"
   | "ask_primary_symptom"
+  | "ask_work_context"
   | "offer_usage_guidance"
   | "offer_price"
   | "ask_quantity"

@@ -266,6 +266,16 @@ export function reconcileConversationActions(input: {
         action.confidence >= 0.85 &&
         hasGroundedEvidence(action, raw),
     );
+  const groundedLlmPurchaseProposition = candidates.some(
+    (action) =>
+      action.type === "select_quantity" &&
+      action.source === "llm" &&
+      action.confidence >= 0.85 &&
+      hasGroundedEvidence(action, raw) &&
+      action.evidence.some((evidence) =>
+        /(?:^|\b)(?:cho|gui|lay|chot|dat)\b/u.test(normalize(evidence)),
+      ),
+  );
   for (const candidate of deduplicate(candidates)) {
     // A quantity mentioned inside a product/policy question is an entity, not a
     // purchase decision. Only an explicit buying verb may create a selection;
@@ -273,6 +283,8 @@ export function reconcileConversationActions(input: {
     if (
       candidate.type === "select_quantity" &&
       !explicitQuantity &&
+      !trustedLlmQuantity &&
+      !groundedLlmPurchaseProposition &&
       explicitQuantityAppears(text, candidate.quantity)
     ) {
       rejected.push({ action: candidate, reason: "policy_verification_required" });
@@ -335,7 +347,28 @@ export function reconcileConversationActions(input: {
       input.semantic.intent === "order_support" ||
       Boolean(reconciledCareIssue && currentCareScope) ||
       (input.semantic.intent === "decline_purchase" && llmReportedPurchaseConflict);
-    if (llmOwnsCurrentTurn && isOrderExecution && !semanticAllowsOrderExecution) {
+    const propositionAllowsOrderExecution =
+      (candidate.type === "select_quantity" &&
+        (Boolean(trustedLlmQuantity) ||
+          candidate.quantity === explicitQuantity ||
+          groundedLlmPurchaseProposition)) ||
+      (candidate.type === "update_order" && Object.keys(candidate.fields).length > 0) ||
+      (candidate.type === "continue_order_collection" &&
+        (Boolean(explicitQuantity) ||
+          Boolean(trustedLlmQuantity) ||
+          groundedLlmPurchaseProposition ||
+          candidates.some(
+            (action) =>
+              action.type === "update_order" &&
+              action.confidence >= 0.85 &&
+              hasGroundedEvidence(action, raw),
+          )));
+    if (
+      llmOwnsCurrentTurn &&
+      isOrderExecution &&
+      !semanticAllowsOrderExecution &&
+      !propositionAllowsOrderExecution
+    ) {
       rejected.push({ action: candidate, reason: "llm_authority_conflict" });
       continue;
     }
@@ -407,7 +440,9 @@ export function reconcileConversationActions(input: {
   // correction that the LLM grounded verbatim in an active order. Without
   // that trusted linguistic decision, the old policy guard remains intact.
   const quantityPolicyQuestion =
-    isQuantityPolicyQuestion(text) && !(input.collectingOrder && trustedLlmQuantity !== undefined);
+    isQuantityPolicyQuestion(text) &&
+    !(input.collectingOrder && trustedLlmQuantity !== undefined) &&
+    !groundedLlmPurchaseProposition;
   if (quantityPolicyQuestion) {
     rejectAccepted(
       accepted,
@@ -619,10 +654,21 @@ function trustedLlmPurchaseQuantity(input: {
       action.confidence >= 0.85 &&
       hasGroundedEvidence(action, input.raw),
   );
+  const groundedSelection = input.candidates.some(
+    (action) =>
+      action.type === "select_quantity" &&
+      action.source === "llm" &&
+      action.confidence >= 0.85 &&
+      hasGroundedEvidence(action, input.raw) &&
+      action.evidence.some((evidence) =>
+        /(?:^|\b)(?:cho|gui|lay|chot|dat)\b/u.test(normalize(evidence)),
+      ),
+  );
   const semanticSupportsPurchase =
     input.semantic.intent === "buying" ||
     (input.collectingOrder && input.semantic.intent === "order_support") ||
-    (input.semantic.intent === "decline_purchase" && groundedDecline);
+    (input.semantic.intent === "decline_purchase" && groundedDecline) ||
+    groundedSelection;
   if (!semanticSupportsPurchase) return undefined;
 
   const quantities = input.candidates

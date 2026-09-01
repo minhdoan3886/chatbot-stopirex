@@ -14,6 +14,8 @@ test("giá, claim, action và state sai bị block cứng", () => {
   for (const reason of [
     "commerce_guard",
     "claim_guard",
+    "unsupported_claim_guard",
+    "fact_applicability_guard",
     "action_grounding_guard",
     "price_change_guard",
     "response_state_mismatch",
@@ -35,4 +37,3 @@ test("draft hoặc repair đã qua validation được allow", () => {
     },
   );
 });
-

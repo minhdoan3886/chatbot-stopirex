@@ -21,6 +21,7 @@
     "beneficiaryUpdates",
     "groundingConfidence",
     "draftReply",
+    "draftBubbles",
     "confidence",
     "needsClarification",
     "evidence",
@@ -264,6 +265,12 @@
     },
     "groundingConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
     "draftReply": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "draftBubbles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "items": { "type": "string", "minLength": 1, "maxLength": 650 }
+    },
     "topic": {
       "type": ["string", "null"],
       "enum": [

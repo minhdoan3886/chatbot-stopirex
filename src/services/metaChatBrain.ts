@@ -27,6 +27,11 @@ import type { SemanticTopic, SemanticUnderstanding } from "../domain/consultatio
 import type { SupportedOrderQuantity } from "../domain/conversationActions.js";
 import { conversationSkills } from "../domain/chatSkills.js";
 import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
+import {
+  assertCanonicalFactApplicability,
+  resolveCanonicalKnowledge,
+  type CanonicalKnowledgeResolution,
+} from "../domain/knowledgeResolver.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
 import {
   CodexLlmBridge,
@@ -102,11 +107,18 @@ export class MetaChatBrain {
     const fastTransition = !this.llm.enabled;
     let interpreted: SemanticUnderstanding = { slots: {} };
     let knowledge: ApprovedKnowledgeContext[] = [];
+    let matches: KnowledgeMatch[];
+    let canonicalResolution: CanonicalKnowledgeResolution = {
+      facts: [],
+      unresolvedFacts: [],
+      conflicts: [],
+      sourceIds: [],
+    };
     let interpretationStatus: "not_run" | "interpreted" | "fallback" | "skipped" | "unavailable" = "not_run";
     let interpretationReason: string | undefined;
     const contentFreeMessage = isContentFreeCustomerMessage(input.text);
     if (!fastTransition) {
-      let matches = contentFreeMessage
+      matches = contentFreeMessage
         ? []
         : retrieveKnowledgeMatches({
             tenantId: liveKnowledgeTenant,
@@ -182,6 +194,27 @@ export class MetaChatBrain {
         input.text,
       );
       interpreted = llmResult;
+      canonicalResolution = resolveCanonicalKnowledge({
+        query: input.text,
+        matches,
+        ...(llmResult.intent ? { intent: llmResult.intent } : {}),
+      });
+      this.logger?.log(
+        canonicalResolution.conflicts.length > 0 ? "warn" : "debug",
+        "canonical_knowledge_resolved",
+        {
+          ...(input.traceId ? { traceId: input.traceId } : {}),
+          sessionId: input.sessionId,
+          factIds: canonicalResolution.facts.map((fact) => fact.id),
+          sourceIds: canonicalResolution.sourceIds,
+          unresolvedFacts: canonicalResolution.unresolvedFacts,
+          conflicts: canonicalResolution.conflicts.map((conflict) => ({
+            key: conflict.key,
+            sourceIds: conflict.sourceIds,
+            selectedFactId: conflict.selectedFactId,
+          })),
+        },
+      );
       interpretationStatus = llmResult.status;
       interpretationReason = llmResult.reason;
       this.logger?.log(llmResult.status === "interpreted" ? "debug" : "warn", "llm_interpretation", {
@@ -229,6 +262,8 @@ export class MetaChatBrain {
     const responseContract = buildWorkflowResponseContract({
       state: base.state,
       authoritativeReply: base.reply,
+      canonicalFacts: canonicalResolution.facts,
+      canonicalConflicts: canonicalResolution.conflicts,
     });
     this.logger?.log("debug", "workflow_response_contract", {
       ...(input.traceId ? { traceId: input.traceId } : {}),
@@ -236,6 +271,10 @@ export class MetaChatBrain {
       requiredFactIds: responseContract.requiredFacts.map((fact) => fact.id),
       allowedCtaIds: responseContract.allowedCtas.map((cta) => cta.id),
       flexibleSections: responseContract.flexibleSections,
+      preferredCtaIds: responseContract.ctaPolicy.preferred,
+      forbiddenCtaIds: responseContract.ctaPolicy.forbidden,
+      availableFactIds: responseContract.factPolicy.availableFacts.map((fact) => fact.id),
+      prohibitedFactKeys: responseContract.factPolicy.mustNotClaim.map((fact) => fact.key),
     });
     const deliver = (
       response: DemoChatResponse,
@@ -567,6 +606,47 @@ export class MetaChatBrain {
         }),
       );
     }
+    try {
+      assertCanonicalFactApplicability({
+        reply: composed.reply,
+        authoritativeReply: base.reply,
+        resolution: canonicalResolution,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "fact_applicability_guard";
+      const repaired = await this.llm.repairInterpretedDraft({
+        customerMessage: input.text,
+        rejectedDraft: composed.reply,
+        violations: [reason],
+        baseReply: base.reply,
+        state: base.state,
+        actions: base.state.decisionTrace?.actionPlan?.accepted ?? [],
+        ...(base.state.activeSkill ? { skillId: base.state.activeSkill } : {}),
+        knowledge,
+        ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
+      });
+      if (repaired.status === "enhanced") {
+        try {
+          assertCanonicalFactApplicability({
+            reply: repaired.reply,
+            authoritativeReply: base.reply,
+            resolution: canonicalResolution,
+          });
+          composed = repaired;
+          compositionSource = "llm_repair";
+        } catch {
+          return deliver(
+            base,
+            responseGuardVerdict({ reason, source: "workflow_safe_fallback" }),
+          );
+        }
+      } else {
+        return deliver(
+          base,
+          responseGuardVerdict({ reason, source: "workflow_safe_fallback" }),
+        );
+      }
+    }
     if (base.state.decisionTrace && interpreted.knowledgeIds) {
       const retrievedIds = new Set(knowledge.map((entity) => entity.id));
       base.state.decisionTrace.knowledgeEntityIds = [
@@ -672,6 +752,16 @@ export class MetaChatBrain {
     verdict: ResponseGuardVerdict,
   ): DemoChatResponse {
     const actionPlan = response.state.decisionTrace?.actionPlan;
+    const trace = response.state.orderTransactionTrace;
+    const acceptedOrderMutations =
+      trace?.acceptedMutations ??
+      trace?.acceptedActions.map((action) => ({ type: action.type, evidenceRef: "legacy_trace" })) ??
+      [];
+    if ((trace?.changedFields.length ?? 0) > 0 && acceptedOrderMutations.length === 0) {
+      const error = new Error("order_audit_invariant_changed_fields_without_accepted_mutation");
+      error.name = "OrderAuditInvariantError";
+      throw error;
+    }
     const delivered: DemoChatResponse = {
       ...response,
       state: { ...response.state, responseDecision: verdict },
@@ -697,6 +787,7 @@ export class MetaChatBrain {
         source: item.action.source,
         reason: item.reason,
       })) ?? [],
+      acceptedOrderMutations,
       orderChangedFields: response.state.orderTransactionTrace?.changedFields ?? [],
       orderConflicts: response.state.orderTransactionTrace?.conflicts ?? [],
       responseOutcome: verdict.outcome,

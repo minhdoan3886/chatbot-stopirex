@@ -251,6 +251,34 @@ test("parser giữ toàn bộ actions của một tin nhắn thay vì ép còn m
   );
 });
 
+test("parser ưu tiên structured bubbles và giữ CTA hỏi bối cảnh", () => {
+  const parsed = parseSemanticUnderstanding(
+    JSON.stringify({
+      summary: "Trả lời rồi hỏi một dữ kiện tiếp theo",
+      intent: "consultation",
+      selectedCtaId: "ask_work_context",
+      ctaText: "Tình trạng rõ nhất khi mình vận động hay lúc căng thẳng ạ?",
+      draftReply: "Bản text phẳng không được ưu tiên.",
+      draftBubbles: [
+        "Dạ Stopirex hỗ trợ kiểm soát mồ hôi và mùi cơ thể ạ.",
+        "Tình trạng rõ nhất khi mình vận động hay lúc căng thẳng ạ?",
+      ],
+      actions: [],
+      slots: {},
+      confidence: 0.98,
+      needsClarification: false,
+      evidence: ["mồ hôi"],
+    }),
+  );
+
+  assert.equal(parsed.selectedCtaId, "ask_work_context");
+  assert.deepEqual(parsed.draftBubbles, [
+    "Dạ Stopirex hỗ trợ kiểm soát mồ hôi và mùi cơ thể ạ.",
+    "Tình trạng rõ nhất khi mình vận động hay lúc căng thẳng ạ?",
+  ]);
+  assert.equal(parsed.draftReply, parsed.draftBubbles?.join("\n\n"));
+});
+
 test("parser không làm mất số lượng khi model trả quantity dưới dạng chuỗi", () => {
   const parsed = parseSemanticUnderstanding(
     JSON.stringify({

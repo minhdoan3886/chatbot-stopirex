@@ -1604,6 +1604,7 @@ function buildInterpretPrompt(input: {
     '{"summary":"một câu tóm tắt đủ ý","skill":"direct-answer|need-discovery|solution-guidance|pricing-objection|order-closing|after-sales-care|safety-first|knowledge-handoff|follow-up","intent":"bot_identity|price_change|price_request|promotion_inquiry|price_objection|negotiation|decline_purchase|efficacy_objection|product_comparison|authenticity_question|product_effect|usage_guidance|usage_time|usage_frequency|safety|ineffective|buying|consultation|order_support|knowledge_unknown|other","actions":[{"type":"answer_question","topic":"effectiveness","confidence":0.97,"evidence":["nếu đúng như lời nói"]},{"type":"update_order","fields":{"recipientName":"string?","phone":"string?","legacyAddress":"string?","deliveryNote":"string?"},"confidence":0.99,"evidence":["giá trị nguyên văn"]},{"type":"select_quantity","quantity":1,"confidence":0.99,"evidence":["cho mình 1 lọ"]},{"type":"continue_order_collection","confidence":0.95,"evidence":["cho mình 1 lọ"]}],"uncertainties":[],"knowledgeIds":["id-trong-kho"],"knowledgeQueries":["truy vấn tri thức chuẩn hóa không chứa PII"],"unsupportedQuestions":[],"groundingConfidence":0.95,"draftReply":"theo ngân sách ký tự và bubble của skill đã chọn","topic":"price|promotion|shipping|comparison|effectiveness|usage|child_age|pregnancy|breastfeeding|sensitive_skin|irritation|damaged_goods|delivery|negative_review|order|sweat|odor|other","subject":"customer|child|product|order","scenario":"actual|hypothetical|past|unknown","replyTo":"offer_usage_guidance|offer_price|choose_quantity|confirm_order|care_question|null","affirmation":true,"confidence":0.95,"needsClarification":false,"age":13,"evidence":["cụm từ căn cứ"],"asksDirectAnswer":true,"priceFromVnd":245000,"priceToVnd":285000,"discountAmountVnd":75000,"workContext":"outdoor_heavy|rest_or_stress|both|null","primarySymptom":"sweat|odor|both|null","sweatPresent":"true|false|null","odorPresent":"true|false|null","priorProduct":"daily_rollon|specialized|none|null","priorIrritation":"true|false|null"}',
     "Action type hợp lệ: stop_bot, start_customer_care(issue), handoff_to_human(reason), answer_question(topic), record_fact(field,value), select_quantity(quantity 1|2|3|4|5), update_order(fields), continue_order_collection, pause_order(reason), decline_purchase.",
     "Quy tắc draftReply: trả lời đúng câu khách vừa hỏi trước; không nhắc lại dữ kiện đã nói; không hỏi lại chủ đề đã có trong Dữ liệu đã có/lịch sử; không lộ intent, pipeline, rule hay trạng thái nội bộ.",
+    "draftBubbles bắt buộc chứa cùng nội dung với draftReply, chia thành 1–2 tin hoàn chỉnh; không cắt ngang câu và CTA (nếu có) chỉ nằm ở cuối tin cuối.",
     "draftReply chỉ được dùng sự thật trong Kho tri thức được duyệt. Không có dữ liệu thì nói cần kiểm tra và chuyển bộ phận liên quan; tuyệt đối không bịa giá, ưu đãi, freeship, công dụng hoặc chính sách.",
     "Mọi handoff trong câu gửi khách phải nói 'em chuyển bộ phận liên quan'; không gọi tên nhân viên, sale online, CSKH hoặc bộ phận kinh doanh. Tên route cụ thể chỉ dùng trong dữ liệu nội bộ.",
     "Tone voice của nhân viên tư vấn bán hàng: đơn giản, dễ hiểu, tích cực, tự nhiên và đủ tự tin; không giảng giải như chuyên gia. Trả lời thẳng ngay câu đầu, dùng từ phổ thông; theo ngân sách ký tự/bubble của skill đã chọn và không quá một câu hỏi.",
@@ -1714,8 +1715,8 @@ function buildCompactInterpretPrompt(input: {
     "AN TOÀN/KHIẾU NẠI: đỏ-rát-ngứa thật phải start_customer_care + answer_question + pause_order và không chốt. Khiếu nại/sự cố đơn/dọa phản ánh phải start_customer_care(issue complaint) + handoff_to_human, không bán hàng. Xác định đúng sản phẩm gây sự cố; phản ứng với sản phẩm khác chỉ là băn khoăn trước mua.",
     "HẬU KIỂM CỨNG: không bịa giá/ưu đãi/chính sách/công dụng, không lộ PII hoặc dữ liệu nội bộ, không tạo hành động đơn hàng sai, không đưa hướng dẫn an toàn trái KNOWLEDGE. Mọi dữ kiện sản phẩm cụ thể chỉ lấy từ KNOWLEDGE của lượt hiện tại.",
     "Tin sai/chưa xác nhận: ghi nhận trung tính → nêu dữ kiện đúng đã duyệt → giải đáp nỗi lo. Không tranh cãi, không nói khách sai, không tự dùng 'tùy cơ địa' nếu khách không hỏi cam kết tuyệt đối.",
-    "OUTPUT đã được API ràng buộc bằng Structured Outputs. Điền đủ schema, không đổi tên trường. answeredQuestions/newAngle/rejectedArguments/nextStep là kế hoạch kiểm chứng ngắn, không phải chuỗi suy nghĩ. draftReply là lời khách sẽ thấy; mọi trường khác là dữ liệu nội bộ.",
-    "CTA: workflow cung cấp ALLOWED_CTAS. Chọn đúng một selectedCtaId trong danh sách và tự diễn đạt ctaText đúng purpose. Với none, ctaText phải rỗng và draftReply không có CTA. Không tự phát minh CTA ngoài danh sách. CTA là phần cuối draftReply và chỉ có tối đa một câu hỏi.",
+    "OUTPUT đã được API ràng buộc bằng Structured Outputs. Điền đủ schema, không đổi tên trường. answeredQuestions/newAngle/rejectedArguments/nextStep là kế hoạch kiểm chứng ngắn, không phải chuỗi suy nghĩ. draftReply là toàn bộ lời khách sẽ thấy; draftBubbles là cùng nội dung đó được chia thành 1–2 tin Messenger hoàn chỉnh, không cắt giữa câu; mọi trường khác là dữ liệu nội bộ.",
+    "CTA: workflow cung cấp ALLOWED_CTAS. Chọn đúng một selectedCtaId trong danh sách và tự diễn đạt ctaText đúng purpose. Với none, ctaText phải rỗng và draftReply/draftBubbles không có CTA. Không tự phát minh CTA ngoài danh sách. CTA là phần cuối bubble cuối và chỉ có tối đa một câu hỏi.",
     "BÁO GIÁ CHUNG: nếu khách hỏi giá chung và không chỉ rõ một số lượng, draftReply phải giữ đầy đủ mọi phương án được responseGuidance cho phép, quà tặng và combo sản phẩm liên quan trong KNOWLEDGE. Trình bày từng phương án trên một dòng, chia tối đa hai khối dễ đọc và kết thúc bằng đúng một câu hỏi nối tiếp phù hợp ngữ cảnh. Không nén bảng giá thành một đoạn văn; riêng trường hợp này được vượt ngân sách direct-answer đến 650 ký tự.",
     "Ví dụ liên quan tới tin hiện tại:",
     ...compactExamplesFor(input.customerMessage, input.state),
@@ -2189,6 +2190,7 @@ export function parseSemanticUnderstanding(
   const ctaIds: readonly ConversationCtaId[] = [
     "none",
     "ask_primary_symptom",
+    "ask_work_context",
     "offer_usage_guidance",
     "offer_price",
     "ask_quantity",
@@ -2211,7 +2213,17 @@ export function parseSemanticUnderstanding(
     result.groundingConfidence = parsed.groundingConfidence;
   }
   if (isConversationSkillId(parsed.skill)) result.skill = parsed.skill;
-  if (typeof parsed.draftReply === "string" && parsed.draftReply.trim()) {
+  const draftBubbles = Array.isArray(parsed.draftBubbles)
+    ? parsed.draftBubbles
+        .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+        .map((value) => value.trim().slice(0, 650))
+        .slice(0, 2)
+    : [];
+  if (draftBubbles.length > 0) {
+    result.draftBubbles = draftBubbles;
+    result.draftReply = draftBubbles.join("\n\n").slice(0, 1_000);
+  }
+  if (draftBubbles.length === 0 && typeof parsed.draftReply === "string" && parsed.draftReply.trim()) {
     result.draftReply = parsed.draftReply.trim().slice(0, 1_000);
   }
 

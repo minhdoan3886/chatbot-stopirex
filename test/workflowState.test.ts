@@ -42,11 +42,20 @@ test("đơn xác nhận chờ vận đơn và chỉ tracked khi có mã", () => 
 test("xóa đơn phát receipt cancelled có revision mới", () => {
   const state = reduceWorkflowStateMeta(
     initialWorkflowStateMeta(),
-    { type: "order_cleared", evidence: "khách hủy" },
+    { type: "draft_discarded", evidence: "khách đổi ý trước khi tạo đơn" },
+    { draft: {} },
+  );
+  assert.equal(state.orderLifecycle, "idle");
+  assert.equal(state.orderRevision, 1);
+  assert.equal(state.recentEvents[0]?.type, "draft_discarded");
+});
+
+test("chỉ đơn đã tạo bị hủy mới chuyển cancelled", () => {
+  const state = reduceWorkflowStateMeta(
+    initialWorkflowStateMeta(),
+    { type: "order_cancelled", evidence: "khách hủy đơn đã tạo" },
     { draft: {} },
   );
   assert.equal(state.orderLifecycle, "cancelled");
   assert.equal(state.orderRevision, 1);
-  assert.equal(state.recentEvents[0]?.type, "order_cleared");
 });
-

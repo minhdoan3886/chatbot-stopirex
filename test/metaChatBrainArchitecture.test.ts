@@ -31,3 +31,19 @@ test("mỗi turn phát audit về state, action và nguồn câu trả lời cu�
   assert.equal(audit?.stateVersionAfter, result.state.stateVersion);
 });
 
+test("audit transaction luôn có mutation receipt khi order fields thay đổi", async () => {
+  const records: Array<Record<string, unknown>> = [];
+  const logger = new StructuredLogger((line) => records.push(JSON.parse(line) as Record<string, unknown>));
+  const brain = new MetaChatBrain(new DemoChatService(), new CodexLlmBridge({ enabled: false }), logger);
+
+  await brain.reply({ sessionId: "audit-mutation", text: "cho mình 1 lọ" });
+  const audit = records.find(
+    (record) =>
+      record.event === "conversation_turn_audit" &&
+      Array.isArray(record.orderChangedFields) &&
+      record.orderChangedFields.length > 0,
+  );
+  assert.ok(audit);
+  assert.ok(Array.isArray(audit.acceptedOrderMutations));
+  assert.ok((audit.acceptedOrderMutations as unknown[]).length > 0);
+});

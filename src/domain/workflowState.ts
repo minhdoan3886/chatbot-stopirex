@@ -1,6 +1,13 @@
 import type { OrderDraft } from "./orders.js";
 
-export type OrderLifecycle = "idle" | "draft" | "pending_tracking" | "tracked" | "cancelled";
+export type OrderLifecycle =
+  | "idle"
+  | "draft"
+  | "ready_to_submit"
+  | "submitted"
+  | "pending_tracking"
+  | "tracked"
+  | "cancelled";
 
 export type WorkflowStateEvent =
   | {
@@ -8,7 +15,10 @@ export type WorkflowStateEvent =
       evidence: string;
       changedFields: string[];
     }
-  | { type: "order_cleared"; evidence: string }
+  | { type: "draft_discarded"; evidence: string }
+  | { type: "order_submitted"; evidence: string }
+  | { type: "tracking_pending"; evidence: string }
+  | { type: "order_cancelled"; evidence: string }
   | { type: "turn_completed"; evidence: string };
 
 export type WorkflowStateEventReceipt = WorkflowStateEvent & {
@@ -44,12 +54,21 @@ export function reduceWorkflowStateMeta(
 ): WorkflowStateMeta {
   const version = current.version + 1;
   const orderRevision =
-    event.type === "order_mutated" || event.type === "order_cleared"
+    event.type === "order_mutated" ||
+    event.type === "draft_discarded" ||
+    event.type === "order_submitted" ||
+    event.type === "order_cancelled"
       ? current.orderRevision + 1
       : current.orderRevision;
   const orderLifecycle =
-    event.type === "order_cleared"
+    event.type === "draft_discarded"
+      ? "idle"
+      : event.type === "order_cancelled"
       ? "cancelled"
+      : event.type === "order_submitted"
+        ? "submitted"
+        : event.type === "tracking_pending"
+          ? "pending_tracking"
       : deriveOrderLifecycle({
           ...(order.selectedQuantity !== undefined
             ? { selectedQuantity: order.selectedQuantity }
@@ -77,6 +96,14 @@ export function deriveOrderLifecycle(input: {
 }): OrderLifecycle {
   if (input.trackingNumber?.trim()) return "tracked";
   if (input.draft.customerConfirmedAt) return "pending_tracking";
+  if (
+    input.selectedQuantity &&
+    input.draft.recipientName?.trim() &&
+    input.draft.phone?.trim() &&
+    input.draft.legacyAddress?.trim()
+  ) {
+    return "ready_to_submit";
+  }
   if (input.selectedQuantity || Object.keys(input.draft).length > 0) return "draft";
   return "idle";
 }

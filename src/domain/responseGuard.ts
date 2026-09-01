@@ -17,6 +17,8 @@ export type ResponseGuardVerdict = {
 
 const hardFailurePrefixes = [
   "claim_guard",
+  "unsupported_claim_guard",
+  "fact_applicability_guard",
   "commerce_guard",
   "action_grounding_guard",
   "price_change_guard",
@@ -46,4 +48,3 @@ export function responseGuardVerdict(input: {
     source: input.source,
   };
 }
-

@@ -92,5 +92,9 @@ test("response contract tách fact bắt buộc khỏi phần lời văn LLM đ�
   assert.ok(contract.requiredFacts.some((fact) => fact.kind === "shipping"));
   assert.ok(contract.requiredFacts.some((fact) => fact.kind === "gift"));
   assert.ok(contract.allowedCtas.some((cta) => cta.id === "ask_phone"));
+  assert.deepEqual(contract.factPolicy.mustIncludeFacts, contract.requiredFacts);
+  assert.deepEqual(contract.ctaPolicy.preferred, ["ask_phone", "none"]);
+  assert.ok(contract.ctaPolicy.forbidden.includes("ask_quantity"));
+  assert.deepEqual(contract.ctaPolicy.requestedSlots, ["phone"]);
   assert.deepEqual(contract.flexibleSections, ["opening", "explanation", "transition", "cta"]);
 });

@@ -631,3 +631,51 @@ test("LLM chặn action thu đơn cũ khi lượt mới quay sang hỏi tư vấ
     ),
   );
 });
+
+test("proposition có evidence được commit dù primary intent là câu hỏi khác", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "2 lọ bao nhiêu, ship Hà Nội mấy ngày? Nếu được thì lấy cho chị 2 lọ",
+    semantic: {
+      slots: {},
+      status: "interpreted",
+      intent: "price_request",
+      confidence: 0.98,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "price",
+          confidence: 0.99,
+          evidence: ["2 lọ bao nhiêu"],
+          source: "llm",
+        },
+        {
+          type: "answer_question",
+          topic: "delivery",
+          confidence: 0.99,
+          evidence: ["ship Hà Nội mấy ngày"],
+          source: "llm",
+        },
+        {
+          type: "select_quantity",
+          quantity: 2,
+          confidence: 0.99,
+          evidence: ["lấy cho chị 2 lọ"],
+          source: "llm",
+        },
+        {
+          type: "continue_order_collection",
+          confidence: 0.99,
+          evidence: ["lấy cho chị 2 lọ"],
+          source: "llm",
+        },
+      ],
+      evidence: ["lấy cho chị 2 lọ"],
+    },
+    optOut: false,
+    collectingOrder: false,
+  });
+
+  assert.ok(plan.accepted.some((action) => action.type === "select_quantity"));
+  assert.ok(plan.accepted.some((action) => action.type === "continue_order_collection"));
+  assert.deepEqual(plan.answerTopics.sort(), ["delivery", "price"]);
+});

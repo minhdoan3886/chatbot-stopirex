@@ -3,6 +3,7 @@ import type {
   CustomerIntent,
   SemanticUnderstanding,
 } from "./consultation.js";
+import type { CanonicalAnswerFact, CanonicalFactConflict } from "./knowledgeResolver.js";
 
 export type AllowedConversationCta = {
   id: ConversationCtaId;
@@ -26,20 +27,83 @@ export type ResponseContractState = {
 export type WorkflowResponseContract = {
   requiredFacts: RequiredResponseFact[];
   allowedCtas: AllowedConversationCta[];
+  factPolicy: {
+    mustIncludeFacts: RequiredResponseFact[];
+    availableFacts: CanonicalAnswerFact[];
+    mustNotClaim: Array<{ key: string; reason: string; sourceIds: string[] }>;
+  };
+  ctaPolicy: {
+    preferred: ConversationCtaId[];
+    allowed: AllowedConversationCta[];
+    forbidden: ConversationCtaId[];
+    goal: string;
+    requestedSlots: string[];
+  };
   flexibleSections: readonly ["opening", "explanation", "transition", "cta"];
 };
 
 export function buildWorkflowResponseContract(input: {
   state: ResponseContractState;
   authoritativeReply: string;
+  canonicalFacts?: readonly CanonicalAnswerFact[];
+  canonicalConflicts?: readonly CanonicalFactConflict[];
 }): WorkflowResponseContract {
+  const mustIncludeFacts = extractRequiredResponseFacts(input.authoritativeReply);
+  const allowed = allowedConversationCtas(input.state);
+  const preferred = preferredConversationCtas(input.state);
+  const allCtas = Object.keys(ctaPurposes) as ConversationCtaId[];
   return {
-    requiredFacts: extractRequiredResponseFacts(input.authoritativeReply),
-    allowedCtas: allowedConversationCtas(input.state),
+    requiredFacts: mustIncludeFacts,
+    allowedCtas: allowed,
+    factPolicy: {
+      mustIncludeFacts,
+      availableFacts: [...(input.canonicalFacts ?? [])],
+      mustNotClaim: (input.canonicalConflicts ?? []).map((conflict) => ({
+        key: conflict.key,
+        reason: "conflicting_applicable_sources",
+        sourceIds: [...conflict.sourceIds],
+      })),
+    },
+    ctaPolicy: {
+      preferred,
+      allowed,
+      forbidden: allCtas.filter((id) => !allowed.some((cta) => cta.id === id)),
+      goal: conversationGoal(input.state),
+      requestedSlots: requestedOrderSlots(input.state),
+    },
     // The LLM owns wording only. Facts and available next actions remain
     // authoritative inputs to validation, never text appended by workflow.
     flexibleSections: ["opening", "explanation", "transition", "cta"],
   };
+}
+
+function preferredConversationCtas(state: ResponseContractState): ConversationCtaId[] {
+  if (state.botPaused || state.mode === "care") return ["ask_care_symptom", "none"];
+  if (state.selectedQuantity) {
+    if (state.orderMissing.includes("recipientName")) return ["ask_recipient_name", "none"];
+    if (state.orderMissing.includes("phone")) return ["ask_phone", "none"];
+    if (state.orderMissing.includes("legacyAddress")) return ["ask_address", "none"];
+    return ["confirm_order_review", "none"];
+  }
+  if (state.pendingAction === "send_usage_guidance") return ["offer_usage_guidance", "none"];
+  if (state.pendingAction === "send_price") return ["offer_price", "none"];
+  if (state.pendingAction === "choose_quantity") return ["ask_quantity", "none"];
+  return ["none"];
+}
+
+function conversationGoal(state: ResponseContractState): string {
+  if (state.botPaused || state.mode === "care") return "resolve_customer_care_safely";
+  if (state.selectedQuantity && state.orderMissing.length > 0) return "collect_missing_order_fields";
+  if (state.selectedQuantity) return "review_order_without_forcing_keyword_confirmation";
+  if (state.pendingAction) return state.pendingAction;
+  return "answer_current_customer_need";
+}
+
+function requestedOrderSlots(state: ResponseContractState): string[] {
+  if (!state.selectedQuantity) return [];
+  return state.orderMissing.filter((field) =>
+    ["recipientName", "phone", "legacyAddress"].includes(field),
+  );
 }
 
 const ctaPurposes: Readonly<Record<ConversationCtaId, string>> = {

@@ -42,6 +42,10 @@ export type DecisionTrace = {
     confidence: number;
     needsClarification: boolean;
     evidence: string[];
+    status?: SemanticUnderstanding["status"];
+    selectedCtaId?: SemanticUnderstanding["selectedCtaId"];
+    ctaText?: string;
+    unsupportedQuestions?: string[];
   };
   pendingActionBefore?: PendingAction;
   pendingActionAfter?: PendingAction;
@@ -179,6 +183,12 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
       confidence: semanticConfidence,
       needsClarification: input.semantic.needsClarification === true,
       evidence: input.semantic.evidence ?? [],
+      ...(input.semantic.status ? { status: input.semantic.status } : {}),
+      ...(input.semantic.selectedCtaId ? { selectedCtaId: input.semantic.selectedCtaId } : {}),
+      ...(input.semantic.ctaText ? { ctaText: input.semantic.ctaText } : {}),
+      ...(input.semantic.unsupportedQuestions
+        ? { unsupportedQuestions: input.semantic.unsupportedQuestions }
+        : {}),
     },
     ...(input.pendingAction ? { pendingActionBefore: input.pendingAction } : {}),
     ruleMatches,

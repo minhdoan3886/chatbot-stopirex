@@ -15,6 +15,7 @@ import {
   type BeneficiaryAgeGroup,
   type BeneficiaryType,
   type SemanticBeneficiaryUpdate,
+  type ConversationCtaId,
 } from "../domain/consultation.js";
 import {
   resolveConversationDecision,
@@ -31,7 +32,11 @@ import { planNextBestAction, type PlannedNextBestAction } from "../domain/nextBe
 import type { ActionExecutionMode } from "../domain/actionRollout.js";
 import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import { ClaimRegistry, defaultBlockedClaims } from "../domain/claims.js";
-import { resolveConversationSkill, type ConversationSkillId } from "../domain/chatSkills.js";
+import {
+  conversationSkills,
+  resolveConversationSkill,
+  type ConversationSkillId,
+} from "../domain/chatSkills.js";
 import {
   assertOrderReady,
   formatOrderConfirmation,
@@ -73,6 +78,12 @@ import {
   type ConversationTopic,
 } from "../domain/responseGovernor.js";
 import { extractRequiredResponseFacts } from "../domain/responseContract.js";
+import {
+  dialogueModeFor,
+  initialDialogueState,
+  reduceDialogueState,
+  type DialogueState,
+} from "../domain/dialogueState.js";
 import type { ResponseGuardVerdict } from "../domain/responseGuard.js";
 import {
   deriveOrderLifecycle,
@@ -134,6 +145,7 @@ type DemoSession = {
   customerProfile: CustomerProfileMemory;
   locationMemory: LocationMemory;
   conversationMemory: ConversationMemory;
+  dialogueState: DialogueState;
   workflowState: WorkflowStateMeta;
 };
 
@@ -208,6 +220,10 @@ type QuantityOperation = {
 
 export type OrderTransactionTrace = {
   acceptedActions: Array<{ type: OrderMutationAction["type"]; evidence: string }>;
+  acceptedMutations?: Array<{
+    type: OrderMutationAction["type"];
+    evidenceRef: string;
+  }>;
   changedFields: string[];
   conflicts: string[];
 };
@@ -258,6 +274,7 @@ export type DemoChatState = {
   customerProfile?: CustomerProfileMemory;
   locationMemory?: LocationMemory;
   conversationMemory?: ConversationMemory;
+  dialogueState?: DialogueState;
   stateVersion?: number;
   orderRevision?: number;
   orderLifecycle?: OrderLifecycle;
@@ -451,6 +468,15 @@ export class DemoChatService {
       optOut: isOptOut(text),
       collectingOrder: orderMutationAllowed && Boolean(session.selectedQuantity),
     });
+    session.dialogueState = reduceDialogueState(session.dialogueState, {
+      type: "user_acts_observed",
+      acts: actionPlan.accepted,
+      mode: dialogueModeFor({
+        actions: actionPlan.accepted,
+        ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
+        botPaused: session.care?.case.botPaused ?? false,
+      }),
+    });
     const observedEntities = commitReconciledObservations({
       session,
       projection: observationProjection,
@@ -568,8 +594,18 @@ export class DemoChatService {
     ) {
       session.orderCollectionPaused = true;
     }
+    const discoveryCtaSelected = [
+      "ask_primary_symptom",
+      "ask_work_context",
+      "ask_care_symptom",
+      "ask_clarification",
+    ].includes(semantic.selectedCtaId ?? "none");
     const resolvedSkill = resolveConversationSkill({
-      ...(semantic.skill ? { suggestedSkill: semantic.skill } : {}),
+      ...(discoveryCtaSelected
+        ? { suggestedSkill: "need-discovery" as const }
+        : semantic.skill
+          ? { suggestedSkill: semantic.skill }
+          : {}),
       route: decision.route,
       ...(decision.intent ? { intent: decision.intent } : {}),
       ...(semantic.topic ? { topic: semantic.topic } : {}),
@@ -582,6 +618,7 @@ export class DemoChatService {
     if (
       multiActionEnabled &&
       semantic.skill === "direct-answer" &&
+      !discoveryCtaSelected &&
       semantic.needsClarification !== true &&
       actionPlan.answerTopics.length > 0 &&
       session.activeSkill === "need-discovery"
@@ -2486,7 +2523,11 @@ export class DemoChatService {
     const matches =
       start >= 0 &&
       currentTail.length === previousReplies.length &&
-      currentTail.every((turn, index) => turn.role === "assistant" && turn.text === previousReplies[index]);
+      // The workflow and the presentation governor can legitimately reshape
+      // bubble text between the first render and the final LLM render. The
+      // invariant we need here is ownership of the trailing assistant batch,
+      // not byte-for-byte equality of presentation text.
+      currentTail.every((turn) => turn.role === "assistant");
     if (!matches) {
       throw new Error("Latest assistant turns no longer match response being rendered");
     }
@@ -2664,6 +2705,17 @@ export class DemoChatService {
           triggers: [...(candidate.conversationMemory?.consultationFacts?.triggers ?? [])].slice(-4),
         },
       },
+      dialogueState: {
+        ...base.dialogueState,
+        ...(candidate.dialogueState ?? {}),
+        lastUserActs: [...(candidate.dialogueState?.lastUserActs ?? [])].slice(-12),
+        lastAssistantActs: [...(candidate.dialogueState?.lastAssistantActs ?? [])].slice(-12),
+        unresolvedTopics: [...(candidate.dialogueState?.unresolvedTopics ?? [])].slice(-12),
+        recentlyAnsweredFactIds: [
+          ...(candidate.dialogueState?.recentlyAnsweredFactIds ?? []),
+        ].slice(-20),
+        expectedInputs: [...(candidate.dialogueState?.expectedInputs ?? [])].slice(-8),
+      },
       workflowState: {
         ...base.workflowState,
         ...(candidate.workflowState ?? {}),
@@ -2745,8 +2797,23 @@ export class DemoChatService {
       handoffPending: Boolean(session.manualHandoffReason),
       optedOut: session.optedOut,
     });
+    const semanticDecision = session.lastDecision?.semantic;
+    const llmOwnsCta =
+      semanticDecision?.status === "interpreted" &&
+      Boolean(semanticDecision.selectedCtaId) &&
+      (semanticDecision.selectedCtaId !== "none" || !nextBestAction.prompt);
+    const semanticCta =
+      llmOwnsCta && semanticDecision.selectedCtaId !== "none"
+        ? semanticDecision.ctaText?.trim()
+        : undefined;
+    const promptToAppend = llmOwnsCta ? semanticCta : nextBestAction.prompt;
+    const activeResponseBudget =
+      session.lastIntent === "price_request"
+        ? 650
+        : 280;
     const nextBestActionFits =
-      !nextBestAction.prompt || rawReplies.join("\n\n").length + nextBestAction.prompt.length + 2 <= 280;
+      !promptToAppend ||
+      rawReplies.join("\n\n").length + promptToAppend.length + 2 <= activeResponseBudget;
     session.lastNextBestAction = nextBestActionFits
       ? nextBestAction
       : {
@@ -2755,7 +2822,13 @@ export class DemoChatService {
           key: "response_budget_exhausted",
           reason: "Câu trả lời chính đã đủ dài; không nối thêm câu khai thác.",
         };
-    if (nextBestAction.prompt && nextBestActionFits) rawReplies.push(nextBestAction.prompt);
+    if (
+      promptToAppend &&
+      nextBestActionFits &&
+      !rawReplies.some((message) => message.includes(promptToAppend))
+    ) {
+      rawReplies.push(promptToAppend);
+    }
     let logicalReplies = rawReplies.map((message) => personalizeCustomerAddress(message, session.identity));
     if (!session.greeted && session.messages > 0) {
       if (!(session.mode === "care" && session.care?.case.issue === "complaint")) {
@@ -2763,11 +2836,19 @@ export class DemoChatService {
       }
       session.greeted = true;
     }
+    const activeSkill = session.activeSkill ? conversationSkills[session.activeSkill] : undefined;
+    const previouslyAskedTopics =
+      session.lastIntent === "price_request" && session.pendingQuestionTopic
+        ? session.askedTopics.filter((topic) => topic !== session.pendingQuestionTopic)
+        : session.askedTopics;
     const governed = governCustomerResponse({
       replies: logicalReplies,
       answeredTopics: session.mode === "care" ? [] : session.answeredTopics,
-      previouslyAskedTopics: session.mode === "care" ? [] : session.askedTopics,
-      maxCharacters: session.messages <= 1 ? 500 : 360,
+      previouslyAskedTopics: session.mode === "care" ? [] : previouslyAskedTopics,
+      maxCharacters:
+        session.messages <= 1
+          ? Math.max(500, activeSkill?.maxCharacters ?? 0)
+          : Math.max(360, activeSkill?.maxCharacters ?? 0),
       maxBubbles: 2,
       preserveFullText: shouldPreserveFullResponse(session, logicalReplies),
     });
@@ -2793,6 +2874,16 @@ export class DemoChatService {
       assertCustomerFacingCopy(message);
       rememberTurn(session, { role: "assistant", text: message });
     }
+    const selectedCtaId = (session.lastDecision?.semantic.selectedCtaId ?? "none") as ConversationCtaId;
+    session.dialogueState = reduceDialogueState(session.dialogueState, {
+      type: "assistant_turn_committed",
+      ctaId: selectedCtaId,
+      requestedSlots: selectedCtaRequestedSlots(selectedCtaId, session),
+      answeredFactIds: session.lastDecision?.knowledgeEntityIds ?? [],
+      unresolvedTopics: session.lastDecision?.semantic.unsupportedQuestions ?? [],
+      turn: session.messages,
+      goal: dialogueGoalForSession(session),
+    });
     session.workflowState = reduceWorkflowStateMeta(
       session.workflowState,
       {
@@ -2892,6 +2983,7 @@ function stateOf(session: DemoSession): DemoChatState {
         triggers: [...session.conversationMemory.consultationFacts.triggers],
       },
     },
+    dialogueState: structuredClone(session.dialogueState),
     stateVersion: session.workflowState.version,
     orderRevision: session.workflowState.orderRevision,
     orderLifecycle:
@@ -3004,8 +3096,30 @@ function newSession(id: string, context: DemoChatContext = {}): DemoSession {
       phoneHistory: [],
       consultationFacts: { triggers: [] },
     },
+    dialogueState: initialDialogueState(),
     workflowState: initialWorkflowStateMeta(),
   };
+}
+
+function selectedCtaRequestedSlots(ctaId: ConversationCtaId, session: DemoSession): string[] {
+  if (ctaId === "ask_recipient_name") return ["recipientName"];
+  if (ctaId === "ask_phone") return ["phone"];
+  if (ctaId === "ask_address") return ["legacyAddress"];
+  if (session.selectedQuantity) {
+    return missingOrderFields(session.order).filter((field) =>
+      ["recipientName", "phone", "legacyAddress"].includes(field),
+    );
+  }
+  return [];
+}
+
+function dialogueGoalForSession(session: DemoSession): string {
+  if (session.care?.case.botPaused) return "resolve_customer_care_safely";
+  if (session.selectedQuantity && missingOrderFields(session.order).length > 0) {
+    return "collect_missing_order_fields";
+  }
+  if (session.selectedQuantity) return "review_or_update_order";
+  return session.pendingAction ?? "answer_current_customer_need";
 }
 
 function reviveCareDates(care: CareFlowState): CareFlowState {
@@ -6200,6 +6314,13 @@ function commitOrderMutations(
       ...(priorTrace?.acceptedActions ?? []),
       ...transaction.accepted.map((action) => ({ type: action.type, evidence: action.evidence })),
     ],
+    acceptedMutations: [
+      ...(priorTrace?.acceptedMutations ?? []),
+      ...transaction.accepted.map((action) => ({
+        type: action.type,
+        evidenceRef: workflowEvidenceRef(action.evidence),
+      })),
+    ],
     changedFields: [
       ...new Set([...(priorTrace?.changedFields ?? []), ...transaction.changedFields.map(String)]),
     ],
@@ -6262,7 +6383,7 @@ function clearOrderDraft(session: DemoSession): void {
   if (hadOrderState) {
     session.workflowState = reduceWorkflowStateMeta(
       session.workflowState,
-      { type: "order_cleared", evidence: "clear_order_draft" },
+      { type: "draft_discarded", evidence: "clear_order_draft" },
       { draft: session.order },
     );
   }
@@ -6580,6 +6701,7 @@ function commitReconciledObservations(input: {
   } else if (proposed.length > 0) {
     session.orderTransactionTrace = {
       acceptedActions: [],
+      acceptedMutations: [],
       changedFields: [],
       conflicts: [
         `observation_rejected_by_semantic_plan:${[...new Set(proposed.map((action) => action.type))].join(",")}`,

@@ -129,6 +129,8 @@ export type SemanticUnderstanding = {
   beneficiaryUpdates?: SemanticBeneficiaryUpdate[];
   groundingConfidence?: number;
   draftReply?: string;
+  /** One or two complete Messenger bubbles. Sentences must never be split across bubbles. */
+  draftBubbles?: string[];
   skill?: ConversationSkillId;
   intent?: CustomerIntent;
   topic?: SemanticTopic;

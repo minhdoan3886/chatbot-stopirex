@@ -2,8 +2,13 @@ import { retrieveKnowledgeMatches, type KnowledgeMatch } from "../domain/knowled
 import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
 import {
   allowedConversationCtas,
-  extractRequiredResponseFacts,
+  buildWorkflowResponseContract,
 } from "../domain/responseContract.js";
+import {
+  responseGuardVerdict,
+  type ResponseGuardVerdict,
+  type ResponseSource,
+} from "../domain/responseGuard.js";
 import {
   missingRequiredAnswerTopics,
   replyCoversRequiredAnswerTopic,
@@ -221,6 +226,21 @@ export class MetaChatBrain {
       ...context,
       actionExecutionMode: liveVariant,
     });
+    const responseContract = buildWorkflowResponseContract({
+      state: base.state,
+      authoritativeReply: base.reply,
+    });
+    this.logger?.log("debug", "workflow_response_contract", {
+      ...(input.traceId ? { traceId: input.traceId } : {}),
+      sessionId: input.sessionId,
+      requiredFactIds: responseContract.requiredFacts.map((fact) => fact.id),
+      allowedCtaIds: responseContract.allowedCtas.map((cta) => cta.id),
+      flexibleSections: responseContract.flexibleSections,
+    });
+    const deliver = (
+      response: DemoChatResponse,
+      verdict: ResponseGuardVerdict,
+    ): DemoChatResponse => this.deliverTurn(input, before, response, verdict);
     if (this.rollout.mode !== "enabled") {
       const alternateVariant = liveVariant === "multi_action" ? "legacy" : "multi_action";
       const alternateChat = new DemoChatService();
@@ -262,7 +282,12 @@ export class MetaChatBrain {
         });
       }
     }
-    if (fastTransition) return base;
+    if (fastTransition) {
+      return deliver(
+        base,
+        responseGuardVerdict({ accepted: true, reason: "llm_disabled", source: "llm_disabled" }),
+      );
+    }
     if (
       base.state.decisionTrace?.selectedRoute === "start_care" ||
       base.state.decisionTrace?.selectedRoute === "active_care"
@@ -277,8 +302,16 @@ export class MetaChatBrain {
         selectedRoute: base.state.decisionTrace.selectedRoute,
         selectedCareIssue: base.state.decisionTrace.selectedCareIssue,
       });
-      return base;
+      return deliver(
+        base,
+        responseGuardVerdict({
+          accepted: true,
+          reason: "customer_care_route_locked",
+          source: "customer_care_workflow",
+        }),
+      );
     }
+    let compositionSource: ResponseSource = "llm_draft";
     let composed = this.llm.adoptInterpretedDraft({
       customerMessage: input.text,
       ...(interpreted.draftReply ? { draftReply: interpreted.draftReply } : {}),
@@ -314,6 +347,7 @@ export class MetaChatBrain {
         knowledge,
         ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
       });
+      if (composed.status === "enhanced") compositionSource = "llm_repair";
     }
     if (contentFreeMessage && composed.status !== "enhanced") {
       const reply = contentFreeMessageFallbackReply();
@@ -325,7 +359,13 @@ export class MetaChatBrain {
         compositionStatus: composed.status,
         compositionReason: composed.reason,
       });
-      return { ...base, reply, replies, state };
+      return deliver(
+        { ...base, reply, replies, state },
+        responseGuardVerdict({
+          reason: composed.reason ?? "content_free_message_fallback",
+          source: "workflow_safe_fallback",
+        }),
+      );
     }
     this.logger?.log(composed.status === "enhanced" ? "debug" : "warn", "llm_composition", {
       ...(input.traceId ? { traceId: input.traceId } : {}),
@@ -370,6 +410,7 @@ export class MetaChatBrain {
         });
         if (repairedCoverage.complete) {
           composed = repaired;
+          compositionSource = "llm_repair";
           coverage = repairedCoverage;
           this.logger?.log("debug", "llm_composition_repaired", {
             ...(input.traceId ? { traceId: input.traceId } : {}),
@@ -407,7 +448,13 @@ export class MetaChatBrain {
           missingTopics: coverage.missingTopics,
           compositionStatus: composed.status,
         });
-        return base;
+        return deliver(
+          base,
+          responseGuardVerdict({
+            reason: composed.reason ?? "recovered_by_grounded_base",
+            source: "workflow_safe_fallback",
+          }),
+        );
       }
       const approvedRecovery = this.chat.approvedKnowledgeFallback(input.text, interpreted.slots);
       if (approvedRecovery) {
@@ -429,12 +476,19 @@ export class MetaChatBrain {
             compositionStatus: composed.status,
             knowledgeIds: approvedRecovery.knowledgeIds,
           });
-          return {
-            ...base,
-            reply: approvedRecovery.reply,
-            replies,
-            state,
-          };
+          return deliver(
+            {
+              ...base,
+              reply: approvedRecovery.reply,
+              replies,
+              state,
+            },
+            responseGuardVerdict({
+              accepted: true,
+              reason: "recovered_by_approved_knowledge",
+              source: "approved_knowledge_fallback",
+            }),
+          );
         }
       }
       const replies = questionCoverageFallbackReplies(base.state.selectedQuantity);
@@ -457,12 +511,18 @@ export class MetaChatBrain {
         compositionStatus: composed.status,
         selectedQuantity: base.state.selectedQuantity,
       });
-      return {
-        ...base,
-        reply: replies.join("\n\n"),
-        replies,
-        state,
-      };
+      return deliver(
+        {
+          ...base,
+          reply: replies.join("\n\n"),
+          replies,
+          state,
+        },
+        responseGuardVerdict({
+          reason: composed.reason ?? `question_coverage:${coverage.reason}`,
+          source: "workflow_safe_fallback",
+        }),
+      );
     }
     if (
       composed.status === "enhanced" &&
@@ -484,15 +544,28 @@ export class MetaChatBrain {
         unsupportedQuestionCount: interpreted.unsupportedQuestions.length,
         selectedQuantity: base.state.selectedQuantity,
       });
-      return {
-        ...base,
-        reply: replies.join("\n\n"),
-        replies,
-        state,
-      };
+      return deliver(
+        {
+          ...base,
+          reply: replies.join("\n\n"),
+          replies,
+          state,
+        },
+        responseGuardVerdict({
+          accepted: true,
+          reason: "unsupported_question_handoff",
+          source: "workflow_safe_fallback",
+        }),
+      );
     }
     if (composed.status !== "enhanced" || composed.reply === base.reply) {
-      return base;
+      return deliver(
+        base,
+        responseGuardVerdict({
+          reason: composed.reason ?? "composition_fallback",
+          source: "workflow_safe_fallback",
+        }),
+      );
     }
     if (base.state.decisionTrace && interpreted.knowledgeIds) {
       const retrievedIds = new Set(knowledge.map((entity) => entity.id));
@@ -513,7 +586,7 @@ export class MetaChatBrain {
       maxCharacters: responseCharacterBudget,
       maxBubbles: responseBubbleBudget,
       preserveFullText:
-        extractRequiredResponseFacts(base.reply).length > 0 ||
+        responseContract.requiredFacts.length > 0 ||
         responseCharacterBudget > 360 ||
         base.state.mode === "care" ||
         Boolean(base.state.selectedQuantity) ||
@@ -551,7 +624,12 @@ export class MetaChatBrain {
       });
       if (untruncatedCoverage.complete) governed = untruncated;
     }
-    if (governed.replies.length === 0) return base;
+    if (governed.replies.length === 0) {
+      return deliver(
+        base,
+        responseGuardVerdict({ reason: "empty_governed_reply", source: "workflow_safe_fallback" }),
+      );
+    }
     try {
       assertReplyMatchesConversationState({
         reply: governed.replies.join("\n\n"),
@@ -566,15 +644,67 @@ export class MetaChatBrain {
         ...(input.traceId ? { traceId: input.traceId } : {}),
         reason: error instanceof Error ? error.message : "response_state_mismatch",
       });
-      return base;
+      return deliver(
+        base,
+        responseGuardVerdict({ reason: "response_state_mismatch", source: "workflow_safe_fallback" }),
+      );
     }
     const state = this.chat.replaceLatestAssistantTurns(input.sessionId, base.replies, governed.replies);
-    return {
-      ...base,
-      reply: governed.replies.join("\n\n"),
-      replies: governed.replies,
-      state,
+    return deliver(
+      {
+        ...base,
+        reply: governed.replies.join("\n\n"),
+        replies: governed.replies,
+        state,
+      },
+      responseGuardVerdict({
+        accepted: true,
+        reason: composed.reason ?? "validated",
+        source: compositionSource,
+      }),
+    );
+  }
+
+  private deliverTurn(
+    input: { sessionId: string; traceId?: string },
+    before: DemoChatState,
+    response: DemoChatResponse,
+    verdict: ResponseGuardVerdict,
+  ): DemoChatResponse {
+    const actionPlan = response.state.decisionTrace?.actionPlan;
+    const delivered: DemoChatResponse = {
+      ...response,
+      state: { ...response.state, responseDecision: verdict },
     };
+    this.logger?.log(verdict.outcome === "block" ? "warn" : "info", "conversation_turn_audit", {
+      ...(input.traceId ? { traceId: input.traceId } : {}),
+      sessionId: input.sessionId,
+      stateVersionBefore: before.stateVersion ?? 0,
+      stateVersionAfter: response.state.stateVersion ?? 0,
+      orderRevisionBefore: before.orderRevision ?? 0,
+      orderRevisionAfter: response.state.orderRevision ?? 0,
+      orderLifecycleBefore: before.orderLifecycle ?? before.orderFlowStatus ?? "idle",
+      orderLifecycleAfter: response.state.orderLifecycle ?? response.state.orderFlowStatus ?? "idle",
+      selectedQuantityBefore: before.selectedQuantity ?? null,
+      selectedQuantityAfter: response.state.selectedQuantity ?? null,
+      acceptedActions: actionPlan?.accepted.map((action) => ({
+        type: action.type,
+        source: action.source,
+        confidence: action.confidence,
+      })) ?? [],
+      rejectedActions: actionPlan?.rejected.map((item) => ({
+        type: item.action.type,
+        source: item.action.source,
+        reason: item.reason,
+      })) ?? [],
+      orderChangedFields: response.state.orderTransactionTrace?.changedFields ?? [],
+      orderConflicts: response.state.orderTransactionTrace?.conflicts ?? [],
+      responseOutcome: verdict.outcome,
+      responseReason: verdict.reason,
+      finalResponseSource: verdict.source,
+      responseBubbleCount: response.replies.length,
+    });
+    return delivered;
   }
 }
 

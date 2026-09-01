@@ -4,6 +4,7 @@ import {
   allowedConversationCtas,
   assertRequiredResponseFactsPresent,
   assertSelectedCtaAllowed,
+  buildWorkflowResponseContract,
   extractRequiredResponseFacts,
 } from "../src/domain/responseContract.js";
 
@@ -75,4 +76,21 @@ test("required facts giữ dữ kiện nhưng cho phép đổi lời dẫn linh 
     () => assertRequiredResponseFactsPresent(facts, "Combo 2 lọ giá 510.000đ."),
     /Thiếu required fact/u,
   );
+});
+
+test("response contract tách fact bắt buộc khỏi phần lời văn LLM được quyền diễn đạt", () => {
+  const contract = buildWorkflowResponseContract({
+    state: {
+      mode: "sales",
+      botPaused: false,
+      selectedQuantity: 2,
+      orderMissing: ["phone"],
+    },
+    authoritativeReply: "Combo 2 lọ: 510.000đ, miễn phí giao. Quà tặng: 1 túi.",
+  });
+  assert.ok(contract.requiredFacts.some((fact) => fact.kind === "money"));
+  assert.ok(contract.requiredFacts.some((fact) => fact.kind === "shipping"));
+  assert.ok(contract.requiredFacts.some((fact) => fact.kind === "gift"));
+  assert.ok(contract.allowedCtas.some((cta) => cta.id === "ask_phone"));
+  assert.deepEqual(contract.flexibleSections, ["opening", "explanation", "transition", "cta"]);
 });

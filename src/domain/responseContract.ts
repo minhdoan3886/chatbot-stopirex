@@ -23,6 +23,25 @@ export type ResponseContractState = {
   pendingAction?: string;
 };
 
+export type WorkflowResponseContract = {
+  requiredFacts: RequiredResponseFact[];
+  allowedCtas: AllowedConversationCta[];
+  flexibleSections: readonly ["opening", "explanation", "transition", "cta"];
+};
+
+export function buildWorkflowResponseContract(input: {
+  state: ResponseContractState;
+  authoritativeReply: string;
+}): WorkflowResponseContract {
+  return {
+    requiredFacts: extractRequiredResponseFacts(input.authoritativeReply),
+    allowedCtas: allowedConversationCtas(input.state),
+    // The LLM owns wording only. Facts and available next actions remain
+    // authoritative inputs to validation, never text appended by workflow.
+    flexibleSections: ["opening", "explanation", "transition", "cta"],
+  };
+}
+
 const ctaPurposes: Readonly<Record<ConversationCtaId, string>> = {
   none: "Không đặt câu hỏi hoặc lời mời tiếp theo.",
   ask_primary_symptom: "Hỏi khách khó chịu vì mồ hôi, mùi cơ thể hay cả hai.",

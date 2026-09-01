@@ -73,6 +73,15 @@ import {
   type ConversationTopic,
 } from "../domain/responseGovernor.js";
 import { extractRequiredResponseFacts } from "../domain/responseContract.js";
+import type { ResponseGuardVerdict } from "../domain/responseGuard.js";
+import {
+  deriveOrderLifecycle,
+  initialWorkflowStateMeta,
+  reduceWorkflowStateMeta,
+  type OrderLifecycle,
+  type WorkflowStateEventReceipt,
+  type WorkflowStateMeta,
+} from "../domain/workflowState.js";
 import { InMemoryCareCaseRepository } from "./careCaseRepository.js";
 import { createDemoProductCatalog, demoCommerceEffectiveAt } from "../config/demoCommerce.js";
 import type { FollowupStage } from "../domain/followup.js";
@@ -125,6 +134,7 @@ type DemoSession = {
   customerProfile: CustomerProfileMemory;
   locationMemory: LocationMemory;
   conversationMemory: ConversationMemory;
+  workflowState: WorkflowStateMeta;
 };
 
 export type ConversationMemory = {
@@ -248,6 +258,11 @@ export type DemoChatState = {
   customerProfile?: CustomerProfileMemory;
   locationMemory?: LocationMemory;
   conversationMemory?: ConversationMemory;
+  stateVersion?: number;
+  orderRevision?: number;
+  orderLifecycle?: OrderLifecycle;
+  recentStateEvents?: WorkflowStateEventReceipt[];
+  responseDecision?: ResponseGuardVerdict;
 };
 
 export type DemoChatResponse = {
@@ -295,7 +310,15 @@ export class DemoChatService {
       session.orderEditable === true &&
       Boolean(session.order.customerConfirmedAt);
     const orderMutationAllowed = session.pipeline !== "6.Đã tạo đơn" || canEditCreatedInboxOrder;
-    const observedEntities = observeGlobalEntities(session, raw, orderMutationAllowed);
+    // Observation runs on an isolated projection. It may propose entities but
+    // cannot mutate the authoritative session before the LLM action plan has
+    // been reconciled.
+    const observationProjection = structuredClone(session);
+    const observedEntityCandidates = observeGlobalEntities(
+      observationProjection,
+      raw,
+      orderMutationAllowed,
+    );
     const requestedQuantity = extractRequestedQuantity(text);
     const committedRequestedQuantity = extractExplicitOrderQuantity(text);
     const quantityOperation = extractQuantityOperation(text);
@@ -427,6 +450,20 @@ export class DemoChatService {
       conditionalNoIrritationPurchase,
       optOut: isOptOut(text),
       collectingOrder: orderMutationAllowed && Boolean(session.selectedQuantity),
+    });
+    const observedEntities = commitReconciledObservations({
+      session,
+      projection: observationProjection,
+      candidates: observedEntityCandidates,
+      raw,
+      acceptOrderChanges:
+        orderMutationAllowed &&
+        Boolean(
+          actionPlan.accepted.some((action) => action.type === "update_order") ||
+            semantic.intent === "buying" ||
+            semantic.intent === "order_support" ||
+            (!semanticAuthorityReady && (session.selectedQuantity || isOrderCaptureMessage(raw))),
+        ),
     });
     const quantityBlockedByConditionalRefund = actionPlan.conflicts.some((conflict) =>
       conflict.includes("giả định hoàn tiền"),
@@ -2627,6 +2664,11 @@ export class DemoChatService {
           triggers: [...(candidate.conversationMemory?.consultationFacts?.triggers ?? [])].slice(-4),
         },
       },
+      workflowState: {
+        ...base.workflowState,
+        ...(candidate.workflowState ?? {}),
+        recentEvents: [...(candidate.workflowState?.recentEvents ?? [])].slice(-12),
+      },
       answeredTopics: [...(candidate.answeredTopics ?? [])],
       askedTopics: [...(candidate.askedTopics ?? [])],
     };
@@ -2641,6 +2683,19 @@ export class DemoChatService {
     if (typeof restored.order.customerConfirmedAt === "string") {
       restored.order.customerConfirmedAt = new Date(restored.order.customerConfirmedAt);
     }
+    restored.workflowState = {
+      ...restored.workflowState,
+      orderLifecycle:
+        restored.workflowState.orderLifecycle === "cancelled" &&
+        !restored.selectedQuantity &&
+        Object.keys(restored.order).length === 0
+          ? "cancelled"
+          : deriveOrderLifecycle({
+              ...(restored.selectedQuantity ? { selectedQuantity: restored.selectedQuantity } : {}),
+              draft: restored.order,
+              ...(restored.trackingNumber ? { trackingNumber: restored.trackingNumber } : {}),
+            }),
+    };
     if (restored.care) restored.care = reviveCareDates(restored.care);
     this.sessions.set(sessionId, restored);
     return true;
@@ -2738,6 +2793,18 @@ export class DemoChatService {
       assertCustomerFacingCopy(message);
       rememberTurn(session, { role: "assistant", text: message });
     }
+    session.workflowState = reduceWorkflowStateMeta(
+      session.workflowState,
+      {
+        type: "turn_completed",
+        evidence: workflowEvidenceRef(customerMessage || "system_response"),
+      },
+      {
+        ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
+        draft: session.order,
+        ...(session.trackingNumber ? { trackingNumber: session.trackingNumber } : {}),
+      },
+    );
     finalizeDecisionTrace(session);
     const replies = logicalReplies.slice(0, 2);
     return {
@@ -2825,6 +2892,19 @@ function stateOf(session: DemoSession): DemoChatState {
         triggers: [...session.conversationMemory.consultationFacts.triggers],
       },
     },
+    stateVersion: session.workflowState.version,
+    orderRevision: session.workflowState.orderRevision,
+    orderLifecycle:
+      session.workflowState.orderLifecycle === "cancelled" &&
+      !session.selectedQuantity &&
+      Object.keys(session.order).length === 0
+        ? "cancelled"
+        : deriveOrderLifecycle({
+            ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
+            draft: session.order,
+            ...(session.trackingNumber ? { trackingNumber: session.trackingNumber } : {}),
+          }),
+    recentStateEvents: session.workflowState.recentEvents.map((event) => ({ ...event })),
   };
 }
 
@@ -2924,6 +3004,7 @@ function newSession(id: string, context: DemoChatContext = {}): DemoSession {
       phoneHistory: [],
       consultationFacts: { triggers: [] },
     },
+    workflowState: initialWorkflowStateMeta(),
   };
 }
 
@@ -6124,6 +6205,23 @@ function commitOrderMutations(
     ],
     conflicts: [...new Set([...(priorTrace?.conflicts ?? []), ...transaction.conflicts])],
   };
+  if (transaction.changedFields.length > 0) {
+    session.workflowState = reduceWorkflowStateMeta(
+      session.workflowState,
+      {
+        type: "order_mutated",
+        evidence: workflowEvidenceRef(
+          transaction.accepted.map((action) => action.evidence).filter(Boolean).join(" | "),
+        ),
+        changedFields: transaction.changedFields.map(String),
+      },
+      {
+        ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
+        draft: session.order,
+        ...(session.trackingNumber ? { trackingNumber: session.trackingNumber } : {}),
+      },
+    );
+  }
   return transaction;
 }
 
@@ -6147,6 +6245,12 @@ function selectedOrderPriceReply(quantity: SupportedOrderQuantity): string {
 }
 
 function clearOrderDraft(session: DemoSession): void {
+  const hadOrderState = Boolean(
+    session.selectedQuantity ||
+      session.orderId ||
+      session.trackingNumber ||
+      Object.keys(session.order).length > 0,
+  );
   session.order = {};
   session.conversationMemory.phoneHistory = [];
   session.orderCollectionPaused = false;
@@ -6155,6 +6259,17 @@ function clearOrderDraft(session: DemoSession): void {
   delete session.trackingNumber;
   delete session.pendingAction;
   session.freeShippingApproved = false;
+  if (hadOrderState) {
+    session.workflowState = reduceWorkflowStateMeta(
+      session.workflowState,
+      { type: "order_cleared", evidence: "clear_order_draft" },
+      { draft: session.order },
+    );
+  }
+}
+
+function workflowEvidenceRef(value: string): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`;
 }
 
 function applySemanticOrderUpdates(
@@ -6396,6 +6511,87 @@ type AddressUpdate = {
   operation: AddressOperation;
   address?: string;
 };
+
+function commitReconciledObservations(input: {
+  session: DemoSession;
+  projection: DemoSession;
+  candidates: ObservedEntityChanges;
+  raw: string;
+  acceptOrderChanges: boolean;
+}): ObservedEntityChanges {
+  const { session, projection, candidates, raw } = input;
+  session.customerProfile = { ...projection.customerProfile };
+  if (projection.identity.salutation) {
+    session.identity = { ...session.identity, salutation: projection.identity.salutation };
+  }
+
+  const proposed: OrderMutationAction[] = [];
+  if (projection.order.phone && projection.order.phone !== session.order.phone) {
+    proposed.push({ type: "set_phone", phone: projection.order.phone, evidence: raw });
+  }
+  if (
+    projection.order.recipientName &&
+    projection.order.recipientName !== session.order.recipientName
+  ) {
+    proposed.push({
+      type: "set_recipient_name",
+      recipientName: projection.order.recipientName,
+      evidence: raw,
+    });
+  }
+  if (
+    projection.order.legacyAddress &&
+    projection.order.legacyAddress !== session.order.legacyAddress
+  ) {
+    proposed.push({
+      type: "set_address",
+      address: projection.order.legacyAddress,
+      operation: "replace",
+      evidence: raw,
+    });
+  }
+  if (
+    projection.order.deliveryNote &&
+    projection.order.deliveryNote !== session.order.deliveryNote
+  ) {
+    proposed.push({
+      type: "set_delivery_note",
+      deliveryNote: projection.order.deliveryNote,
+      evidence: raw,
+    });
+  }
+
+  const acceptedChanges: ObservedEntityChanges = {};
+  if (input.acceptOrderChanges && proposed.length > 0) {
+    const transaction = commitOrderMutations(session, proposed);
+    if (transaction.changedFields.includes("phone") && session.order.phone) {
+      acceptedChanges.phone = session.order.phone;
+    }
+    if (transaction.changedFields.includes("recipientName") && session.order.recipientName) {
+      acceptedChanges.recipientName = session.order.recipientName;
+    }
+    if (transaction.changedFields.includes("deliveryNote") && session.order.deliveryNote) {
+      acceptedChanges.deliveryNote = session.order.deliveryNote;
+    }
+    if (transaction.changedFields.includes("legacyAddress") && session.order.legacyAddress) {
+      rememberLocation(session, session.order.legacyAddress, raw);
+      acceptedChanges.address = session.order.legacyAddress;
+    }
+  } else if (proposed.length > 0) {
+    session.orderTransactionTrace = {
+      acceptedActions: [],
+      changedFields: [],
+      conflicts: [
+        `observation_rejected_by_semantic_plan:${[...new Set(proposed.map((action) => action.type))].join(",")}`,
+      ],
+    };
+  }
+  if (candidates.location && (input.acceptOrderChanges || proposed.length === 0)) {
+    rememberLocation(session, candidates.location, raw);
+    acceptedChanges.location = candidates.location;
+  }
+  return acceptedChanges;
+}
 
 function observeGlobalEntities(
   session: DemoSession,

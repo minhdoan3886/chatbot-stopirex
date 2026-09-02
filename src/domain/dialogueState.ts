@@ -31,6 +31,7 @@ export type DialogueState = {
   correctionContext?: {
     field: string;
     previousValue: unknown;
+    newValue?: unknown;
     evidence: string;
   };
 };
@@ -54,6 +55,7 @@ export type DialogueStateEvent =
       type: "correction_recorded";
       field: string;
       previousValue: unknown;
+      newValue?: unknown;
       evidence: string;
     }
   | { type: "reset" };
@@ -79,6 +81,7 @@ export function reduceDialogueState(current: DialogueState, event: DialogueState
       correctionContext: {
         field: event.field,
         previousValue: event.previousValue,
+        ...(event.newValue !== undefined ? { newValue: event.newValue } : {}),
         evidence: event.evidence,
       },
     };

@@ -174,14 +174,14 @@ export function reconcileConversationActions(input: {
   const llmProposedQuantity = candidates.some(
     (action) => action.type === "select_quantity" && action.source === "llm",
   );
+  const explicitDeclineEvidence = extractExplicitDeclineEvidence(raw);
   if (
-    explicitQuantity &&
-    !llmProposedQuantity &&
-    (!llmOwnsCurrentTurn ||
-      input.semantic.intent === "buying" ||
-      input.semantic.intent === "order_support" ||
-      Boolean(reconciledCareIssue && currentCareScope))
+    explicitDeclineEvidence &&
+    !candidates.some((action) => action.type === "decline_purchase")
   ) {
+    candidates.push(baseAction("decline_purchase", "guardrail", [explicitDeclineEvidence]));
+  }
+  if (explicitQuantity && !llmProposedQuantity) {
     candidates.push({
       ...baseAction("select_quantity", "guardrail", [quantityEvidence(raw)]),
       quantity: explicitQuantity,
@@ -251,21 +251,6 @@ export function reconcileConversationActions(input: {
 
   const accepted: ConversationAction[] = [];
   const rejected: RejectedConversationAction[] = [];
-  const llmReportedPurchaseConflict =
-    candidates.some(
-      (action) =>
-        action.type === "select_quantity" &&
-        action.source === "llm" &&
-        action.confidence >= 0.85 &&
-        hasGroundedEvidence(action, raw),
-    ) &&
-    candidates.some(
-      (action) =>
-        action.type === "decline_purchase" &&
-        action.source === "llm" &&
-        action.confidence >= 0.85 &&
-        hasGroundedEvidence(action, raw),
-    );
   const groundedLlmPurchaseProposition = candidates.some(
     (action) =>
       action.type === "select_quantity" &&
@@ -342,11 +327,6 @@ export function reconcileConversationActions(input: {
       candidate.type === "select_quantity" ||
       candidate.type === "update_order" ||
       candidate.type === "continue_order_collection";
-    const semanticAllowsOrderExecution =
-      input.semantic.intent === "buying" ||
-      input.semantic.intent === "order_support" ||
-      Boolean(reconciledCareIssue && currentCareScope) ||
-      (input.semantic.intent === "decline_purchase" && llmReportedPurchaseConflict);
     const propositionAllowsOrderExecution =
       (candidate.type === "select_quantity" &&
         (Boolean(trustedLlmQuantity) ||
@@ -366,7 +346,6 @@ export function reconcileConversationActions(input: {
     if (
       llmOwnsCurrentTurn &&
       isOrderExecution &&
-      !semanticAllowsOrderExecution &&
       !propositionAllowsOrderExecution
     ) {
       rejected.push({ action: candidate, reason: "llm_authority_conflict" });
@@ -465,13 +444,30 @@ export function reconcileConversationActions(input: {
   const hasDecline = hasAction(accepted, "decline_purchase");
   const hasSelect = hasAction(accepted, "select_quantity");
   if (hasDecline && hasSelect) {
-    rejectAccepted(
-      accepted,
-      rejected,
-      (action) => action.type === "select_quantity" || action.type === "continue_order_collection",
-      "conflicting_purchase_decision",
-    );
-    conflicts.push("Tin nhắn vừa có tín hiệu mua vừa có tín hiệu từ chối mua.");
+    const latestDecision = latestPurchaseDecision(text);
+    if (latestDecision === "decline") {
+      rejectAccepted(
+        accepted,
+        rejected,
+        (action) => action.type === "select_quantity" || action.type === "continue_order_collection",
+        "conflicting_purchase_decision",
+      );
+    } else if (latestDecision === "select") {
+      rejectAccepted(
+        accepted,
+        rejected,
+        (action) => action.type === "decline_purchase",
+        "conflicting_purchase_decision",
+      );
+    } else {
+      rejectAccepted(
+        accepted,
+        rejected,
+        (action) => action.type === "select_quantity" || action.type === "continue_order_collection",
+        "conflicting_purchase_decision",
+      );
+      conflicts.push("Tin nhắn vừa có tín hiệu mua vừa có tín hiệu từ chối mua.");
+    }
   }
 
   accepted.sort((a, b) => actionPriority(a) - actionPriority(b));
@@ -885,6 +881,41 @@ function explicitQuantityAppears(text: string, quantity: SupportedOrderQuantity)
     return true;
   }
   return new RegExp(`(?:${quantity}|${words[quantity]})\\s+lo\\b`).test(text);
+}
+
+function extractExplicitDeclineEvidence(raw: string): string | undefined {
+  const normalized = normalizeEvidence(raw);
+  const match = normalized.match(
+    /(?:thoi\s+)?(?:khong|ko|k)\s+(?:mua|lay|dat|chot)(?:\s+(?:hang|don))?(?:\s+nua)?|(?:thoi\s+)?huy\s+(?:mua|lay|dat|chot|don)(?:\s+nua)?/u,
+  );
+  return match?.[0];
+}
+
+function latestPurchaseDecision(text: string): "select" | "decline" | undefined {
+  const decisionPatterns: ReadonlyArray<{
+    kind: "select" | "decline";
+    pattern: RegExp;
+  }> = [
+    {
+      kind: "select",
+      pattern:
+        /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:(?:[1-5]|mot|hai|ba|bon|nam)\s+lo|combo)\b/gu,
+    },
+    {
+      kind: "decline",
+      pattern:
+        /(?:thoi\s+)?(?:khong|ko|k)\s+(?:mua|lay|dat|chot)(?:\s+(?:hang|don))?(?:\s+nua)?|(?:thoi\s+)?huy\s+(?:mua|lay|dat|chot|don)(?:\s+nua)?/gu,
+    },
+  ];
+  let latest: { kind: "select" | "decline"; index: number } | undefined;
+  for (const { kind, pattern } of decisionPatterns) {
+    for (const match of text.matchAll(pattern)) {
+      if (!latest || (match.index ?? -1) > latest.index) {
+        latest = { kind, index: match.index ?? -1 };
+      }
+    }
+  }
+  return latest?.kind;
 }
 
 function actionPriority(action: ConversationAction): number {

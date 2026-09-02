@@ -46,4 +46,9 @@ test("audit transaction luôn có mutation receipt khi order fields thay đổi"
   assert.ok(audit);
   assert.ok(Array.isArray(audit.acceptedOrderMutations));
   assert.ok((audit.acceptedOrderMutations as unknown[]).length > 0);
+  const mutation = (audit.acceptedOrderMutations as Array<Record<string, unknown>>)[0];
+  assert.equal(mutation?.source, "reconciled_order_reducer");
+  assert.match(String(mutation?.evidenceRef), /^sha256:/u);
+  assert.ok("from" in (mutation ?? {}));
+  assert.ok("toMasked" in (mutation ?? {}));
 });

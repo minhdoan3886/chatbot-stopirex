@@ -80,6 +80,29 @@ export class MetaInboundProcessor {
     status: "ignored" | "ingested" | "replied" | "paused" | "superseded";
     replyCount: number;
   }> {
+    try {
+      return await this.processBatchOnce(jobs);
+    } catch (error) {
+      if (!(error instanceof Error) || error.name !== "ConversationStateConflictError" || jobs.length === 0) {
+        throw error;
+      }
+      const first = jobs[0]!;
+      this.options.chat.discardSession(`${first.pageId}:${first.senderId}`);
+      this.options.logger.log("warn", "conversation_state_conflict_retry", {
+        traceId: first.traceId,
+        pageId: first.pageId,
+        attempt: 1,
+      });
+      // Inbound persistence and outbound planning are idempotent. Reload the
+      // latest committed state and reconcile the same evidence exactly once.
+      return this.processBatchOnce(jobs);
+    }
+  }
+
+  private async processBatchOnce(jobs: readonly MetaInboundJob[]): Promise<{
+    status: "ignored" | "ingested" | "replied" | "paused" | "superseded";
+    replyCount: number;
+  }> {
     if (jobs.length === 0) return { status: "ignored", replyCount: 0 };
     const first = jobs[0]!;
     if (

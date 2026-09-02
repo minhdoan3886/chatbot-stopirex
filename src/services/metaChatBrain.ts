@@ -28,8 +28,10 @@ import type { SupportedOrderQuantity } from "../domain/conversationActions.js";
 import { conversationSkills } from "../domain/chatSkills.js";
 import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
 import {
+  assertCanonicalClaimsSupported,
   assertCanonicalFactApplicability,
   resolveCanonicalKnowledge,
+  type CanonicalAnswerFact,
   type CanonicalKnowledgeResolution,
 } from "../domain/knowledgeResolver.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
@@ -129,10 +131,24 @@ export class MetaChatBrain {
             limit: 4,
           });
       knowledge = knowledgeContexts(matches);
+      canonicalResolution = resolveCanonicalKnowledge({
+        query: input.text,
+        matches,
+      });
+      let routingContract = buildWorkflowResponseContract({
+        state: before,
+        customerMessage: input.text,
+        authoritativeReply: "",
+        canonicalFacts: canonicalResolution.facts,
+        canonicalConflicts: canonicalResolution.conflicts,
+      });
       let rawLlmResult = await this.llm.interpret({
         customerMessage: input.text,
         state: before,
         knowledge,
+        canonicalFacts: canonicalResolution.facts,
+        canonicalConflicts: canonicalResolution.conflicts,
+        responseContract: routingContract,
       });
       let knowledgeRetry = false;
       const semanticQueries = semanticKnowledgeQueries(rawLlmResult);
@@ -155,10 +171,25 @@ export class MetaChatBrain {
         if (mergedIds !== previousIds) {
           matches = mergedMatches;
           knowledge = knowledgeContexts(matches);
+          canonicalResolution = resolveCanonicalKnowledge({
+            query: input.text,
+            matches,
+            ...(rawLlmResult.intent ? { intent: rawLlmResult.intent } : {}),
+          });
+          routingContract = buildWorkflowResponseContract({
+            state: before,
+            customerMessage: input.text,
+            authoritativeReply: "",
+            canonicalFacts: canonicalResolution.facts,
+            canonicalConflicts: canonicalResolution.conflicts,
+          });
           rawLlmResult = await this.llm.interpret({
             customerMessage: input.text,
             state: before,
             knowledge,
+            canonicalFacts: canonicalResolution.facts,
+            canonicalConflicts: canonicalResolution.conflicts,
+            responseContract: routingContract,
           });
           knowledgeRetry = true;
         }
@@ -261,6 +292,7 @@ export class MetaChatBrain {
     });
     const responseContract = buildWorkflowResponseContract({
       state: base.state,
+      customerMessage: input.text,
       authoritativeReply: base.reply,
       canonicalFacts: canonicalResolution.facts,
       canonicalConflicts: canonicalResolution.conflicts,
@@ -354,6 +386,7 @@ export class MetaChatBrain {
     let composed = this.llm.adoptInterpretedDraft({
       customerMessage: input.text,
       ...(interpreted.draftReply ? { draftReply: interpreted.draftReply } : {}),
+      ...(interpreted.draftBubbles ? { draftBubbles: interpreted.draftBubbles } : {}),
       baseReply: base.reply,
       baseReplies: base.replies,
       actions: interpreted.actions ?? [],
@@ -373,6 +406,7 @@ export class MetaChatBrain {
           interpreted.actions?.some((action) => action.type === "answer_question"),
         ),
       softStylePolicy: "warn",
+      responseContract,
     });
     if (composed.status !== "enhanced" && interpreted.draftReply?.trim()) {
       composed = await this.llm.repairInterpretedDraft({
@@ -385,6 +419,7 @@ export class MetaChatBrain {
         ...(base.state.activeSkill ? { skillId: base.state.activeSkill } : {}),
         knowledge,
         ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
+        responseContract,
       });
       if (composed.status === "enhanced") compositionSource = "llm_repair";
     }
@@ -436,6 +471,7 @@ export class MetaChatBrain {
         ...(base.state.activeSkill ? { skillId: base.state.activeSkill } : {}),
         knowledge,
         ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
+        responseContract,
       });
       if (repaired.status === "enhanced") {
         const repairedCoverage = assessQuestionCoverage({
@@ -612,6 +648,11 @@ export class MetaChatBrain {
         authoritativeReply: base.reply,
         resolution: canonicalResolution,
       });
+      assertCanonicalClaimsSupported({
+        reply: composed.reply,
+        authoritativeReply: base.reply,
+        resolution: canonicalResolution,
+      });
     } catch (error) {
       const reason = error instanceof Error ? error.message : "fact_applicability_guard";
       const repaired = await this.llm.repairInterpretedDraft({
@@ -624,10 +665,16 @@ export class MetaChatBrain {
         ...(base.state.activeSkill ? { skillId: base.state.activeSkill } : {}),
         knowledge,
         ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
+        responseContract,
       });
       if (repaired.status === "enhanced") {
         try {
           assertCanonicalFactApplicability({
+            reply: repaired.reply,
+            authoritativeReply: base.reply,
+            resolution: canonicalResolution,
+          });
+          assertCanonicalClaimsSupported({
             reply: repaired.reply,
             authoritativeReply: base.reply,
             resolution: canonicalResolution,
@@ -660,7 +707,7 @@ export class MetaChatBrain {
     const responseCharacterBudget = activeSkill?.maxCharacters ?? 360;
     const responseBubbleBudget = activeSkill?.maxBubbles ?? 2;
     let governed = governCustomerResponse({
-      replies: [composed.reply],
+      replies: composed.replies ?? [composed.reply],
       answeredTopics: base.state.answeredTopics,
       previouslyAskedTopics: base.state.askedTopics,
       maxCharacters: responseCharacterBudget,
@@ -687,7 +734,7 @@ export class MetaChatBrain {
       // Never trade correctness for the character budget. If compaction drops
       // a customer topic, retain the full answer and only merge bubbles.
       const untruncated = governCustomerResponse({
-        replies: [composed.reply],
+        replies: composed.replies ?? [composed.reply],
         answeredTopics: base.state.answeredTopics,
         previouslyAskedTopics: base.state.askedTopics,
         maxBubbles: 2,
@@ -729,7 +776,15 @@ export class MetaChatBrain {
         responseGuardVerdict({ reason: "response_state_mismatch", source: "workflow_safe_fallback" }),
       );
     }
-    const state = this.chat.replaceLatestAssistantTurns(input.sessionId, base.replies, governed.replies);
+    this.chat.replaceLatestAssistantTurns(input.sessionId, base.replies, governed.replies);
+    const state = this.chat.recordCanonicalAnswerFacts(
+      input.sessionId,
+      canonicalFactIdsMentioned(
+        governed.replies.join("\n\n"),
+        canonicalResolution.facts,
+        responseContract.factPolicy.mustIncludeFacts.map((fact) => fact.id),
+      ),
+    );
     return deliver(
       {
         ...base,
@@ -797,6 +852,36 @@ export class MetaChatBrain {
     });
     return delivered;
   }
+}
+
+function canonicalFactIdsMentioned(
+  reply: string,
+  facts: readonly CanonicalAnswerFact[],
+  requiredIds: readonly string[],
+): string[] {
+  const required = new Set(requiredIds);
+  const normalizedReply = normalizeFactText(reply);
+  const replyTokens = new Set(normalizedReply.split(/[^a-z0-9]+/u).filter((token) => token.length >= 2));
+  return facts
+    .filter((fact) => {
+      if (required.has(fact.id)) return true;
+      if (typeof fact.value === "number" && normalizedReply.includes(String(fact.value))) return true;
+      const tokens = normalizeFactText(fact.text)
+        .split(/[^a-z0-9]+/u)
+        .filter((token) => token.length >= 3 && !["stopirex", "san", "pham", "minh"].includes(token));
+      return tokens.filter((token) => replyTokens.has(token)).length >= 2;
+    })
+    .map((fact) => fact.id)
+    .slice(0, 24);
+}
+
+function normalizeFactText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/giu, "d")
+    .toLocaleLowerCase("vi-VN")
+    .replace(/(\d{1,3})(?:[.,](\d{3}))+/gu, (match) => match.replace(/[.,]/gu, ""));
 }
 
 /**

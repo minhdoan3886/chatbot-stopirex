@@ -31,13 +31,16 @@ import {
   assertRequiredResponseFactsPresent,
   assertSelectedCtaAllowed,
   extractRequiredResponseFacts,
+  type WorkflowResponseContract,
 } from "../domain/responseContract.js";
+import type { CanonicalAnswerFact, CanonicalFactConflict } from "../domain/knowledgeResolver.js";
 import type { IssueType } from "../domain/customerCare.js";
 import type { FollowupContextSnapshot, FollowupStage } from "../domain/followup.js";
 import type { DemoChatState } from "./demoChat.js";
 
 export type CodexLlmResult = {
   reply: string;
+  replies?: string[];
   status: "enhanced" | "fallback" | "skipped" | "unavailable";
   latencyMs: number;
   reason?: string;
@@ -429,6 +432,9 @@ export class CodexLlmBridge {
     customerMessage: string;
     state: DemoChatState;
     knowledge?: readonly ApprovedKnowledgeContext[];
+    canonicalFacts?: readonly CanonicalAnswerFact[];
+    canonicalConflicts?: readonly CanonicalFactConflict[];
+    responseContract?: WorkflowResponseContract;
   }): Promise<CodexInterpretResult> {
     const startedAt = Date.now();
     if (!this.enabled) return this.interpretResult({ slots: {} }, "unavailable", startedAt, "disabled");
@@ -436,7 +442,10 @@ export class CodexLlmBridge {
     const prompt = buildInterpretPromptForDiagnostics(input, this.promptProfile);
     const parseAndValidate = (raw: string): SemanticUnderstanding => {
       const understanding = parseSemanticUnderstanding(raw, { strict: this.strictInterpretOutput });
-      assertSelectedCtaAllowed(understanding, allowedConversationCtas(input.state));
+      assertSelectedCtaAllowed(
+        understanding,
+        input.responseContract?.ctaPolicy.allowed ?? allowedConversationCtas(input.state),
+      );
       return understanding;
     };
     // PII-bearing messages still need semantic interpretation (they often also
@@ -571,6 +580,7 @@ export class CodexLlmBridge {
   adoptInterpretedDraft(input: {
     customerMessage: string;
     draftReply?: string;
+    draftBubbles?: readonly string[];
     baseReply: string;
     baseReplies?: readonly string[];
     actions?: readonly ConversationAction[];
@@ -582,6 +592,7 @@ export class CodexLlmBridge {
     groundingConfidence?: number;
     knowledgeGroundingRequired?: boolean;
     softStylePolicy?: "reject" | "warn";
+    responseContract?: WorkflowResponseContract;
   }): CodexLlmResult {
     const startedAt = Date.now();
     if (!this.enabled) {
@@ -618,7 +629,7 @@ export class CodexLlmBridge {
           : {}),
         required: input.knowledgeGroundingRequired === true,
       });
-      assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
+      if (!input.responseContract) assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
       // Validate claims about executed state before checking conversational
       // wording so false order/handoff assertions keep their precise reason.
       assertActionClaimsGrounded(input.state, reply);
@@ -629,13 +640,18 @@ export class CodexLlmBridge {
         .join("\n");
       assertNoUnapprovedCommerceFacts([input.baseReply, citedKnowledge].filter(Boolean).join("\n"), reply);
       assertCriticalDirectionsPreserved(input.customerMessage, input.baseReply, reply, input.state);
-      assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply, input.state);
+      if (input.responseContract) {
+        assertRequiredResponseFactsPresent(input.responseContract.factPolicy.mustIncludeFacts, reply);
+      } else {
+        assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply, input.state);
+      }
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       assertHelpfulContentFreeReply(input.customerMessage, reply);
       if (input.skillId && !groundedKnowledgeFirst) {
         assertSkillResponseShape(input.skillId, shapedReply);
       }
-      return this.result(reply, "enhanced", startedAt, "single_pass_draft");
+      const bubbles = normalizedDraftBubbles(input.draftBubbles, rawReply, reply);
+      return this.result(reply, "enhanced", startedAt, "single_pass_draft", bubbles);
     } catch (error) {
       const reason =
         error instanceof Error && error.name === "UnsafeClaimError"
@@ -679,6 +695,7 @@ export class CodexLlmBridge {
     skillId?: ConversationSkillId;
     knowledge?: readonly ApprovedKnowledgeContext[];
     knowledgeIds?: readonly string[];
+    responseContract?: WorkflowResponseContract;
   }): Promise<CodexLlmResult> {
     const startedAt = Date.now();
     if (!this.enabled) return this.result(input.baseReply, "unavailable", startedAt, "disabled");
@@ -693,8 +710,12 @@ export class CodexLlmBridge {
       assertNoUnapprovedCommerceFacts([input.baseReply, citedKnowledge].filter(Boolean).join("\n"), reply);
       assertActionClaimsGrounded(input.state, reply);
       assertCurrentPriceStatusGrounded(input.customerMessage, reply);
-      assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
-      assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply, input.state);
+      if (input.responseContract) {
+        assertRequiredResponseFactsPresent(input.responseContract.factPolicy.mustIncludeFacts, reply);
+      } else {
+        assertApprovedPriceCatalogComplete(input.baseReply, reply, input.state);
+        assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply, input.state);
+      }
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       assertHelpfulContentFreeReply(input.customerMessage, reply);
       if (input.skillId && !isApprovedPriceCatalogBase(input.baseReply)) {
@@ -755,12 +776,14 @@ export class CodexLlmBridge {
     status: CodexLlmResult["status"],
     startedAt: number,
     reason?: string,
+    replies?: readonly string[],
   ): CodexLlmResult {
     return {
       reply,
       status,
       latencyMs: Date.now() - startedAt,
       ...(reason ? { reason } : {}),
+      ...(replies?.length ? { replies: [...replies] } : {}),
       model: this.model,
       provider: this.provider,
     };
@@ -1436,9 +1459,11 @@ function buildRepairPrompt(input: {
   skillId?: ConversationSkillId;
   knowledge?: readonly ApprovedKnowledgeContext[];
   knowledgeIds?: readonly string[];
+  responseContract?: WorkflowResponseContract;
 }): string {
   const citedKnowledge = (input.knowledge ?? []).filter((entity) => input.knowledgeIds?.includes(entity.id));
-  const requiredFacts = extractRequiredResponseFacts(input.baseReply);
+  const requiredFacts =
+    input.responseContract?.factPolicy.mustIncludeFacts ?? extractRequiredResponseFacts(input.baseReply);
   return [
     "Bạn là LLM quyết định câu trả lời cuối của chatbot Stopirex. Không dùng công cụ.",
     "Bản nháp của bạn vừa bị lớp hậu kiểm phát hiện vấn đề. Hãy tự sửa; chỉ xuất đúng tin nhắn cuối gửi khách bằng tiếng Việt, không JSON, không markdown và không giải thích lỗi nội bộ.",
@@ -1453,6 +1478,8 @@ function buildRepairPrompt(input: {
     `REJECTED DRAFT: ${JSON.stringify(input.rejectedDraft)}`,
     `VALIDATION FEEDBACK: ${JSON.stringify(input.violations)}`,
     `APPROVED KNOWLEDGE: ${JSON.stringify(citedKnowledge)}`,
+    `AVAILABLE CANONICAL FACTS: ${JSON.stringify(input.responseContract?.factPolicy.availableFacts ?? [])}`,
+    `PROHIBITED CLAIM KEYS: ${JSON.stringify(input.responseContract?.factPolicy.mustNotClaim ?? [])}`,
     `EXECUTED ACTIONS: ${JSON.stringify(input.actions ?? [])}`,
     `CURRENT STATE: ${JSON.stringify({
       selectedQuantity: input.state.selectedQuantity ?? null,
@@ -1536,6 +1563,9 @@ function buildInterpretPrompt(input: {
   customerMessage: string;
   state: DemoChatState;
   knowledge?: readonly ApprovedKnowledgeContext[];
+  canonicalFacts?: readonly CanonicalAnswerFact[];
+  canonicalConflicts?: readonly CanonicalFactConflict[];
+  responseContract?: WorkflowResponseContract;
 }): string {
   return [
     "Bạn là Routing Agent trung tâm của chatbot Stopirex. Không dùng công cụ.",
@@ -1660,6 +1690,9 @@ function buildInterpretPrompt(input: {
     `Bước hiện tại: ${input.state.consultationStage}`,
     `Dữ liệu đã có: ${JSON.stringify(input.state.slots)}`,
     `Kho tri thức được duyệt liên quan: ${JSON.stringify(input.knowledge ?? [])}`,
+    `Dữ kiện canonical áp dụng cho lượt này: ${JSON.stringify(input.canonicalFacts ?? [])}`,
+    `Xung đột dữ kiện phải tránh tuyên bố: ${JSON.stringify(input.canonicalConflicts ?? [])}`,
+    `Chính sách CTA của workflow: ${JSON.stringify(input.responseContract?.ctaPolicy ?? null)}`,
     `Các lượt chat gần nhất: ${JSON.stringify(promptConversationMemory(input.state))}`,
     `Tin khách: ${JSON.stringify(input.customerMessage)}`,
   ].join("\n");
@@ -1670,6 +1703,9 @@ export function buildInterpretPromptForDiagnostics(
     customerMessage: string;
     state: DemoChatState;
     knowledge?: readonly ApprovedKnowledgeContext[];
+    canonicalFacts?: readonly CanonicalAnswerFact[];
+    canonicalConflicts?: readonly CanonicalFactConflict[];
+    responseContract?: WorkflowResponseContract;
   },
   profile: LlmPromptProfile = "legacy",
 ): string {
@@ -1680,6 +1716,9 @@ function buildCompactInterpretPrompt(input: {
   customerMessage: string;
   state: DemoChatState;
   knowledge?: readonly ApprovedKnowledgeContext[];
+  canonicalFacts?: readonly CanonicalAnswerFact[];
+  canonicalConflicts?: readonly CanonicalFactConflict[];
+  responseContract?: WorkflowResponseContract;
 }): string {
   const state = {
     stage: input.state.consultationStage,
@@ -1722,7 +1761,10 @@ function buildCompactInterpretPrompt(input: {
     ...compactExamplesFor(input.customerMessage, input.state),
     `STATE: ${JSON.stringify(state)}`,
     `CONVERSATION_MEMORY: ${JSON.stringify(promptArgumentMemory(input.state))}`,
-    `ALLOWED_CTAS: ${JSON.stringify(allowedConversationCtas(input.state))}`,
+    `CTA_POLICY: ${JSON.stringify(input.responseContract?.ctaPolicy ?? null)}`,
+    `ALLOWED_CTAS: ${JSON.stringify(input.responseContract?.ctaPolicy.allowed ?? allowedConversationCtas(input.state))}`,
+    `CANONICAL_FACTS: ${JSON.stringify(input.canonicalFacts ?? [])}`,
+    `CANONICAL_CONFLICTS: ${JSON.stringify(input.canonicalConflicts ?? [])}`,
     `KNOWLEDGE: ${JSON.stringify(input.knowledge ?? [])}`,
     `HISTORY: ${JSON.stringify(promptConversationMemory(input.state))}`,
     `MESSAGE: ${JSON.stringify(input.customerMessage)}`,
@@ -2687,6 +2729,22 @@ function assertRequiredFactsForCustomerTurn(
     wrapped.name = "FactPreservationError";
     throw wrapped;
   }
+}
+
+function normalizedDraftBubbles(
+  draftBubbles: readonly string[] | undefined,
+  rawReply: string,
+  renderedReply: string,
+): string[] | undefined {
+  if (!draftBubbles || draftBubbles.length < 1 || draftBubbles.length > 2) return undefined;
+  const bubbles = draftBubbles.map((bubble) => bubble.trim()).filter(Boolean);
+  if (bubbles.length !== draftBubbles.length) return undefined;
+  const normalize = (value: string) => value.replace(/\s+/gu, " ").trim();
+  // Execution receipts may legitimately extend the semantic draft. In that
+  // case the governor may compose bubbles later; never return stale bubbles.
+  if (normalize(rawReply) !== normalize(renderedReply)) return undefined;
+  if (normalize(bubbles.join(" ")) !== normalize(rawReply)) return undefined;
+  return bubbles;
 }
 
 function isApprovedPriceCatalogBase(value: string): boolean {

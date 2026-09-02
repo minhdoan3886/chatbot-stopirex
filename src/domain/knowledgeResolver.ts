@@ -49,6 +49,39 @@ export class FactApplicabilityError extends Error {
   }
 }
 
+export class UnsupportedCanonicalClaimError extends Error {
+  constructor(readonly claim: string) {
+    super(`unsupported_claim_guard:${claim.slice(0, 120)}`);
+    this.name = "UnsupportedCanonicalClaimError";
+  }
+}
+
+/**
+ * Closed-world guard for product claims. It does not try to rewrite copy; it
+ * only rejects a factual product sentence that has no material support in any
+ * canonical fact applicable to this turn (or in an executed workflow receipt).
+ */
+export function assertCanonicalClaimsSupported(input: {
+  reply: string;
+  authoritativeReply: string;
+  resolution: CanonicalKnowledgeResolution;
+}): void {
+  const support = [
+    ...input.resolution.facts.map((fact) => fact.text),
+    input.authoritativeReply,
+  ].filter(Boolean);
+  for (const sentence of input.reply.split(/(?<=[.!?])\s+|\n+/u).map((item) => item.trim())) {
+    if (!isProductClaimSentence(sentence)) continue;
+    const claimTokens = materialClaimTokens(sentence);
+    if (claimTokens.length < 2) continue;
+    const supported = support.some((source) => {
+      const sourceTokens = new Set(materialClaimTokens(source));
+      return claimTokens.filter((token) => sourceTokens.has(token)).length >= 2;
+    });
+    if (!supported) throw new UnsupportedCanonicalClaimError(sentence);
+  }
+}
+
 /** Ensures commerce numbers are either canonical or an explicit workflow-derived value. */
 export function assertCanonicalFactApplicability(input: {
   reply: string;
@@ -56,10 +89,28 @@ export function assertCanonicalFactApplicability(input: {
   resolution: CanonicalKnowledgeResolution;
 }): void {
   const replyAmounts = vndAmounts(input.reply);
-  if (replyAmounts.length === 0) return;
-  if (input.resolution.unresolvedFacts.includes("price")) {
+  if (input.resolution.unresolvedFacts.includes("price") && replyAmounts.length > 0) {
     throw new FactApplicabilityError("fact_applicability_guard:price_unresolved");
   }
+  if (
+    input.resolution.unresolvedFacts.includes("shipping") &&
+    /miễn phí (?:giao|ship)|freeship|free ship|phí (?:giao|ship)/iu.test(input.reply)
+  ) {
+    throw new FactApplicabilityError("fact_applicability_guard:shipping_unresolved");
+  }
+  if (
+    input.resolution.unresolvedFacts.includes("gift") &&
+    /quà|tặng|khuyến mãi|ưu đãi/iu.test(input.reply)
+  ) {
+    throw new FactApplicabilityError("fact_applicability_guard:gift_unresolved");
+  }
+  for (const conflict of input.resolution.conflicts) {
+    const numericValues = conflict.values.filter((value): value is number => typeof value === "number");
+    if (numericValues.some((value) => replyAmounts.includes(value))) {
+      throw new FactApplicabilityError(`fact_applicability_guard:conflicting_fact:${conflict.key}`);
+    }
+  }
+  if (replyAmounts.length === 0) return;
   const allowed = new Set<number>([
     ...input.resolution.facts
       .filter((fact) => fact.kind === "price" && typeof fact.value === "number")
@@ -253,4 +304,20 @@ function vndAmounts(value: string): number[] {
   return [...value.matchAll(/(\d{1,3}(?:\.\d{3})+)\s*đ/gu)]
     .map((match) => Number(match[1]?.replace(/\./gu, "")))
     .filter(Number.isFinite);
+}
+
+function isProductClaimSentence(value: string): boolean {
+  if (/[?？]$/u.test(value)) return false;
+  const normalized = normalize(value);
+  const hasProductSubject = /\b(?:stopirex|san pham|lan nach|sua tam|body wash|cong thuc|hoat chat)\b/u.test(normalized);
+  const hasClaimPredicate = /\b(?:co|khong|giup|ho tro|giam|kiem soat|ngan|chua|tri|lam|dung|lan|boi|tham|gay|duy tri|bao ve)\b/u.test(normalized);
+  return hasProductSubject && hasClaimPredicate;
+}
+
+function materialClaimTokens(value: string): string[] {
+  const stop = new Set([
+    "stopirex", "san", "pham", "minh", "anh", "chi", "em", "da", "de", "va", "la", "nay",
+    "do", "mot", "cac", "cho", "khi", "thi", "voi", "the", "a", "nhe", "giup", "ho", "tro",
+  ]);
+  return [...new Set(normalize(value).split(/[^a-z0-9]+/u).filter((token) => token.length >= 2 && !stop.has(token)))];
 }

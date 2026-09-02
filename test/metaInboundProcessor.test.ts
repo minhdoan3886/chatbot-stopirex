@@ -31,6 +31,7 @@ function fixture(options: {
   profileName?: string;
   attribution?: boolean;
   forceBrainReply?: string;
+  stateConflictOnce?: boolean;
 }) {
   const sent: string[] = [];
   const processed: string[] = [];
@@ -56,6 +57,7 @@ function fixture(options: {
   let sendAttempts = 0;
   let cachedDisplayName: string | undefined;
   let profileRequests = 0;
+  let commitAttempts = 0;
   const profileName = options.profileName;
   const store: MetaInboundStore = {
     async ensureMessengerConversation(input) {
@@ -82,6 +84,12 @@ function fixture(options: {
       return input.expectedStateVersion + 1;
     },
     async commitConversationTurn(input) {
+      commitAttempts += 1;
+      if (options.stateConflictOnce && commitAttempts === 1) {
+        const error = new Error("conversation_state_conflict");
+        error.name = "ConversationStateConflictError";
+        throw error;
+      }
       runtimeUpdates.push(input);
       const plan = {
         outboxId: "outbox-1",
@@ -202,6 +210,9 @@ function fixture(options: {
     followupCancellations,
     inboxPushes,
     attributionTouches,
+    get commitAttempts() {
+      return commitAttempts;
+    },
     get profileRequests() {
       return profileRequests;
     },
@@ -236,6 +247,16 @@ test("Meta inbound chỉ lưu dữ liệu khi công tắc gửi thật đang t�
   assert.deepEqual(result, { status: "ingested", replyCount: 0 });
   assert.deepEqual(context.sent, []);
   assert.deepEqual(context.processed, ["message-1"]);
+});
+
+test("Meta inbound reload state và reconcile đúng một lần khi optimistic commit xung đột", async () => {
+  const context = fixture({ live: true, stateConflictOnce: true });
+  const result = await context.processor.processBatch([job({ text: "Giá bao nhiêu?" })]);
+
+  assert.equal(context.commitAttempts, 2);
+  assert.equal(result.status, "replied");
+  assert.equal(context.sent.length, result.replyCount);
+  assert.ok(result.replyCount > 0);
 });
 
 test("Meta inbound ghi attribution trước cả khi công tắc gửi phản hồi đang tắt", async () => {

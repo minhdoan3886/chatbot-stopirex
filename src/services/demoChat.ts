@@ -223,6 +223,9 @@ export type OrderTransactionTrace = {
   acceptedMutations?: Array<{
     type: OrderMutationAction["type"];
     evidenceRef: string;
+    source: "reconciled_order_reducer";
+    from?: unknown;
+    toMasked?: unknown;
   }>;
   changedFields: string[];
   conflicts: string[];
@@ -2547,6 +2550,22 @@ export class DemoChatService {
     return stateOf(session);
   }
 
+  recordCanonicalAnswerFacts(
+    sessionId: string | undefined,
+    factIds: readonly string[],
+  ): DemoChatState {
+    const session = this.getOrCreate(sessionId);
+    if (factIds.length === 0) return stateOf(session);
+    session.dialogueState = {
+      ...session.dialogueState,
+      version: session.dialogueState.version + 1,
+      recentlyAnsweredFactIds: [
+        ...new Set([...session.dialogueState.recentlyAnsweredFactIds, ...factIds]),
+      ].slice(-24),
+    };
+    return stateOf(session);
+  }
+
   replaceLatestAssistantTurnsAndPauseForCoverage(
     sessionId: string | undefined,
     previousReplies: readonly string[],
@@ -2800,8 +2819,7 @@ export class DemoChatService {
     const semanticDecision = session.lastDecision?.semantic;
     const llmOwnsCta =
       semanticDecision?.status === "interpreted" &&
-      Boolean(semanticDecision.selectedCtaId) &&
-      (semanticDecision.selectedCtaId !== "none" || !nextBestAction.prompt);
+      semanticDecision.selectedCtaId !== undefined;
     const semanticCta =
       llmOwnsCta && semanticDecision.selectedCtaId !== "none"
         ? semanticDecision.ctaText?.trim()
@@ -6319,6 +6337,9 @@ function commitOrderMutations(
       ...transaction.accepted.map((action) => ({
         type: action.type,
         evidenceRef: workflowEvidenceRef(action.evidence),
+        source: "reconciled_order_reducer" as const,
+        from: maskedOrderMutationValue(action, transaction.before),
+        toMasked: maskedOrderMutationValue(action, transaction.after),
       })),
     ],
     changedFields: [
@@ -6343,7 +6364,50 @@ function commitOrderMutations(
       },
     );
   }
+  if (transaction.accepted.some((action) => action.type === "confirm_order")) {
+    session.workflowState = reduceWorkflowStateMeta(
+      session.workflowState,
+      { type: "order_submitted", evidence: workflowEvidenceRef("order_confirmation_committed") },
+      {
+        ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
+        draft: session.order,
+        ...(session.trackingNumber ? { trackingNumber: session.trackingNumber } : {}),
+      },
+    );
+    if (!session.trackingNumber) {
+      session.workflowState = reduceWorkflowStateMeta(
+        session.workflowState,
+        { type: "tracking_pending", evidence: workflowEvidenceRef("awaiting_tracking_number") },
+        {
+          ...(session.selectedQuantity ? { selectedQuantity: session.selectedQuantity } : {}),
+          draft: session.order,
+        },
+      );
+    }
+  }
   return transaction;
+}
+
+function maskedOrderMutationValue(
+  action: OrderMutationAction,
+  state: { selectedQuantity?: SupportedOrderQuantity; order: OrderDraft },
+): unknown {
+  switch (action.type) {
+    case "set_quantity":
+      return state.selectedQuantity ?? null;
+    case "set_phone": {
+      const phone = state.order.phone;
+      return phone ? `${phone.slice(0, 4)}***${phone.slice(-3)}` : null;
+    }
+    case "set_recipient_name":
+      return state.order.recipientName ? "[recipient_name]" : null;
+    case "set_address":
+      return state.order.legacyAddress ? "[delivery_address]" : null;
+    case "set_delivery_note":
+      return state.order.deliveryNote ? "[delivery_note]" : null;
+    case "confirm_order":
+      return state.order.customerConfirmedAt ? "[confirmed_at]" : null;
+  }
 }
 
 function approveSingleShipping(session: DemoSession): void {

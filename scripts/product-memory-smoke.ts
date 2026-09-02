@@ -60,6 +60,18 @@ const scenarios: SmokeScenario[] = [
       "Vậy cứ để số mới nhé",
     ],
   },
+  {
+    id: 3,
+    name: "Vị khách lan man, hay đổi ý",
+    turns: [
+      "Tư vấn anh lọ lăn nách với. Anh hay đi gặp khách hàng mà mồ hôi nách ướt sũng sơ mi, ngại lắm. Giá rổ sao em?",
+      "Lọ 30ml bé tí này mà giá đắt thế á? Anh mua chai lăn Nivea ở siêu thị to đùng cũng dùng được 3-4 tháng mà có mấy chục cành.",
+      "Thế sáng dậy đánh răng rửa mặt xong thì bôi cái này trước khi mặc áo đi làm đúng không? Áo anh toàn hàng đắt tiền, ố vàng là anh phốt đấy nhé.",
+      "Nghe cũng hợp lý. Thế vợ anh đang bầu 5 tháng thì có dùng ké được không? Dạo này bả cũng hay bị ra mồ hôi trộm nặng mùi.",
+      "Ok thế chốt anh combo 2 lọ luôn, vợ 1 chồng 1. Ship về chung cư HH2A Linh Đàm cho anh nhé.",
+      "À khoan khoan, vợ anh bả bảo sợ bầu không dám bôi lung tung đâu. Thôi lấy cho anh 1 lọ thôi. Sđt anh là 0988777666. Em đọc lại xem nãy giờ chốt cho anh mấy lọ, tiền bao nhiêu, ship về đâu đúng chưa để anh đi họp cái.",
+    ],
+  },
 ];
 
 function stateSnapshot(state: DemoChatState): Record<string, unknown> {

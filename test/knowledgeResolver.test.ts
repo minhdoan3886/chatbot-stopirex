@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertCanonicalClaimsSupported,
   assertCanonicalFactApplicability,
   resolveCanonicalKnowledge,
 } from "../src/domain/knowledgeResolver.js";
@@ -57,6 +58,29 @@ test("resolver tạo fact canonical có provenance và applicability", () => {
   assert.ok(resolved.facts.every((fact) => fact.applicable));
 });
 
+test("closed-world guard chỉ cho phép claim sản phẩm có canonical fact hỗ trợ", () => {
+  const resolution = resolveCanonicalKnowledge({
+    query: "sản phẩm có giảm mồ hôi không",
+    matches: [match({ id: "effect", content: "Stopirex hỗ trợ kiểm soát và giảm tiết mồ hôi." })],
+  });
+  assert.doesNotThrow(() =>
+    assertCanonicalClaimsSupported({
+      reply: "Stopirex hỗ trợ giảm tiết mồ hôi khi dùng đúng hướng dẫn.",
+      authoritativeReply: "",
+      resolution,
+    }),
+  );
+  assert.throws(
+    () =>
+      assertCanonicalClaimsSupported({
+        reply: "Stopirex chữa được ung thư.",
+        authoritativeReply: "",
+        resolution,
+      }),
+    /unsupported_claim_guard/u,
+  );
+});
+
 test("resolver loại record hết hạn và báo conflict giữa hai fact còn hiệu lực", () => {
   const resolved = resolveCanonicalKnowledge({
     query: "giá combo 2 lọ",
@@ -77,6 +101,15 @@ test("resolver loại record hết hạn và báo conflict giữa hai fact còn 
   assert.equal(resolved.conflicts.length, 1);
   assert.deepEqual(resolved.conflicts[0]?.values.sort(), [500000, 510000]);
   assert.ok(!resolved.sourceIds.includes("expired"));
+  assert.throws(
+    () =>
+      assertCanonicalFactApplicability({
+        reply: "Combo 2 lọ 510.000đ.",
+        authoritativeReply: "",
+        resolution: resolved,
+      }),
+    /fact_applicability_guard:conflicting_fact/u,
+  );
 });
 
 test("applicability guard chặn giá LLM tự thêm nhưng cho phép tổng do workflow tính", () => {

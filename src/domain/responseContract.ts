@@ -13,7 +13,7 @@ export type AllowedConversationCta = {
 export type RequiredResponseFact = {
   id: string;
   text: string;
-  kind: "money" | "duration" | "url" | "shipping" | "gift" | "safety" | "order";
+  kind: "money" | "duration" | "url" | "shipping" | "gift" | "safety" | "order" | "claim";
 };
 
 export type ResponseContractState = {
@@ -22,6 +22,7 @@ export type ResponseContractState = {
   selectedQuantity?: number;
   orderMissing: readonly string[];
   pendingAction?: string;
+  orderTransactionTrace?: { changedFields: readonly string[] };
 };
 
 export type WorkflowResponseContract = {
@@ -44,11 +45,20 @@ export type WorkflowResponseContract = {
 
 export function buildWorkflowResponseContract(input: {
   state: ResponseContractState;
+  customerMessage?: string;
   authoritativeReply: string;
   canonicalFacts?: readonly CanonicalAnswerFact[];
   canonicalConflicts?: readonly CanonicalFactConflict[];
 }): WorkflowResponseContract {
-  const mustIncludeFacts = extractRequiredResponseFacts(input.authoritativeReply);
+  const mustIncludeFacts =
+    input.canonicalFacts === undefined && input.customerMessage === undefined
+      ? extractRequiredResponseFacts(input.authoritativeReply)
+      : selectCanonicalRequiredFacts({
+          customerMessage: input.customerMessage ?? "",
+          canonicalFacts: input.canonicalFacts ?? [],
+          authoritativeReply: input.authoritativeReply,
+          requireExecutionReceipt: (input.state.orderTransactionTrace?.changedFields.length ?? 0) > 0,
+        });
   const allowed = allowedConversationCtas(input.state);
   const preferred = preferredConversationCtas(input.state);
   const allCtas = Object.keys(ctaPurposes) as ConversationCtaId[];
@@ -75,6 +85,78 @@ export function buildWorkflowResponseContract(input: {
     // authoritative inputs to validation, never text appended by workflow.
     flexibleSections: ["opening", "explanation", "transition", "cta"],
   };
+}
+
+/**
+ * Product and policy truth comes from canonical knowledge, never from a prose
+ * workflow fallback. The execution receipt is only authoritative for order
+ * fields that were actually committed by the reducer.
+ */
+export function selectCanonicalRequiredFacts(input: {
+  customerMessage: string;
+  canonicalFacts: readonly CanonicalAnswerFact[];
+  authoritativeReply?: string;
+  requireExecutionReceipt?: boolean;
+}): RequiredResponseFact[] {
+  const query = normalizeComparable(input.customerMessage);
+  const asksPrice = /\b(?:gia|combo|bao nhieu tien|tong tien|thanh toan)\b/u.test(query);
+  const asksShipping = /\b(?:ship|giao|van chuyen|freeship|free ship|mien phi giao)\b/u.test(query);
+  const asksDuration = /\b(?:bao lau|may ngay|khi nao|bao gio|tan suat|may lan|thang|gio)\b/u.test(query);
+  const safetyTurn = /\b(?:rat|ngua|do da|kich ung|kho tho|sung moi|sung mat|choang|cap cuu)\b/u.test(query);
+  const requestedQuantity = query.match(/(?:combo|lay|mua|gia)\s*(\d)\s*(?:lo|chai)?/u)?.[1];
+  const asksGift =
+    /\b(?:qua|tang|uu dai|khuyen mai)\b/u.test(query) || (asksPrice && !requestedQuantity);
+  const specificBundle = /body wash|sua tam/u.test(query);
+  const selected: RequiredResponseFact[] = [];
+  const add = (fact: RequiredResponseFact) => {
+    if (!selected.some((item) => item.id === fact.id)) selected.push(fact);
+  };
+
+  for (const fact of input.canonicalFacts) {
+    if (fact.kind === "price" && asksPrice) {
+      if (specificBundle && !/bodywash_bundle/u.test(fact.key)) continue;
+      if (!requestedQuantity && !specificBundle && /\.4_units$|\.5_units$/u.test(fact.key)) continue;
+      if (
+        requestedQuantity &&
+        !fact.key.endsWith(`.${requestedQuantity}_unit`) &&
+        !fact.key.endsWith(`.${requestedQuantity}_units`) &&
+        !(fact.key === "shipping.stopirex.standard_fee" && requestedQuantity === "1")
+      ) continue;
+      if (typeof fact.value === "number") {
+        add({ id: fact.id, kind: "money", text: `${fact.value.toLocaleString("vi-VN")}đ` });
+      }
+    } else if (fact.kind === "shipping" && (asksShipping || asksPrice)) {
+      if (/pricing-approved-options-2026-08:10/u.test(fact.key) && !/mac ca|thuong luong|followup/u.test(query)) continue;
+      if (/bodywash_bundle/u.test(fact.key) && requestedQuantity && !specificBundle) continue;
+      if (fact.value === true) add({ id: fact.id, kind: "shipping", text: "free_shipping" });
+      else add({ id: fact.id, kind: "shipping", text: fact.text });
+    } else if (fact.kind === "gift" && asksGift) {
+      add({ id: fact.id, kind: "gift", text: fact.text });
+    } else if (fact.kind === "duration" && (asksDuration || asksShipping)) {
+      add({ id: fact.id, kind: "duration", text: String(fact.value) });
+    } else if (fact.kind === "safety" && safetyTurn) {
+      for (const safetyFact of extractRequiredResponseFacts(fact.text).filter((item) => item.kind === "safety")) {
+        add({ ...safetyFact, id: `${fact.id}:${safetyFact.id}` });
+      }
+    } else if (
+      fact.kind === "claim" &&
+      asksPrice &&
+      (!requestedQuantity || specificBundle) &&
+      /body wash hien chua ban le/u.test(normalizeComparable(fact.text))
+    ) {
+      add({ id: fact.id, kind: "claim", text: "bodywash_not_sold_separately" });
+    }
+  }
+
+  const authoritativeReply = input.authoritativeReply ?? "";
+  const isOrderReceipt = /người nhận:|SĐT:|địa chỉ:|sản phẩm:|tổng thanh toán:|tình trạng đơn:/iu.test(authoritativeReply);
+  const asksOrderRecap = /\b(?:tong ket|doc lai|xac nhan|kiem tra)\b.{0,35}\bdon\b|\bdon\b.{0,35}\b(?:gom|co|thong tin|dung chua)\b/u.test(query);
+  if (isOrderReceipt && (asksOrderRecap || input.requireExecutionReceipt)) {
+    for (const fact of extractRequiredResponseFacts(authoritativeReply).filter((item) => item.kind === "order" || item.kind === "money")) {
+      add({ ...fact, id: `execution:${fact.id}` });
+    }
+  }
+  return selected;
 }
 
 function preferredConversationCtas(state: ResponseContractState): ConversationCtaId[] {
@@ -230,6 +312,8 @@ export function assertRequiredResponseFactsPresent(
         do_not_reapply: /không (?:lăn|bôi) lại/iu,
       };
       if (safetyPatterns[required]?.test(compactRendered)) continue;
+    } else if (fact.kind === "claim" && required === "bodywash_not_sold_separately") {
+      if (/Herbal Body Wash[^.!?\n]{0,60}chưa bán lẻ|chưa bán lẻ[^.!?\n]{0,60}Herbal Body Wash/iu.test(compactRendered)) continue;
     } else if (compactRendered.includes(required)) {
       continue;
     }
@@ -284,6 +368,9 @@ function semanticContractError(message: string): Error {
 
 function normalizeComparable(value: string): string {
   return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/giu, "d")
     .toLocaleLowerCase("vi-VN")
     .replace(/\s+/gu, " ")
     .trim();

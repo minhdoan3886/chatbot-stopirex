@@ -1104,6 +1104,24 @@ test("workflow không thay thế quyết định hội thoại trong draft của
   assert.equal(result.reply, "Dạ Stopirex hỗ trợ kiểm soát mồ hôi ạ. Mình chọn 1 lọ hay combo 2 lọ ạ?");
 });
 
+test("single-pass giữ nguyên hai bubble Structured Output do LLM đã chia", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const draftBubbles = [
+    "Dạ Stopirex hỗ trợ kiểm soát mồ hôi khi dùng đúng hướng dẫn ạ.",
+    "Mình muốn em hướng dẫn cách dùng buổi tối không ạ?",
+  ];
+  const result = bridge.adoptInterpretedDraft({
+    customerMessage: "Sản phẩm dùng thế nào?",
+    draftReply: draftBubbles.join("\n\n"),
+    draftBubbles,
+    baseReply: draftBubbles.join("\n\n"),
+    state,
+  });
+
+  assert.equal(result.status, "enhanced");
+  assert.deepEqual(result.replies, draftBubbles);
+});
+
 test("single-pass chỉ nhận câu trả lời có knowledge id thật đã được truy xuất", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const common = {

@@ -72,6 +72,18 @@ const scenarios: SmokeScenario[] = [
       "À khoan khoan, vợ anh bả bảo sợ bầu không dám bôi lung tung đâu. Thôi lấy cho anh 1 lọ thôi. Sđt anh là 0988777666. Em đọc lại xem nãy giờ chốt cho anh mấy lọ, tiền bao nhiêu, ship về đâu đúng chưa để anh đi họp cái.",
     ],
   },
+  {
+    id: 4,
+    name: "Vị khách Teencode, Gõ vội và Viết tắt",
+    turns: [
+      "b ơi cho m hỏi cái lăn trị hôi nách stop rếch này xài s? có bớt thâm k?",
+      "m ra mo hoi nhiu lam, di nang ty la uot het ao r. gia 1 lo nhiu tien vay b?",
+      "Hoi mắc nhể. Trc m mua cai etiaxil j do tren shopee co hon 100k sài dc 2 thág",
+      "thui chot m 1 lọ. ship dc q1 sg khum shop? free shp k b?",
+      "dc m la 12/4 nguyen thj minh khai, f dakao. sdt ko 9 tam bay 6 nam 4 ba 2 mot. giao trong gio hchjnh nha.",
+      "a qen nua, dc do chi nhan dc t2 den t6 thui nhe. thu 7 m ngi lam. ma nhan hag dc kjem tra k b?",
+    ],
+  },
 ];
 
 function stateSnapshot(state: DemoChatState): Record<string, unknown> {

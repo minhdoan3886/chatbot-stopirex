@@ -234,6 +234,8 @@ test("product path: teencode turn 4–6 commits each proposition before composin
   assert.equal(turn6.state.orderDraft?.recipientName, "Nguyễn Minh");
   assert.match(turn6.state.orderDraft?.deliveryNote ?? "", /Thứ 2 đến Thứ 6/u);
   assert.match(turn6.state.orderDraft?.deliveryNote ?? "", /Không nhận hàng Thứ 7/u);
+  assert.match(turn6.reply, /Thứ 2 đến Thứ 6/u);
+  assert.match(turn6.reply, /Không nhận hàng Thứ 7/u);
   assert.match(turn6.reply, /kiểm tra bao bì ngoài|kiem tra bao bi ngoai/iu);
   assert.deepEqual(
     turn6.state.decisionTrace?.actionPlan?.accepted

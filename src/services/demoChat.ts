@@ -1181,9 +1181,17 @@ export class DemoChatService {
         "Câu hỏi kiểm hàng phải dùng Knowledge nội địa thay vì fallback handoff.",
       );
       recordKnowledge(session, ["domestic-delivery-inspection-policy"]);
+      const inspectionReply =
+        "Dạ khi nhận hàng, mình được kiểm tra bao bì ngoài, tem và đúng lọ Stopirex; mình không mở seal sản phẩm trước khi xác nhận nhận hàng nhé ạ.";
+      const deliveryNoteChanged = normalizeDeliveryNotes(raw).valid;
       return this.respond(
         session,
-        "Dạ khi nhận hàng, mình được kiểm tra bao bì ngoài, tem và đúng lọ Stopirex; mình không mở seal sản phẩm trước khi xác nhận nhận hàng nhé ạ.",
+        deliveryNoteChanged && session.order.deliveryNote
+          ? [
+              `Dạ em đã cập nhật ghi chú giao hàng: “${session.order.deliveryNote}” ạ.`,
+              inspectionReply,
+            ]
+          : inspectionReply,
       );
     }
 

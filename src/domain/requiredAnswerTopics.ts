@@ -24,7 +24,9 @@ export function requiredAnswerTopics(customerMessage: string): RequiredAnswerTop
   }
   if (
     /\b(?:sang|buoi sang|sang day|sang ngu day)\b/.test(text) &&
-    /\b(?:boi|lan|quet|dung)\b/.test(text) &&
+    (/\b(?:boi|lan|quet)\b/.test(text) ||
+      /\bdung (?:stopirex|san pham|loai nay|cai nay)\b/.test(text) ||
+      /\bdung (?:vao )?(?:buoi )?sang\b/.test(text)) &&
     !/\b(?:nuoc hoa|lan khu mui|romano)\b/.test(text) &&
     !/\b(?:boi|lan|quet|dung)(?: xong)?\b.{0,60}\b(?:sang|buoi sang|sang hom sau)\b.{0,60}\b(?:tam|rua|xa phong|soap)\b/.test(
       text,

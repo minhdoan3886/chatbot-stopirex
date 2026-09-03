@@ -75,6 +75,45 @@ test("OpenAI lỗi giữa lúc thu đơn vẫn giữ phone chữ, địa chỉ n
   assert.match(inspection.reply, /kiểm tra bao bì|kiểm hàng|seal|tem/iu);
 });
 
+test("Meta brain chặn draft xác nhận bôi buổi sáng và dùng fallback canonical", async () => {
+  const raw =
+    "Thế sáng dậy đánh răng rửa mặt xong thì bôi cái này trước khi mặc áo đi làm đúng không? Áo anh toàn hàng đắt tiền, ố vàng là anh phốt đấy nhé.";
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    provider: "openai",
+    apiKey: "sk-test-not-a-real-key",
+    runner: async () =>
+      JSON.stringify({
+        intent: "usage_guidance",
+        topic: "usage",
+        confidence: 0.99,
+        needsClarification: false,
+        asksDirectAnswer: true,
+        actions: [
+          {
+            type: "answer_question",
+            topic: "usage",
+            confidence: 0.99,
+            evidence: ["sáng dậy", "bôi cái này trước khi mặc áo"],
+          },
+        ],
+        knowledgeIds: ["usage-application-feel-clothing"],
+        unsupportedQuestions: [],
+        groundingConfidence: 0.99,
+        draftReply:
+          "Dạ đúng rồi, sáng mình lăn một lớp mỏng trên da sạch, khô rồi chờ khô hẳn hãy mặc áo ạ.",
+        slots: {},
+      }),
+  });
+  const brain = new MetaChatBrain(new DemoChatService(), llm);
+  const result = await brain.reply({ sessionId: "morning-hard-gate", text: raw });
+
+  assert.match(result.reply, /không bôi Stopirex vào buổi sáng/iu);
+  assert.match(result.reply, /dùng buổi tối/iu);
+  assert.match(result.reply, /không bết.*không gây ố vàng/isu);
+  assert.doesNotMatch(result.reply, /chưa có đủ thông tin.*chuyển bộ phận/isu);
+});
+
 test("proposition mutation buộc composer chạy sau reducer commit", async () => {
   const calls: Array<{ purpose?: string; prompt: string }> = [];
   const llm = new CodexLlmBridge({

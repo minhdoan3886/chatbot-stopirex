@@ -3941,7 +3941,8 @@ function detectDirectIntent(text: string): CustomerIntent | undefined {
   if (isMorningFragranceLayeringQuestion(text)) return "usage_guidance";
   if (isBottleLongevityQuestion(text)) return "usage_frequency";
   if (isMissedEveningApplicationQuestion(text)) return "usage_time";
-  if (/dung|lan|boi/.test(text) && /buoi sang|sang duoc|sang dc|luc sang/.test(text)) {
+  if (isHairRemovalMorningClothingQuestion(text)) return "usage_guidance";
+  if (isMorningApplicationQuestion(text)) {
     return "usage_time";
   }
   if (
@@ -4831,6 +4832,24 @@ function isHairRemovalMorningClothingQuestion(value: string): boolean {
     );
   const clothing = /o vang|ao so mi|vang nach ao|bet.*ao/.test(text);
   return recentRemoval && wantsImmediateUse && clothing;
+}
+
+function isMorningApplicationQuestion(value: string): boolean {
+  const text = normalize(value);
+  return (
+    /\b(?:sang|buoi sang|sang day|sang ngu day|sang duoc|sang dc|luc sang)\b/.test(text) &&
+    (/\b(?:boi|lan|quet)\b/.test(text) ||
+      /\bdung (?:stopirex|san pham|loai nay|cai nay)\b/.test(text) ||
+      /\bdung (?:vao )?(?:buoi )?sang\b/.test(text)) &&
+    !/\b(?:nuoc hoa|lan khu mui|romano)\b/.test(text) &&
+    !/\b(?:boi|lan|quet|dung)(?: xong)?\b.{0,60}\b(?:sang|buoi sang|sang hom sau)\b.{0,60}\b(?:tam|rua|xa phong|soap)\b/.test(
+      text,
+    ) &&
+    !(
+      /\b(?:tam|rua|xa phong|soap)\b/.test(text) &&
+      /\b(?:toi hom truoc|buoi toi|dem truoc)\b/.test(text)
+    )
+  );
 }
 
 function isHairRemovalSafetyQuestion(value: string): boolean {
@@ -5947,6 +5966,23 @@ function llmFailureKnowledgeAnswer(
         "Dạ mình chưa bôi ngay sáng nay ạ. Sau nhổ, cạo, wax hoặc triệt lông, mình chờ 24–48 giờ và chỉ dùng khi da đã ổn. Stopirex dùng buổi tối trên da sạch, khô, lăn mỏng; chờ khô rồi mặc áo. Dùng đúng hướng dẫn, sản phẩm không bết và không gây ố vàng nách áo.",
       knowledgeIds: ["usage-after-hair-removal", "usage-application-feel-clothing"],
       intent: "usage_guidance",
+    };
+  }
+  if (isMorningApplicationQuestion(text)) {
+    return {
+      reply: [
+        "Dạ mình không bôi Stopirex vào buổi sáng ạ. Sản phẩm dùng buổi tối trên vùng da sạch, khô hoàn toàn và chỉ lăn một lớp mỏng.",
+        ...(isApplicationFeelOrClothingConcern(text)
+          ? [
+              "Mình chờ sản phẩm khô rồi mặc áo; khi dùng đúng lượng, sản phẩm không bết và không gây ố vàng nách áo ạ.",
+            ]
+          : []),
+      ].join("\n\n"),
+      knowledgeIds: [
+        "usage-general",
+        ...(isApplicationFeelOrClothingConcern(text) ? ["usage-application-feel-clothing"] : []),
+      ],
+      intent: "usage_time",
     };
   }
   if (isReturnsPolicyQuestion(text) && isApplicationFeelOrClothingConcern(text)) {

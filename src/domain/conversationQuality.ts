@@ -235,7 +235,9 @@ function assessQuestionCoverage(input: EvaluateConversationQualityInput, _reply:
   const requirements: boolean[] = [];
   const asksMorningApplication =
     /\b(?:sang|buoi sang|sang day|sang ngu day)\b/.test(customer) &&
-    /\b(?:boi|lan|quet|dung)\b/.test(customer) &&
+    (/\b(?:boi|lan|quet)\b/.test(customer) ||
+      /\bdung (?:stopirex|san pham|loai nay|cai nay)\b/.test(customer) ||
+      /\bdung (?:vao )?(?:buoi )?sang\b/.test(customer)) &&
     !/\b(?:nuoc hoa|lan khu mui|romano)\b/.test(customer) &&
     !/\b(?:boi|lan|quet|dung)(?: xong)?\b.{0,60}\b(?:sang|buoi sang|sang hom sau)\b.{0,60}\b(?:tam|rua|xa phong|soap)\b/.test(
       customer,

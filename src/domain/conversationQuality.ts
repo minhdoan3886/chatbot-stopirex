@@ -236,11 +236,19 @@ function assessQuestionCoverage(input: EvaluateConversationQualityInput, _reply:
   const asksMorningApplication =
     /\b(?:sang|buoi sang|sang day|sang ngu day)\b/.test(customer) &&
     /\b(?:boi|lan|quet|dung)\b/.test(customer) &&
-    !/\b(?:nuoc hoa|lan khu mui|romano)\b/.test(customer);
+    !/\b(?:nuoc hoa|lan khu mui|romano)\b/.test(customer) &&
+    !/\b(?:boi|lan|quet|dung)(?: xong)?\b.{0,60}\b(?:sang|buoi sang|sang hom sau)\b.{0,60}\b(?:tam|rua|xa phong|soap)\b/.test(
+      customer,
+    ) &&
+    !(
+      /\b(?:tam|rua|xa phong|soap)\b/.test(customer) &&
+      /\b(?:toi hom truoc|buoi toi|dem truoc)\b/.test(customer)
+    );
   if (asksMorningApplication) {
     requirements.push(
       /\bbuoi toi\b/.test(response) &&
         (/\bkhong\b.{0,80}\b(?:buoi )?sang\b/.test(response) ||
+          /\b(?:cho|doi)\b.{0,30}\b24\s*(?:[–-]\s*)?48 (?:gio|h)\b/.test(response) ||
           /\b(?:boi|lan|quet|dung) (?:vao )?(?:buoi )?sang\b.{0,45}\b(?:kem hieu qua|khong dung huong dan)\b/.test(
             response,
           )),

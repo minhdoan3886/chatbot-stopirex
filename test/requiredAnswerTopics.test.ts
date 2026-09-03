@@ -23,3 +23,23 @@ test("không chấp nhận câu né xác nhận bảo hành rồi mới nói đi
     "hypothetical_irritation_refund",
   ]);
 });
+
+test("câu hỏi bôi buổi sáng bắt buộc đính chính thời điểm dùng buổi tối", () => {
+  const morningQuestion =
+    "Thế sáng dậy rửa mặt xong thì bôi Stopirex trước khi mặc áo đi làm đúng không?";
+  assert.deepEqual(requiredAnswerTopics(morningQuestion), ["usage_time"]);
+  assert.deepEqual(
+    missingRequiredAnswerTopics(
+      morningQuestion,
+      "Dạ đúng rồi, sáng mình lăn một lớp mỏng trên da sạch và khô ạ.",
+    ),
+    ["usage_time"],
+  );
+  assert.deepEqual(
+    missingRequiredAnswerTopics(
+      morningQuestion,
+      "Dạ mình không bôi Stopirex vào buổi sáng; sản phẩm dùng buổi tối trên da sạch, khô hoàn toàn ạ.",
+    ),
+    [],
+  );
+});

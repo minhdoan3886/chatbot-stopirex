@@ -558,7 +558,10 @@ export class MetaChatBrain {
         reason: coverage.reason,
       });
     }
-    if (!coverage.complete && composed.status !== "enhanced") {
+    const missingHardRequiredTopic =
+      composed.status === "enhanced" &&
+      missingRequiredAnswerTopics(input.text, composed.reply).length > 0;
+    if (!coverage.complete && (composed.status !== "enhanced" || missingHardRequiredTopic)) {
       const groundedBaseCoverage = assessQuestionCoverage({
         customerMessage: input.text,
         interpretationStatus,

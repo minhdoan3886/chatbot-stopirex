@@ -2,6 +2,7 @@ export type RequiredAnswerTopic =
   | "alcohol_fact"
   | "product_scent"
   | "permanent_effect"
+  | "usage_time"
   | "application_feel"
   | "ineffective_refund"
   | "hypothetical_irritation_refund";
@@ -20,6 +21,20 @@ export function requiredAnswerTopics(customerMessage: string): RequiredAnswerTop
     )
   ) {
     topics.push("permanent_effect");
+  }
+  if (
+    /\b(?:sang|buoi sang|sang day|sang ngu day)\b/.test(text) &&
+    /\b(?:boi|lan|quet|dung)\b/.test(text) &&
+    !/\b(?:nuoc hoa|lan khu mui|romano)\b/.test(text) &&
+    !/\b(?:boi|lan|quet|dung)(?: xong)?\b.{0,60}\b(?:sang|buoi sang|sang hom sau)\b.{0,60}\b(?:tam|rua|xa phong|soap)\b/.test(
+      text,
+    ) &&
+    !(
+      /\b(?:tam|rua|xa phong|soap)\b/.test(text) &&
+      /\b(?:toi hom truoc|buoi toi|dem truoc)\b/.test(text)
+    )
+  ) {
+    topics.push("usage_time");
   }
   if (
     /\b(?:boi|lan)(?: xong| len| vao)?\b.{0,45}\b(?:bet|dinh|uot|am|nhep)\b/.test(text) ||
@@ -64,6 +79,15 @@ export function replyCoversRequiredAnswerTopic(topic: RequiredAnswerTopic, custo
         (/\bkhong phai (?:thuoc )?chua (?:dut diem|khoi|vinh vien)\b/.test(text) ||
           /\bkhong (?:co cam ket |phai )?(?:khoi )?vinh vien\b/.test(text) ||
           /\bcan (?:dung )?duy tri\b/.test(text))
+      );
+    case "usage_time":
+      return (
+        /\bbuoi toi\b/.test(text) &&
+        (/\bkhong\b.{0,80}\b(?:buoi )?sang\b/.test(text) ||
+          /\b(?:cho|doi)\b.{0,30}\b24\s*(?:[–-]\s*)?48 (?:gio|h)\b/.test(text) ||
+          /\b(?:boi|lan|quet|dung) (?:vao )?(?:buoi )?sang\b.{0,45}\b(?:kem hieu qua|khong dung huong dan)\b/.test(
+            text,
+          ))
       );
     case "application_feel":
       return /\bkhong bet\b/.test(text) || /\bkho nhanh\b/.test(text);

@@ -9,9 +9,7 @@ import {
 } from "../src/domain/orderNormalization.js";
 
 test("phone normalizer chuyển số chữ teencode thành SĐT Việt Nam", () => {
-  const result = normalizeVietnamesePhone(
-    "sdt ko 9 tam bay 6 nam 4 ba 2 mot. giao trong gio hchjnh nha",
-  );
+  const result = normalizeVietnamesePhone("sdt ko 9 tam bay 6 nam 4 ba 2 mot. giao trong gio hchjnh nha");
   assert.equal(result.valid, true);
   assert.equal(result.normalized, "0987654321");
   assert.equal(result.raw, "ko 9 tam bay 6 nam 4 ba 2 mot");

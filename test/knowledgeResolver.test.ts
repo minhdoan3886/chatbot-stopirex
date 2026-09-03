@@ -117,10 +117,7 @@ test("applicability guard chặn giá LLM tự thêm nhưng cho phép tổng do 
     query: "giá 1 lọ",
     matches: [match({ id: "approved", content: "1 lọ 285.000đ và phí giao 30.000đ." })],
   });
-  assert.equal(
-    resolution.facts.find((fact) => fact.key === "shipping.stopirex.standard_fee")?.value,
-    30_000,
-  );
+  assert.equal(resolution.facts.find((fact) => fact.key === "shipping.stopirex.standard_fee")?.value, 30_000);
   assert.equal(
     resolution.conflicts.some((conflict) => conflict.key === "price.stopirex.1_unit"),
     false,

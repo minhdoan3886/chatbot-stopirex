@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { loadEnv } from "../src/config/env.js";
-import type {
-  LlmUsageSnapshot,
-  PostgresOperationalSnapshot,
-} from "../src/infrastructure/postgres.js";
+import type { LlmUsageSnapshot, PostgresOperationalSnapshot } from "../src/infrastructure/postgres.js";
 import {
   diagnoseSession,
   OperationsDashboardService,
@@ -169,10 +166,7 @@ test("dashboard tổng hợp healthcheck, queue, worker và phiên cần chú ý
   assert.equal(result.metrics.pendingInboundEvents, 1);
   assert.equal(result.connections.find((item) => item.id === "meta-worker")?.status, "healthy");
   assert.equal(result.connections.find((item) => item.id === "openai-llm")?.status, "healthy");
-  assert.equal(
-    result.connections.find((item) => item.id === "openai-llm")?.name,
-    "OpenAI Responses API",
-  );
+  assert.equal(result.connections.find((item) => item.id === "openai-llm")?.name, "OpenAI Responses API");
   assert.equal(result.connections.find((item) => item.id === "codex-cli")?.status, "disabled");
   assert.equal(result.connections.find((item) => item.id === "hybrid-router")?.status, "healthy");
   assert.equal(
@@ -240,7 +234,9 @@ test("dashboard không báo healthy khi kết nối xanh nhưng còn inbound ch�
 
   const result = await service.snapshot();
   assert.equal(
-    result.connections.filter((item) => item.status !== "disabled").every((item) => item.status === "healthy"),
+    result.connections
+      .filter((item) => item.status !== "disabled")
+      .every((item) => item.status === "healthy"),
     true,
   );
   assert.equal(result.overall, "degraded");

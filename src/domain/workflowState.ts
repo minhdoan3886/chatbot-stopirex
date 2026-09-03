@@ -1,13 +1,7 @@
 import type { OrderDraft } from "./orders.js";
 
 export type OrderLifecycle =
-  | "idle"
-  | "draft"
-  | "ready_to_submit"
-  | "submitted"
-  | "pending_tracking"
-  | "tracked"
-  | "cancelled";
+  "idle" | "draft" | "ready_to_submit" | "submitted" | "pending_tracking" | "tracked" | "cancelled";
 
 export type WorkflowStateEvent =
   | {
@@ -64,18 +58,16 @@ export function reduceWorkflowStateMeta(
     event.type === "draft_discarded"
       ? "idle"
       : event.type === "order_cancelled"
-      ? "cancelled"
-      : event.type === "order_submitted"
-        ? "submitted"
-        : event.type === "tracking_pending"
-          ? "pending_tracking"
-      : deriveOrderLifecycle({
-          ...(order.selectedQuantity !== undefined
-            ? { selectedQuantity: order.selectedQuantity }
-            : {}),
-          draft: order.draft,
-          ...(order.trackingNumber ? { trackingNumber: order.trackingNumber } : {}),
-        });
+        ? "cancelled"
+        : event.type === "order_submitted"
+          ? "submitted"
+          : event.type === "tracking_pending"
+            ? "pending_tracking"
+            : deriveOrderLifecycle({
+                ...(order.selectedQuantity !== undefined ? { selectedQuantity: order.selectedQuantity } : {}),
+                draft: order.draft,
+                ...(order.trackingNumber ? { trackingNumber: order.trackingNumber } : {}),
+              });
   const receipt: WorkflowStateEventReceipt = {
     ...event,
     version,

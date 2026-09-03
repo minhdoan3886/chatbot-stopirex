@@ -1,7 +1,6 @@
 import { FileBlob, SpreadsheetFile } from "@oai/artifact-tool";
 
-const source =
-  "/Users/minhdoanduc/Downloads/BBH - ANH QUÂN - AI BASE - 47476581.xlsx";
+const source = "/Users/minhdoanduc/Downloads/BBH - ANH QUÂN - AI BASE - 47476581.xlsx";
 const workbook = await SpreadsheetFile.importXlsx(await FileBlob.load(source));
 
 const sheets = await workbook.inspect({

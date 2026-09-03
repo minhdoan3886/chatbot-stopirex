@@ -39,9 +39,7 @@ export function selectActionExecutionMode(input: {
   if (input.mode === "shadow") return "legacy";
   const bucket =
     createHash("sha256").update(`multi-action-v1:${input.sessionId}`).digest().readUInt32BE(0) % 10_000;
-  return bucket < Math.round(clampPercent(input.canaryPercent) * 100)
-    ? "multi_action"
-    : "legacy";
+  return bucket < Math.round(clampPercent(input.canaryPercent) * 100) ? "multi_action" : "legacy";
 }
 
 export function compareActionRollout(input: {
@@ -60,8 +58,7 @@ export function compareActionRollout(input: {
     intentMismatch: legacy.intent !== candidate.intent,
     pipelineMismatch: legacy.pipeline !== candidate.pipeline,
     handoffMismatch: handoffState(input.legacy.state) !== handoffState(input.candidate.state),
-    clarificationMismatch:
-      isClarification(input.legacy.state) !== isClarification(input.candidate.state),
+    clarificationMismatch: isClarification(input.legacy.state) !== isClarification(input.candidate.state),
     replyMismatch: normalizeReply(legacy.reply) !== normalizeReply(candidate.reply),
     rejectedActionCount: candidatePlan?.rejected.length ?? 0,
     conflictCount: candidatePlan?.conflicts.length ?? 0,
@@ -79,9 +76,7 @@ function outcome(result: DemoChatResponse): ActionRolloutOutcome {
     ...(result.state.decisionTrace?.selectedRoute
       ? { selectedRoute: result.state.decisionTrace.selectedRoute }
       : {}),
-    ...(result.state.selectedQuantity
-      ? { selectedQuantity: result.state.selectedQuantity }
-      : {}),
+    ...(result.state.selectedQuantity ? { selectedQuantity: result.state.selectedQuantity } : {}),
     botPaused: result.state.botPaused,
     reply: result.reply,
   };
@@ -92,8 +87,10 @@ function handoffState(state: DemoChatState): string {
 }
 
 function isClarification(state: DemoChatState): boolean {
-  return state.decisionTrace?.selectedRoute === "clarification" ||
-    state.decisionTrace?.actionPlan?.shouldClarify === true;
+  return (
+    state.decisionTrace?.selectedRoute === "clarification" ||
+    state.decisionTrace?.actionPlan?.shouldClarify === true
+  );
 }
 
 function normalizeReply(value: string): string {
@@ -104,4 +101,3 @@ function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, value));
 }
-

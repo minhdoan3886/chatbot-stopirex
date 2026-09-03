@@ -100,8 +100,7 @@ test("Meta brain chặn draft xác nhận bôi buổi sáng và dùng fallback c
         knowledgeIds: ["usage-application-feel-clothing"],
         unsupportedQuestions: [],
         groundingConfidence: 0.99,
-        draftReply:
-          "Dạ đúng rồi, sáng mình lăn một lớp mỏng trên da sạch, khô rồi chờ khô hẳn hãy mặc áo ạ.",
+        draftReply: "Dạ đúng rồi, sáng mình lăn một lớp mỏng trên da sạch, khô rồi chờ khô hẳn hãy mặc áo ạ.",
         slots: {},
       }),
   });
@@ -173,12 +172,10 @@ test("proposition mutation buộc composer chạy sau reducer commit", async () 
       });
     },
   });
-  const brain = new MetaChatBrain(
-    new DemoChatService(),
-    llm,
-    undefined,
-    { mode: "enabled", canaryPercent: 100 },
-  );
+  const brain = new MetaChatBrain(new DemoChatService(), llm, undefined, {
+    mode: "enabled",
+    canaryPercent: 100,
+  });
 
   const response = await brain.reply({
     sessionId: "post-commit-proposition",
@@ -255,5 +252,8 @@ test("post-commit composer lỗi vẫn giữ draft LLM đã được kiểm tra 
   assert.equal(response.state.selectedQuantity, 1);
   assert.match(response.reply, /giao được Quận 1/iu);
   assert.match(response.reply, /đã ghi nhận.*1 lọ/iu);
-  assert.match(response.state.responseDecision?.reason ?? "", /post_commit_unavailable_used_validated_draft/u);
+  assert.match(
+    response.state.responseDecision?.reason ?? "",
+    /post_commit_unavailable_used_validated_draft/u,
+  );
 });

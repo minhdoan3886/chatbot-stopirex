@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  dialogueModeFor,
-  initialDialogueState,
-  reduceDialogueState,
-} from "../src/domain/dialogueState.js";
+import { dialogueModeFor, initialDialogueState, reduceDialogueState } from "../src/domain/dialogueState.js";
 
 test("DialogueState ghi pending ask và dùng action mới để tiêu thụ expected input", () => {
   const asked = reduceDialogueState(initialDialogueState(), {

@@ -43,9 +43,7 @@ export interface ShippingAdapter {
     orderId: string;
     draft: Required<OrderDraft>;
   }): Promise<ProviderResult<ShipmentTracking>>;
-  getTracking(
-    trackingNumber: string,
-  ): Promise<ProviderResult<ShipmentTracking>>;
+  getTracking(trackingNumber: string): Promise<ProviderResult<ShipmentTracking>>;
 }
 
 export interface OmicallAdapter {

@@ -83,9 +83,7 @@ export class PgCareCaseRepository implements CareCaseRepository {
       updatedAt: new Date(String(row.updated_at)),
       acknowledgedAt: new Date(String(row.acknowledged_at)),
       ...(row.closed_at ? { closedAt: new Date(String(row.closed_at)) } : {}),
-      ...(row.resolution_summary
-        ? { resolutionSummary: String(row.resolution_summary) }
-        : {}),
+      ...(row.resolution_summary ? { resolutionSummary: String(row.resolution_summary) } : {}),
       botPaused: Boolean(row.bot_paused),
       facts: (row.facts ?? {}) as Record<string, unknown>,
       status: row.status as CareCase["status"],

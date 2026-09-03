@@ -250,9 +250,8 @@
 
 ## Tổng kết
 
-| Kịch bản | Kết quả | Lỗi chính |
-|---|---|---|
-| 1 — Cá vàng | Không đạt | Không lưu giới tính/địa điểm, không hiểu đại từ, parser nuốt cả câu vào địa chỉ |
-| 3 — Lật lọng Slot | Không đạt | Không thay thế địa chỉ cũ; timeout ở câu hỏi giao hàng |
-| 4 — Gaslighting | Đạt | Giữ đúng Knowledge, không nhận lỗi ảo |
-
+| Kịch bản          | Kết quả   | Lỗi chính                                                                       |
+| ----------------- | --------- | ------------------------------------------------------------------------------- |
+| 1 — Cá vàng       | Không đạt | Không lưu giới tính/địa điểm, không hiểu đại từ, parser nuốt cả câu vào địa chỉ |
+| 3 — Lật lọng Slot | Không đạt | Không thay thế địa chỉ cũ; timeout ở câu hỏi giao hàng                          |
+| 4 — Gaslighting   | Đạt       | Giữ đúng Knowledge, không nhận lỗi ảo                                           |

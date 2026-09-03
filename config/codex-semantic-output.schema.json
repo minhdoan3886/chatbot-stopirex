@@ -128,10 +128,25 @@
           "topic": {
             "type": ["string", "null"],
             "enum": [
-              "price", "promotion", "shipping", "comparison", "effectiveness", "usage",
-              "child_age", "pregnancy", "breastfeeding", "sensitive_skin", "irritation",
-              "damaged_goods", "delivery", "negative_review", "order", "sweat", "odor",
-              "other", null
+              "price",
+              "promotion",
+              "shipping",
+              "comparison",
+              "effectiveness",
+              "usage",
+              "child_age",
+              "pregnancy",
+              "breastfeeding",
+              "sensitive_skin",
+              "irritation",
+              "damaged_goods",
+              "delivery",
+              "negative_review",
+              "order",
+              "sweat",
+              "odor",
+              "other",
+              null
             ]
           },
           "field": {

@@ -56,9 +56,7 @@ export function evaluateConversationQuality(
   // CTA here made concise usage answers fail quality even when nothing else was
   // needed from the customer.
   const nextStepClear =
-    needsExplicitNextStep(input.skill) && input.asksDirectAnswer !== true
-      ? hasNextStep(reply)
-      : true;
+    needsExplicitNextStep(input.skill) && input.asksDirectAnswer !== true ? hasNextStep(reply) : true;
   const questionCoverageComplete = assessQuestionCoverage(input, reply);
   const hardFailReasons: string[] = [];
   if (unsafeClaim) hardFailReasons.push("unsafe_claim");
@@ -148,8 +146,7 @@ function assessQuestionCoverage(input: EvaluateConversationQualityInput, _reply:
   if (asksWholesaleSupport) {
     const coversDiscount = !/\bchiet khau\b/.test(customer) || /\bchiet khau\b/.test(response);
     const coversVat = !/\b(?:vat|hoa don)\b/.test(customer) || /\b(?:vat|hoa don)\b/.test(response);
-    const coversDisplay =
-      !/\b(?:tu ke|banner)\b/.test(customer) || /\b(?:tu ke|banner)\b/.test(response);
+    const coversDisplay = !/\b(?:tu ke|banner)\b/.test(customer) || /\b(?:tu ke|banner)\b/.test(response);
     return (
       coversDiscount &&
       coversVat &&
@@ -292,11 +289,8 @@ function assessQuestionCoverage(input: EvaluateConversationQualityInput, _reply:
     /\b(?:san pham|stopirex|cai nay|loai nay|lan nay)\b.{0,40}\b(?:co mui|mui gi|thom|khong mui)\b/.test(
       customer,
     ) ||
-    /\b(?:co mui|mui gi|khong mui)\b.{0,30}\b(?:san pham|stopirex|cai nay|loai nay|lan nay)\b/.test(
-      customer,
-    );
-  if (asksProductScent)
-    requirements.push(/mui (?:duoc tinh )?dac trung|khong dung huong/.test(response));
+    /\b(?:co mui|mui gi|khong mui)\b.{0,30}\b(?:san pham|stopirex|cai nay|loai nay|lan nay)\b/.test(customer);
+  if (asksProductScent) requirements.push(/mui (?:duoc tinh )?dac trung|khong dung huong/.test(response));
   if (/\b(?:may ngay|bao lau|khi nao)\b.*\b(?:nhan|giao|toi)\b/.test(customer)) {
     requirements.push(/thoi gian giao|van don|so ngay|ngay/.test(response));
   }

@@ -3,7 +3,8 @@ import path from "node:path";
 import { FileBlob, SpreadsheetFile, Workbook } from "@oai/artifact-tool";
 
 const inputDir = "/Users/minhdoanduc/Downloads/1";
-const outputDir = "/Users/minhdoanduc/Documents/Ai chatbot stopirex/outputs/019fe976-2583-73f3-a746-0a179c39b31a";
+const outputDir =
+  "/Users/minhdoanduc/Documents/Ai chatbot stopirex/outputs/019fe976-2583-73f3-a746-0a179c39b31a";
 
 const sourceFiles = {
   conversations: path.join(inputDir, "Báo-cáo-chưa-đặt-tên-từ-Tháng-7-1-2026-đến-Tháng-8-10-2026.xlsx"),
@@ -85,7 +86,7 @@ function displayMkt(key) {
     LONG: "Long MKT",
     TAITT: "Tài Tỏi MKT",
     DUNG: "Dũng MKT",
-    "CHIẾN": "Chiến MKT",
+    CHIẾN: "Chiến MKT",
     CUONG: "Cường MKT",
   };
   return labels[key] ?? `${key} MKT`;
@@ -95,7 +96,8 @@ async function extractAdsRows() {
   const output = [];
   for (const key of ["conversations", "adsTai", "adsStopirex"]) {
     const wb = await importWorkbook(sourceFiles[key]);
-    const sheet = wb.worksheets.items.find((item) => item.name === "Raw Data Report") ?? wb.worksheets.getItemAt(0);
+    const sheet =
+      wb.worksheets.items.find((item) => item.name === "Raw Data Report") ?? wb.worksheets.getItemAt(0);
     const values = sheet.getUsedRange().values;
     const headerInfo = findHeaderRow(values);
     const headers = values[headerInfo.index].map(norm);
@@ -115,7 +117,13 @@ async function extractAdsRows() {
     const body = values.slice(headerInfo.index + 1);
     const hasPlacementLeaves = body.some((row) => {
       const campaign = norm(row[campaignCol]);
-      return campaign && campaign !== "All" && norm(row[placementCol]) && norm(row[placementCol]) !== "All" && norm(row[platformCol]) !== "All";
+      return (
+        campaign &&
+        campaign !== "All" &&
+        norm(row[placementCol]) &&
+        norm(row[placementCol]) !== "All" &&
+        norm(row[platformCol]) !== "All"
+      );
     });
     for (const row of body) {
       const date = parseIsoDate(row[dateCol]);
@@ -225,7 +233,20 @@ async function buildReport() {
   for (const sheet of workbook.worksheets.items) sheet.showGridLines = false;
 
   // Source/clean data sheets
-  const adsHeaders = [["File nguồn", "Tài khoản Ads", "Ngày", "Tên chiến dịch", "MKT chuẩn hóa", "Chi phí Ads", "Tin nhắn", "Lượt hiển thị", "CTR", "CTR x hiển thị"]];
+  const adsHeaders = [
+    [
+      "File nguồn",
+      "Tài khoản Ads",
+      "Ngày",
+      "Tên chiến dịch",
+      "MKT chuẩn hóa",
+      "Chi phí Ads",
+      "Tin nhắn",
+      "Lượt hiển thị",
+      "CTR",
+      "CTR x hiển thị",
+    ],
+  ];
   ads.getRange("A1:J1").values = adsHeaders;
   if (adsRows.length) ads.getRangeByIndexes(1, 0, adsRows.length, 10).values = adsRows;
   applyHeaderStyle(ads.getRange("A1:J1"));
@@ -246,7 +267,19 @@ async function buildReport() {
     adsTable.style = "TableStyleMedium2";
   }
 
-  const orderHeaders = [["Ngày", "Mã đơn", "Nguồn/MKT", "Trạng thái đơn hàng", "Doanh thu tạm tính", "Thực thu", "Còn nợ", "Khách hàng", "Số điện thoại"]];
+  const orderHeaders = [
+    [
+      "Ngày",
+      "Mã đơn",
+      "Nguồn/MKT",
+      "Trạng thái đơn hàng",
+      "Doanh thu tạm tính",
+      "Thực thu",
+      "Còn nợ",
+      "Khách hàng",
+      "Số điện thoại",
+    ],
+  ];
   orders.getRange("A1:I1").values = orderHeaders;
   if (orderRows.length) orders.getRangeByIndexes(1, 0, orderRows.length, 9).values = orderRows;
   applyHeaderStyle(orders.getRange("A1:I1"));
@@ -275,11 +308,19 @@ async function buildReport() {
     ["Đến ngày", periodEnd],
   ];
   applyHeaderStyle(qc.getRange("A3:B3"), "#3CAEA3");
-  qc.getRange("B4:B5").format = { fill: "#FFF2CC", numberFormat: "yyyy-mm-dd", font: { color: "#7F6000", bold: true } };
+  qc.getRange("B4:B5").format = {
+    fill: "#FFF2CC",
+    numberFormat: "yyyy-mm-dd",
+    font: { color: "#7F6000", bold: true },
+  };
   qc.getRange("D3:F3").values = [["Mã MKT", "Tên hiển thị", "Cách nhận diện"]];
   applyHeaderStyle(qc.getRange("D3:F3"), "#3CAEA3");
   const allMkts = [...new Set(adsRows.map((r) => r[4]).concat(reportMkts))].sort();
-  const mapRows = allMkts.map((mkt) => [mkt, displayMkt(mkt), mkt === "LONG" ? "Tất cả chiến dịch trong 3 file Ads / Nguồn Sapo LONG" : `Nguồn Sapo ${mkt}`]);
+  const mapRows = allMkts.map((mkt) => [
+    mkt,
+    displayMkt(mkt),
+    mkt === "LONG" ? "Tất cả chiến dịch trong 3 file Ads / Nguồn Sapo LONG" : `Nguồn Sapo ${mkt}`,
+  ]);
   if (mapRows.length) qc.getRangeByIndexes(3, 3, mapRows.length, 3).values = mapRows;
   const ruleTitleRow = 10;
   qc.getRange(`A${ruleTitleRow}:F${ruleTitleRow}`).merge();
@@ -293,11 +334,17 @@ async function buildReport() {
     ["MER", "Chi phí Ads / Doanh thu, theo đúng công thức thể hiện trong mẫu người dùng."],
     ["CTR", "Bình quân gia quyền theo lượt hiển thị của CTR do Meta báo cáo."],
     ["Tỷ lệ giao thành công", "Đơn Hoàn thành / Tổng số đơn trong kỳ."],
-    ["Quy tắc gán MKT", "Toàn bộ chiến dịch trong tất cả file Ads đều được gán cho Long MKT theo xác nhận của người dùng."],
+    [
+      "Quy tắc gán MKT",
+      "Toàn bộ chiến dịch trong tất cả file Ads đều được gán cho Long MKT theo xác nhận của người dùng.",
+    ],
     ["Kỳ dữ liệu", "01–10/08/2026 theo các file Ads và Sapo cập nhật mới nhất."],
   ];
   qc.getRangeByIndexes(ruleTitleRow, 0, ruleRows.length, 2).values = ruleRows;
-  qc.getRange(`A${ruleTitleRow + 1}:A${ruleTitleRow + ruleRows.length}`).format.font = { bold: true, color: "#173F5F" };
+  qc.getRange(`A${ruleTitleRow + 1}:A${ruleTitleRow + ruleRows.length}`).format.font = {
+    bold: true,
+    color: "#173F5F",
+  };
   qc.getRange(`B${ruleTitleRow + 1}:B${ruleTitleRow + ruleRows.length}`).format.wrapText = true;
   const srcStart = 21;
   qc.getRange(`A${srcStart}:F${srcStart}`).merge();
@@ -309,7 +356,11 @@ async function buildReport() {
     ["QC", "Số dòng Ads đã chọn", adsRows.length],
     ["QC", "Số đơn duy nhất", orderRows.length],
     ["QC", "Nguồn đơn Sapo", reportMkts.join(", ")],
-    ["QC", "MKT Ads không có đơn Sapo", allMkts.filter((x) => !reportMkts.includes(x)).join(", ") || "Không có"],
+    [
+      "QC",
+      "MKT Ads không có đơn Sapo",
+      allMkts.filter((x) => !reportMkts.includes(x)).join(", ") || "Không có",
+    ],
   ];
   qc.getRange("A:A").format.columnWidth = 25;
   qc.getRange("B:B").format.columnWidth = 65;
@@ -333,25 +384,73 @@ async function buildReport() {
   report.getRange("D2").formulas = [["='Quy tắc & QC'!B5"]];
   report.getRange("B2").format.numberFormat = "dd/mm/yyyy";
   report.getRange("D2").format.numberFormat = "dd/mm/yyyy";
-  report.getRange("A2:D2").format = { fill: "#EAF2F8", font: { bold: true, color: "#173F5F" }, borders: { preset: "outside", style: "thin", color: "#B8CCE0" } };
-  report.getRange(`A${reportStartRow}:K${reportStartRow}`).values = [["MKT (Người chạy)", "Chi phí Ads", "Tin nhắn", "CPL", "Đơn chốt", "Doanh thu tạm tính (Sapo)", "Doanh thu thực tế (Sapo)", "CPA (Đơn chốt)", "MER (Tạm tính)", "MER (Thực tế)", "CTR"]];
+  report.getRange("A2:D2").format = {
+    fill: "#EAF2F8",
+    font: { bold: true, color: "#173F5F" },
+    borders: { preset: "outside", style: "thin", color: "#B8CCE0" },
+  };
+  report.getRange(`A${reportStartRow}:K${reportStartRow}`).values = [
+    [
+      "MKT (Người chạy)",
+      "Chi phí Ads",
+      "Tin nhắn",
+      "CPL",
+      "Đơn chốt",
+      "Doanh thu tạm tính (Sapo)",
+      "Doanh thu thực tế (Sapo)",
+      "CPA (Đơn chốt)",
+      "MER (Tạm tính)",
+      "MER (Thực tế)",
+      "CTR",
+    ],
+  ];
   applyHeaderStyle(report.getRange(`A${reportStartRow}:K${reportStartRow}`));
-  report.getRange(`A${reportDataStart}:A${reportDataEnd}`).values = reportMkts.map((mkt) => [displayMkt(mkt)]);
+  report.getRange(`A${reportDataStart}:A${reportDataEnd}`).values = reportMkts.map((mkt) => [
+    displayMkt(mkt),
+  ]);
   report.getRange(`L${reportStartRow}`).values = [["MKT key"]];
   report.getRange(`L${reportDataStart}:L${reportDataEnd}`).values = reportMkts.map((mkt) => [mkt]);
   for (let r = reportDataStart; r <= reportDataEnd; r++) {
-    report.getRange(`B${r}`).formulas = [[`=SUMIFS('Ads_Data'!$F$2:$F$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},$L${r},'Ads_Data'!$C$2:$C$${adsEnd},">="&$B$2,'Ads_Data'!$C$2:$C$${adsEnd},"<="&$D$2)`]];
-    report.getRange(`C${r}`).formulas = [[`=SUMIFS('Ads_Data'!$G$2:$G$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},$L${r},'Ads_Data'!$C$2:$C$${adsEnd},">="&$B$2,'Ads_Data'!$C$2:$C$${adsEnd},"<="&$D$2)`]];
+    report.getRange(`B${r}`).formulas = [
+      [
+        `=SUMIFS('Ads_Data'!$F$2:$F$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},$L${r},'Ads_Data'!$C$2:$C$${adsEnd},">="&$B$2,'Ads_Data'!$C$2:$C$${adsEnd},"<="&$D$2)`,
+      ],
+    ];
+    report.getRange(`C${r}`).formulas = [
+      [
+        `=SUMIFS('Ads_Data'!$G$2:$G$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},$L${r},'Ads_Data'!$C$2:$C$${adsEnd},">="&$B$2,'Ads_Data'!$C$2:$C$${adsEnd},"<="&$D$2)`,
+      ],
+    ];
     report.getRange(`D${r}`).formulas = [[`=IFERROR(B${r}/C${r},0)`]];
-    report.getRange(`E${r}`).formulas = [[`=COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},$L${r},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`]];
-    report.getRange(`F${r}`).formulas = [[`=SUMIFS('Orders_Data'!$E$2:$E$${ordersEnd},'Orders_Data'!$C$2:$C$${ordersEnd},$L${r},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`]];
-    report.getRange(`G${r}`).formulas = [[`=SUMIFS('Orders_Data'!$F$2:$F$${ordersEnd},'Orders_Data'!$C$2:$C$${ordersEnd},$L${r},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`]];
+    report.getRange(`E${r}`).formulas = [
+      [
+        `=COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},$L${r},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`,
+      ],
+    ];
+    report.getRange(`F${r}`).formulas = [
+      [
+        `=SUMIFS('Orders_Data'!$E$2:$E$${ordersEnd},'Orders_Data'!$C$2:$C$${ordersEnd},$L${r},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`,
+      ],
+    ];
+    report.getRange(`G${r}`).formulas = [
+      [
+        `=SUMIFS('Orders_Data'!$F$2:$F$${ordersEnd},'Orders_Data'!$C$2:$C$${ordersEnd},$L${r},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`,
+      ],
+    ];
     report.getRange(`H${r}`).formulas = [[`=IFERROR(B${r}/E${r},0)`]];
     report.getRange(`I${r}`).formulas = [[`=IFERROR(B${r}/F${r},0)`]];
     report.getRange(`J${r}`).formulas = [[`=IFERROR(B${r}/G${r},0)`]];
-    report.getRange(`K${r}`).formulas = [[`=IFERROR(SUMIFS('Ads_Data'!$J$2:$J$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},$L${r},'Ads_Data'!$C$2:$C$${adsEnd},">="&$B$2,'Ads_Data'!$C$2:$C$${adsEnd},"<="&$D$2)/SUMIFS('Ads_Data'!$H$2:$H$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},$L${r},'Ads_Data'!$C$2:$C$${adsEnd},">="&$B$2,'Ads_Data'!$C$2:$C$${adsEnd},"<="&$D$2),0)`]];
+    report.getRange(`K${r}`).formulas = [
+      [
+        `=IFERROR(SUMIFS('Ads_Data'!$J$2:$J$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},$L${r},'Ads_Data'!$C$2:$C$${adsEnd},">="&$B$2,'Ads_Data'!$C$2:$C$${adsEnd},"<="&$D$2)/SUMIFS('Ads_Data'!$H$2:$H$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},$L${r},'Ads_Data'!$C$2:$C$${adsEnd},">="&$B$2,'Ads_Data'!$C$2:$C$${adsEnd},"<="&$D$2),0)`,
+      ],
+    ];
   }
-  report.getRange(`A${reportDataStart}:K${reportDataEnd}`).format = { fill: "#F8FBFD", borders: { preset: "all", style: "thin", color: "#D9E2F3" }, verticalAlignment: "center" };
+  report.getRange(`A${reportDataStart}:K${reportDataEnd}`).format = {
+    fill: "#F8FBFD",
+    borders: { preset: "all", style: "thin", color: "#D9E2F3" },
+    verticalAlignment: "center",
+  };
   report.getRange(`A${reportDataStart}:A${reportDataEnd}`).format.font = { bold: true, color: "#173F5F" };
   report.getRange(`B${reportDataStart}:B${reportDataEnd}`).format.numberFormat = '#,##0 "đ"';
   report.getRange(`C${reportDataStart}:C${reportDataEnd}`).format.numberFormat = "#,##0";
@@ -366,27 +465,72 @@ async function buildReport() {
   report.getRange(`A${activityTitleRow}`).values = [["📦 HOẠT ĐỘNG BÁN HÀNG"]];
   applyTitleStyle(report.getRange(`A${activityTitleRow}:D${activityTitleRow}`), "#3CAEA3");
   const activityStart = activityTitleRow + 1;
-  const activityLabels = ["Tổng số đơn", "Đơn hoàn thành", "Đơn hủy", "Tỷ lệ giao thành công", "Tổng doanh thu", "Thực thu (Đã trả)", "Còn nợ", "Tỷ lệ chốt (Đơn/Hội thoại)"];
-  report.getRangeByIndexes(activityStart - 1, 0, activityLabels.length, 1).values = activityLabels.map((x) => [x]);
-  report.getRange(`A${activityStart}:A${activityStart + activityLabels.length - 1}`).format = { fill: "#E8F5F3", font: { bold: true, color: "#155E63" }, borders: { preset: "inside", style: "thin", color: "#B7DCD7" } };
+  const activityLabels = [
+    "Tổng số đơn",
+    "Đơn hoàn thành",
+    "Đơn hủy",
+    "Tỷ lệ giao thành công",
+    "Tổng doanh thu",
+    "Thực thu (Đã trả)",
+    "Còn nợ",
+    "Tỷ lệ chốt (Đơn/Hội thoại)",
+  ];
+  report.getRangeByIndexes(activityStart - 1, 0, activityLabels.length, 1).values = activityLabels.map(
+    (x) => [x],
+  );
+  report.getRange(`A${activityStart}:A${activityStart + activityLabels.length - 1}`).format = {
+    fill: "#E8F5F3",
+    font: { bold: true, color: "#155E63" },
+    borders: { preset: "inside", style: "thin", color: "#B7DCD7" },
+  };
   const sourceList = reportMkts.map((mkt) => `"${mkt}"`).join(",");
-  report.getRange(`B${activityStart}`).formulas = [[`=SUM(COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},{${sourceList}},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2))`]];
-  report.getRange(`B${activityStart + 1}`).formulas = [[`=SUM(COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},{${sourceList}},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"Hoàn thành"))`]];
-  report.getRange(`B${activityStart + 2}`).formulas = [[`=SUM(COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},{${sourceList}},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"Đã hủy"))`]];
-  report.getRange(`B${activityStart + 3}`).formulas = [[`=IFERROR(B${activityStart + 1}/B${activityStart},0)`]];
+  report.getRange(`B${activityStart}`).formulas = [
+    [
+      `=SUM(COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},{${sourceList}},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2))`,
+    ],
+  ];
+  report.getRange(`B${activityStart + 1}`).formulas = [
+    [
+      `=SUM(COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},{${sourceList}},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"Hoàn thành"))`,
+    ],
+  ];
+  report.getRange(`B${activityStart + 2}`).formulas = [
+    [
+      `=SUM(COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},{${sourceList}},'Orders_Data'!$A$2:$A$${ordersEnd},">="&$B$2,'Orders_Data'!$A$2:$A$${ordersEnd},"<="&$D$2,'Orders_Data'!$D$2:$D$${ordersEnd},"Đã hủy"))`,
+    ],
+  ];
+  report.getRange(`B${activityStart + 3}`).formulas = [
+    [`=IFERROR(B${activityStart + 1}/B${activityStart},0)`],
+  ];
   report.getRange(`B${activityStart + 4}`).formulas = [[`=SUM(F${reportDataStart}:F${reportDataEnd})`]];
   report.getRange(`B${activityStart + 5}`).formulas = [[`=SUM(G${reportDataStart}:G${reportDataEnd})`]];
   report.getRange(`B${activityStart + 6}`).formulas = [[`=B${activityStart + 4}-B${activityStart + 5}`]];
-  report.getRange(`B${activityStart + 7}`).formulas = [[`=IFERROR(SUM(E${reportDataStart}:E${reportDataEnd})/SUM(C${reportDataStart}:C${reportDataEnd}),0)`]];
-  report.getRange(`B${activityStart}:B${activityStart + activityLabels.length - 1}`).format = { fill: "#FFFFFF", font: { bold: true, color: "#173F5F" }, borders: { preset: "inside", style: "thin", color: "#B7DCD7" } };
+  report.getRange(`B${activityStart + 7}`).formulas = [
+    [`=IFERROR(SUM(E${reportDataStart}:E${reportDataEnd})/SUM(C${reportDataStart}:C${reportDataEnd}),0)`],
+  ];
+  report.getRange(`B${activityStart}:B${activityStart + activityLabels.length - 1}`).format = {
+    fill: "#FFFFFF",
+    font: { bold: true, color: "#173F5F" },
+    borders: { preset: "inside", style: "thin", color: "#B7DCD7" },
+  };
   report.getRange(`B${activityStart}:B${activityStart + 2}`).format.numberFormat = "#,##0";
   report.getRange(`B${activityStart + 3}`).format.numberFormat = "0.00%";
   report.getRange(`B${activityStart + 4}:B${activityStart + 6}`).format.numberFormat = '#,##0 "đ"';
   report.getRange(`B${activityStart + 7}`).format.numberFormat = "0.00%";
   const noteRow = activityStart + activityLabels.length + 2;
   report.mergeCells(`A${noteRow}:K${noteRow + 1}`);
-  report.getRange(`A${noteRow}`).values = [["Lưu ý: theo xác nhận của người dùng, toàn bộ chiến dịch trong cả 3 file Ads đều được cộng vào Long MKT. File Sapo được lọc Nguồn = LONG; kỳ báo cáo 01–10/08/2026."]];
-  report.getRange(`A${noteRow}:K${noteRow + 1}`).format = { fill: "#FFF4E5", font: { italic: true, color: "#7A4E00", size: 9 }, wrapText: true, verticalAlignment: "center", borders: { preset: "outside", style: "thin", color: "#F6C26B" } };
+  report.getRange(`A${noteRow}`).values = [
+    [
+      "Lưu ý: theo xác nhận của người dùng, toàn bộ chiến dịch trong cả 3 file Ads đều được cộng vào Long MKT. File Sapo được lọc Nguồn = LONG; kỳ báo cáo 01–10/08/2026.",
+    ],
+  ];
+  report.getRange(`A${noteRow}:K${noteRow + 1}`).format = {
+    fill: "#FFF4E5",
+    font: { italic: true, color: "#7A4E00", size: 9 },
+    wrapText: true,
+    verticalAlignment: "center",
+    borders: { preset: "outside", style: "thin", color: "#F6C26B" },
+  };
   report.getRange(`A${noteRow}:K${noteRow + 1}`).format.rowHeight = 24;
   report.freezePanes.freezeRows(5);
   report.getRange("A:A").format.columnWidth = 20;
@@ -401,21 +545,58 @@ async function buildReport() {
   daily.mergeCells("A1:J1");
   daily.getRange("A1").values = [["HIỆU QUẢ LONG MKT THEO NGÀY"]];
   applyTitleStyle(daily.getRange("A1:J1"));
-  daily.getRange("A3:J3").values = [["Ngày", "Chi phí Ads", "Tin nhắn", "Đơn chốt", "Doanh thu tạm tính", "Thực thu", "CPL", "CPA", "MER tạm tính", "CTR"]];
+  daily.getRange("A3:J3").values = [
+    [
+      "Ngày",
+      "Chi phí Ads",
+      "Tin nhắn",
+      "Đơn chốt",
+      "Doanh thu tạm tính",
+      "Thực thu",
+      "CPL",
+      "CPA",
+      "MER tạm tính",
+      "CTR",
+    ],
+  ];
   applyHeaderStyle(daily.getRange("A3:J3"));
   const dayRows = [];
   for (let d = 1; d <= 10; d++) dayRows.push([new Date(Date.UTC(2026, 7, d, 12))]);
   daily.getRange("A4:A13").values = dayRows;
   for (let r = 4; r <= 13; r++) {
-    daily.getRange(`B${r}`).formulas = [[`=SUMIFS('Ads_Data'!$F$2:$F$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},"LONG",'Ads_Data'!$C$2:$C$${adsEnd},$A${r})`]];
-    daily.getRange(`C${r}`).formulas = [[`=SUMIFS('Ads_Data'!$G$2:$G$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},"LONG",'Ads_Data'!$C$2:$C$${adsEnd},$A${r})`]];
-    daily.getRange(`D${r}`).formulas = [[`=COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},"LONG",'Orders_Data'!$A$2:$A$${ordersEnd},$A${r},'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`]];
-    daily.getRange(`E${r}`).formulas = [[`=SUMIFS('Orders_Data'!$E$2:$E$${ordersEnd},'Orders_Data'!$C$2:$C$${ordersEnd},"LONG",'Orders_Data'!$A$2:$A$${ordersEnd},$A${r},'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`]];
-    daily.getRange(`F${r}`).formulas = [[`=SUMIFS('Orders_Data'!$F$2:$F$${ordersEnd},'Orders_Data'!$C$2:$C$${ordersEnd},"LONG",'Orders_Data'!$A$2:$A$${ordersEnd},$A${r},'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`]];
+    daily.getRange(`B${r}`).formulas = [
+      [
+        `=SUMIFS('Ads_Data'!$F$2:$F$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},"LONG",'Ads_Data'!$C$2:$C$${adsEnd},$A${r})`,
+      ],
+    ];
+    daily.getRange(`C${r}`).formulas = [
+      [
+        `=SUMIFS('Ads_Data'!$G$2:$G$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},"LONG",'Ads_Data'!$C$2:$C$${adsEnd},$A${r})`,
+      ],
+    ];
+    daily.getRange(`D${r}`).formulas = [
+      [
+        `=COUNTIFS('Orders_Data'!$C$2:$C$${ordersEnd},"LONG",'Orders_Data'!$A$2:$A$${ordersEnd},$A${r},'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`,
+      ],
+    ];
+    daily.getRange(`E${r}`).formulas = [
+      [
+        `=SUMIFS('Orders_Data'!$E$2:$E$${ordersEnd},'Orders_Data'!$C$2:$C$${ordersEnd},"LONG",'Orders_Data'!$A$2:$A$${ordersEnd},$A${r},'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`,
+      ],
+    ];
+    daily.getRange(`F${r}`).formulas = [
+      [
+        `=SUMIFS('Orders_Data'!$F$2:$F$${ordersEnd},'Orders_Data'!$C$2:$C$${ordersEnd},"LONG",'Orders_Data'!$A$2:$A$${ordersEnd},$A${r},'Orders_Data'!$D$2:$D$${ordersEnd},"<>Đã hủy")`,
+      ],
+    ];
     daily.getRange(`G${r}`).formulas = [[`=IFERROR(B${r}/C${r},0)`]];
     daily.getRange(`H${r}`).formulas = [[`=IFERROR(B${r}/D${r},0)`]];
     daily.getRange(`I${r}`).formulas = [[`=IFERROR(B${r}/E${r},0)`]];
-    daily.getRange(`J${r}`).formulas = [[`=IFERROR(SUMIFS('Ads_Data'!$J$2:$J$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},"LONG",'Ads_Data'!$C$2:$C$${adsEnd},$A${r})/SUMIFS('Ads_Data'!$H$2:$H$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},"LONG",'Ads_Data'!$C$2:$C$${adsEnd},$A${r}),0)`]];
+    daily.getRange(`J${r}`).formulas = [
+      [
+        `=IFERROR(SUMIFS('Ads_Data'!$J$2:$J$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},"LONG",'Ads_Data'!$C$2:$C$${adsEnd},$A${r})/SUMIFS('Ads_Data'!$H$2:$H$${adsEnd},'Ads_Data'!$E$2:$E$${adsEnd},"LONG",'Ads_Data'!$C$2:$C$${adsEnd},$A${r}),0)`,
+      ],
+    ];
   }
   daily.getRange("A4:J13").format = { borders: { preset: "all", style: "thin", color: "#D9E2F3" } };
   daily.getRange("A4:A13").format.numberFormat = "dd/mm/yyyy";
@@ -431,13 +612,35 @@ async function buildReport() {
   daily.getRange("I:J").format.columnWidth = 16;
   daily.freezePanes.freezeRows(3);
 
-  const checkMain = await workbook.inspect({ kind: "table", sheetId: "Báo cáo", range: `A1:K${noteRow + 1}`, include: "values,formulas", tableMaxRows: noteRow + 1, tableMaxCols: 11, maxChars: 18000 });
+  const checkMain = await workbook.inspect({
+    kind: "table",
+    sheetId: "Báo cáo",
+    range: `A1:K${noteRow + 1}`,
+    include: "values,formulas",
+    tableMaxRows: noteRow + 1,
+    tableMaxCols: 11,
+    maxChars: 18000,
+  });
   console.log("MAIN_CHECK");
   console.log(checkMain.ndjson);
-  const checkDaily = await workbook.inspect({ kind: "table", sheetId: "Theo ngày", range: "A1:J13", include: "values,formulas", tableMaxRows: 13, tableMaxCols: 10, maxChars: 12000 });
+  const checkDaily = await workbook.inspect({
+    kind: "table",
+    sheetId: "Theo ngày",
+    range: "A1:J13",
+    include: "values,formulas",
+    tableMaxRows: 13,
+    tableMaxCols: 10,
+    maxChars: 12000,
+  });
   console.log("DAILY_CHECK");
   console.log(checkDaily.ndjson);
-  const errors = await workbook.inspect({ kind: "match", searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A", options: { useRegex: true, maxResults: 300 }, summary: "final formula error scan", maxChars: 10000 });
+  const errors = await workbook.inspect({
+    kind: "match",
+    searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A",
+    options: { useRegex: true, maxResults: 300 },
+    summary: "final formula error scan",
+    maxChars: 10000,
+  });
   console.log("FORMULA_ERRORS");
   console.log(errors.ndjson);
 
@@ -474,14 +677,25 @@ async function writeGooglePayload() {
     ["2026-08-10", 24],
   ];
   const payload = {
-    adsRows: adsRows.map((row) => row.map((value) => value instanceof Date ? value.toISOString().slice(0, 10) : value)),
-    orderRows: orderRows.map((row) => row.map((value) => value instanceof Date ? value.toISOString().slice(0, 10) : value)),
+    adsRows: adsRows.map((row) =>
+      row.map((value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value)),
+    ),
+    orderRows: orderRows.map((row) =>
+      row.map((value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value)),
+    ),
     leadActualDaily,
     sourceFiles: Object.values(sourceFiles).map((filePath) => path.basename(filePath)),
   };
   const payloadPath = path.join(outputDir, "google_update_payload.json");
   await fs.writeFile(payloadPath, JSON.stringify(payload));
-  console.log(JSON.stringify({ payloadPath, adsRows: adsRows.length, orderRows: orderRows.length, leadActual: leadActualDaily.reduce((sum, row) => sum + row[1], 0) }));
+  console.log(
+    JSON.stringify({
+      payloadPath,
+      adsRows: adsRows.length,
+      orderRows: orderRows.length,
+      leadActual: leadActualDaily.reduce((sum, row) => sum + row[1], 0),
+    }),
+  );
 }
 
 async function emitGooglePayloadChunk() {
@@ -493,7 +707,14 @@ async function emitGooglePayloadChunk() {
   if (type === "ads") console.log(JSON.stringify(payload.adsRows.slice(start, start + count)));
   else if (type === "orders") console.log(JSON.stringify(payload.orderRows.slice(start, start + count)));
   else if (type === "leads") console.log(JSON.stringify(payload.leadActualDaily));
-  else if (type === "meta") console.log(JSON.stringify({ adsRows: payload.adsRows.length, orderRows: payload.orderRows.length, sourceFiles: payload.sourceFiles }));
+  else if (type === "meta")
+    console.log(
+      JSON.stringify({
+        adsRows: payload.adsRows.length,
+        orderRows: payload.orderRows.length,
+        sourceFiles: payload.sourceFiles,
+      }),
+    );
   else throw new Error(`Unknown payload chunk type: ${type}`);
 }
 
@@ -509,9 +730,16 @@ async function analyzeSources() {
   });
   const interesting = headers
     .map((header, index) => ({ header, index }))
-    .filter(({ header }) => /trạng thái|nhân viên|nguồn|tổng|doanh thu|thanh toán|khách|thu|nợ|mã đơn|ngày tạo|phí|tiền/i.test(header));
+    .filter(({ header }) =>
+      /trạng thái|nhân viên|nguồn|tổng|doanh thu|thanh toán|khách|thu|nợ|mã đơn|ngày tạo|phí|tiền/i.test(
+        header,
+      ),
+    );
   for (const { header, index } of interesting) {
-    const values = orderValues.slice(headerInfo.index + 1).map((r) => norm(r[index])).filter(Boolean);
+    const values = orderValues
+      .slice(headerInfo.index + 1)
+      .map((r) => norm(r[index]))
+      .filter(Boolean);
     const counts = new Map();
     for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
     const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
@@ -531,7 +759,15 @@ async function analyzeSources() {
     const date = norm(row[orderDateCol]).slice(0, 10);
     const source = norm(row[orderSourceCol]).toUpperCase();
     const key = `${date}|${source}`;
-    const b = orderDaily.get(key) ?? { date, source, orders: new Set(), completed: new Set(), cancelled: new Set(), revenue: 0, paid: 0 };
+    const b = orderDaily.get(key) ?? {
+      date,
+      source,
+      orders: new Set(),
+      completed: new Set(),
+      cancelled: new Set(),
+      revenue: 0,
+      paid: 0,
+    };
     if (!b.orders.has(id)) {
       b.orders.add(id);
       if (norm(row[orderStatusCol]) === "Hoàn thành") b.completed.add(id);
@@ -543,12 +779,20 @@ async function analyzeSources() {
   }
   console.log("ORDER_DAILY");
   for (const b of [...orderDaily.values()].sort((a, b) => a.date.localeCompare(b.date))) {
-    console.log(JSON.stringify({ ...b, orders: b.orders.size, completed: b.completed.size, cancelled: b.cancelled.size }));
+    console.log(
+      JSON.stringify({
+        ...b,
+        orders: b.orders.size,
+        completed: b.completed.size,
+        cancelled: b.cancelled.size,
+      }),
+    );
   }
 
   for (const key of ["conversations", "adsTai", "adsStopirex"]) {
     const wb = await importWorkbook(sourceFiles[key]);
-    const sheet = wb.worksheets.items.find((item) => item.name === "Raw Data Report") ?? wb.worksheets.getItemAt(0);
+    const sheet =
+      wb.worksheets.items.find((item) => item.name === "Raw Data Report") ?? wb.worksheets.getItemAt(0);
     const values = sheet.getUsedRange().values;
     const headerInfoAds = findHeaderRow(values);
     const hdr = values[headerInfoAds.index].map(norm);
@@ -566,7 +810,13 @@ async function analyzeSources() {
     const body = values.slice(headerInfoAds.index + 1);
     const hasPlacementLeaves = body.some((row) => {
       const campaign = norm(row[campaignCol]);
-      return campaign && campaign !== "All" && norm(row[placementCol]) && norm(row[placementCol]) !== "All" && norm(row[platformCol]) !== "All";
+      return (
+        campaign &&
+        campaign !== "All" &&
+        norm(row[placementCol]) &&
+        norm(row[placementCol]) !== "All" &&
+        norm(row[platformCol]) !== "All"
+      );
     });
     const adsetCol = col("Tên nhóm quảng cáo");
     const daily = new Map();
@@ -581,7 +831,16 @@ async function analyzeSources() {
       if (!isLeaf || !date || !campaign || campaign === "All") continue;
       const owner = campaignOwner(campaign);
       const bucketKey = `${date}|${owner}`;
-      const bucket = daily.get(bucketKey) ?? { date, owner, spend: 0, leads: 0, starts: 0, responses: 0, impressions: 0, rows: 0 };
+      const bucket = daily.get(bucketKey) ?? {
+        date,
+        owner,
+        spend: 0,
+        leads: 0,
+        starts: 0,
+        responses: 0,
+        impressions: 0,
+        rows: 0,
+      };
       bucket.spend += numeric(row[spendCol]);
       bucket.leads += numeric(row[leadCol]);
       bucket.starts += numeric(row[startMsgCol]);
@@ -592,7 +851,16 @@ async function analyzeSources() {
     }
     const summary = new Map();
     for (const b of daily.values()) {
-      const s = summary.get(b.owner) ?? { owner: b.owner, spend: 0, leads: 0, starts: 0, responses: 0, impressions: 0, dates: new Set(), rows: 0 };
+      const s = summary.get(b.owner) ?? {
+        owner: b.owner,
+        spend: 0,
+        leads: 0,
+        starts: 0,
+        responses: 0,
+        impressions: 0,
+        dates: new Set(),
+        rows: 0,
+      };
       s.spend += b.spend;
       s.leads += b.leads;
       s.starts += b.starts;
@@ -607,7 +875,9 @@ async function analyzeSources() {
       console.log(JSON.stringify({ ...s, dates: [...s.dates].sort() }));
     }
     console.log(`ADS_DAILY ${key}`);
-    for (const b of [...daily.values()].sort((a, b) => a.date.localeCompare(b.date) || a.owner.localeCompare(b.owner))) {
+    for (const b of [...daily.values()].sort(
+      (a, b) => a.date.localeCompare(b.date) || a.owner.localeCompare(b.owner),
+    )) {
       console.log(JSON.stringify(b));
     }
   }

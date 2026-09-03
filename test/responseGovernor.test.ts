@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  governCustomerResponse,
-  inferAnsweredTopicFromMessage,
-} from "../src/domain/responseGovernor.js";
+import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../src/domain/responseGovernor.js";
 
 test("governor không hỏi lại bối cảnh đã được khách trả lời", () => {
   const result = governCustomerResponse({
@@ -51,22 +48,13 @@ test("governor không cắt mất giá combo và CTA trong giới hạn 500 ký 
 });
 
 test("câu trả lời ngắn được gắn đúng chủ đề đang chờ", () => {
-  assert.deepEqual(
-    inferAnsweredTopicFromMessage("hok", "work_context"),
-    ["work_context"],
-  );
+  assert.deepEqual(inferAnsweredTopicFromMessage("hok", "work_context"), ["work_context"]);
 });
 
 test("câu hỏi mới không bị coi là câu trả lời cho chủ đề đang chờ", () => {
-  assert.deepEqual(
-    inferAnsweredTopicFromMessage("Giá combo 2 lọ bao nhiêu?", "symptom"),
-    ["quantity"],
-  );
+  assert.deepEqual(inferAnsweredTopicFromMessage("Giá combo 2 lọ bao nhiêu?", "symptom"), ["quantity"]);
 });
 
 test("cách nói cả 2 được nhận diện là câu trả lời cho chủ đề triệu chứng", () => {
-  assert.deepEqual(
-    inferAnsweredTopicFromMessage("cả 2", "symptom"),
-    ["symptom"],
-  );
+  assert.deepEqual(inferAnsweredTopicFromMessage("cả 2", "symptom"), ["symptom"]);
 });

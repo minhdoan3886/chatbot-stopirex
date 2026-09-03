@@ -1,8 +1,4 @@
-import type {
-  ConversationCtaId,
-  CustomerIntent,
-  SemanticUnderstanding,
-} from "./consultation.js";
+import type { ConversationCtaId, CustomerIntent, SemanticUnderstanding } from "./consultation.js";
 import type { CanonicalAnswerFact, CanonicalFactConflict } from "./knowledgeResolver.js";
 
 export type AllowedConversationCta = {
@@ -106,8 +102,7 @@ export function selectCanonicalRequiredFacts(input: {
   const requestedQuantity = query.match(
     /(?:combo|lay|mua|gia|chot|cho|dat|gui)\s*(?:m|minh|anh|chi|em)?\s*(\d)\s*(?:lo|chai)?/u,
   )?.[1];
-  const asksGift =
-    /\b(?:qua|tang|uu dai|khuyen mai)\b/u.test(query) || (asksPrice && !requestedQuantity);
+  const asksGift = /\b(?:qua|tang|uu dai|khuyen mai)\b/u.test(query) || (asksPrice && !requestedQuantity);
   const specificBundle = /body wash|sua tam/u.test(query);
   const selected: RequiredResponseFact[] = [];
   const add = (fact: RequiredResponseFact) => {
@@ -123,12 +118,17 @@ export function selectCanonicalRequiredFacts(input: {
         !fact.key.endsWith(`.${requestedQuantity}_unit`) &&
         !fact.key.endsWith(`.${requestedQuantity}_units`) &&
         !(fact.key === "shipping.stopirex.standard_fee" && requestedQuantity === "1")
-      ) continue;
+      )
+        continue;
       if (typeof fact.value === "number") {
         add({ id: fact.id, kind: "money", text: `${fact.value.toLocaleString("vi-VN")}đ` });
       }
     } else if (fact.kind === "shipping" && (asksShipping || asksPrice)) {
-      if (/pricing-approved-options-2026-08:10/u.test(fact.key) && !/mac ca|thuong luong|followup/u.test(query)) continue;
+      if (
+        /pricing-approved-options-2026-08:10/u.test(fact.key) &&
+        !/mac ca|thuong luong|followup/u.test(query)
+      )
+        continue;
       if (/bodywash_bundle/u.test(fact.key) && !specificBundle) continue;
       if (specificBundle && !/bodywash_bundle/u.test(fact.key)) continue;
       if (requestedQuantity === "1" && /\.2_5_units$/u.test(fact.key)) continue;
@@ -142,7 +142,9 @@ export function selectCanonicalRequiredFacts(input: {
     } else if (fact.kind === "duration" && (asksDuration || asksShipping)) {
       add({ id: fact.id, kind: "duration", text: String(fact.value) });
     } else if (fact.kind === "safety" && safetyTurn) {
-      for (const safetyFact of extractRequiredResponseFacts(fact.text).filter((item) => item.kind === "safety")) {
+      for (const safetyFact of extractRequiredResponseFacts(fact.text).filter(
+        (item) => item.kind === "safety",
+      )) {
         add({ ...safetyFact, id: `${fact.id}:${safetyFact.id}` });
       }
     } else if (
@@ -156,10 +158,17 @@ export function selectCanonicalRequiredFacts(input: {
   }
 
   const authoritativeReply = input.authoritativeReply ?? "";
-  const isOrderReceipt = /người nhận:|SĐT:|địa chỉ:|sản phẩm:|tổng thanh toán:|tình trạng đơn:/iu.test(authoritativeReply);
-  const asksOrderRecap = /\b(?:tong ket|doc lai|xac nhan|kiem tra)\b.{0,35}\bdon\b|\bdon\b.{0,35}\b(?:gom|co|thong tin|dung chua)\b/u.test(query);
+  const isOrderReceipt = /người nhận:|SĐT:|địa chỉ:|sản phẩm:|tổng thanh toán:|tình trạng đơn:/iu.test(
+    authoritativeReply,
+  );
+  const asksOrderRecap =
+    /\b(?:tong ket|doc lai|xac nhan|kiem tra)\b.{0,35}\bdon\b|\bdon\b.{0,35}\b(?:gom|co|thong tin|dung chua)\b/u.test(
+      query,
+    );
   if (isOrderReceipt && (asksOrderRecap || input.requireExecutionReceipt)) {
-    for (const fact of extractRequiredResponseFacts(authoritativeReply).filter((item) => item.kind === "order" || item.kind === "money")) {
+    for (const fact of extractRequiredResponseFacts(authoritativeReply).filter(
+      (item) => item.kind === "order" || item.kind === "money",
+    )) {
       add({ ...fact, id: `execution:${fact.id}` });
     }
   }
@@ -190,9 +199,7 @@ function conversationGoal(state: ResponseContractState): string {
 
 function requestedOrderSlots(state: ResponseContractState): string[] {
   if (!state.selectedQuantity) return [];
-  return state.orderMissing.filter((field) =>
-    ["recipientName", "phone", "legacyAddress"].includes(field),
-  );
+  return state.orderMissing.filter((field) => ["recipientName", "phone", "legacyAddress"].includes(field));
 }
 
 const ctaPurposes: Readonly<Record<ConversationCtaId, string>> = {
@@ -320,7 +327,12 @@ export function assertRequiredResponseFactsPresent(
       };
       if (safetyPatterns[required]?.test(compactRendered)) continue;
     } else if (fact.kind === "claim" && required === "bodywash_not_sold_separately") {
-      if (/Herbal Body Wash[^.!?\n]{0,60}chưa bán lẻ|chưa bán lẻ[^.!?\n]{0,60}Herbal Body Wash/iu.test(compactRendered)) continue;
+      if (
+        /Herbal Body Wash[^.!?\n]{0,60}chưa bán lẻ|chưa bán lẻ[^.!?\n]{0,60}Herbal Body Wash/iu.test(
+          compactRendered,
+        )
+      )
+        continue;
     } else if (compactRendered.includes(required)) {
       continue;
     }
@@ -346,22 +358,13 @@ function toAllowedCta(id: ConversationCtaId): AllowedConversationCta {
 function ctaMatchesIntent(id: ConversationCtaId, intent: CustomerIntent | undefined): boolean {
   if (!intent || id === "none" || id === "ask_clarification") return true;
   if (["price_objection", "efficacy_objection", "negotiation"].includes(intent)) {
-    return (
-      id === "ask_primary_symptom" ||
-      id === "ask_work_context" ||
-      id === "offer_usage_guidance"
-    );
+    return id === "ask_primary_symptom" || id === "ask_work_context" || id === "offer_usage_guidance";
   }
   if (intent === "safety" || intent === "ineffective") {
     return id === "ask_care_symptom" || id === "offer_usage_guidance";
   }
   if (intent === "order_support") {
-    return [
-      "ask_recipient_name",
-      "ask_phone",
-      "ask_address",
-      "confirm_order_review",
-    ].includes(id);
+    return ["ask_recipient_name", "ask_phone", "ask_address", "confirm_order_review"].includes(id);
   }
   if (id === "ask_quantity") return intent === "buying";
   return true;

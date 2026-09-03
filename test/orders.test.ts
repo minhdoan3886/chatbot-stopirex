@@ -42,9 +42,7 @@ test("đơn từ 2 lọ có đúng một túi quà tính theo đơn hàng", () =
 test("địa chỉ có chi tiết và tỉnh thành không bắt khách viết như tờ khai hành chính", () => {
   assert.deepEqual(missingLegacyAddressComponents("Số 82 Nguyễn Tuân, Hà Nội"), []);
   assert.deepEqual(
-    missingLegacyAddressComponents(
-      "Số 82 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội",
-    ),
+    missingLegacyAddressComponents("Số 82 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội"),
     [],
   );
 });

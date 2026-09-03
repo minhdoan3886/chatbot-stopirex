@@ -93,9 +93,7 @@ test("rule thương mại chỉ hậu kiểm và không được đổi intent L
   });
 
   assert.equal(result.intent, "consultation");
-  assert.deepEqual(result.trace.conflicts, [
-    "rule:negotiation ≠ semantic:consultation",
-  ]);
+  assert.deepEqual(result.trace.conflicts, ["rule:negotiation ≠ semantic:consultation"]);
   assert.match(result.trace.reason, /hậu kiểm/);
 });
 
@@ -270,8 +268,6 @@ test("câu hỏi trực tiếp mới được tạm ngắt phiên CSKH đang ho�
   assert.equal(result.route, "direct_intent");
   assert.equal(result.intent, "product_effect");
   assert.ok(
-    result.trace.ruleMatches.some(
-      (item) => item.id === "active_care_interrupted_by_direct_question",
-    ),
+    result.trace.ruleMatches.some((item) => item.id === "active_care_interrupted_by_direct_question"),
   );
 });

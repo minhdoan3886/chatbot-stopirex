@@ -82,14 +82,16 @@ export const defaultBlockedClaims: readonly ClaimRule[] = [
     id: "claim-no-darkening",
     phrase: "không gây thâm",
     status: "blocked",
-    replacement: "thâm nách có thể liên quan đến ma sát, cạo nhổ hoặc kích ứng; nên dùng đúng hướng dẫn và theo dõi phản ứng da",
+    replacement:
+      "thâm nách có thể liên quan đến ma sát, cạo nhổ hoặc kích ứng; nên dùng đúng hướng dẫn và theo dõi phản ứng da",
     effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
   },
   {
     id: "claim-never-stains",
     phrase: "không bao giờ ố vàng",
     status: "blocked",
-    replacement: "dùng buổi tối trên da sạch, khô và để sản phẩm khô trước khi mặc áo giúp hạn chế bám lên vải",
+    replacement:
+      "dùng buổi tối trên da sạch, khô và để sản phẩm khô trước khi mặc áo giúp hạn chế bám lên vải",
     effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
   },
   {

@@ -92,16 +92,16 @@ export function normalizeVietnamesePhone(rawText: string): NormalizedEntity<stri
     confidence: valid ? 0.99 : digits.length >= 8 ? 0.55 : 0.2,
     status: "proposed",
     valid,
-    ...(!valid ? { reason: digits.length === 10 ? "invalid_vietnam_mobile_prefix" : "phone_digit_count" } : {}),
+    ...(!valid
+      ? { reason: digits.length === 10 ? "invalid_vietnam_mobile_prefix" : "phone_digit_count" }
+      : {}),
   };
 }
 
 export function resolveDeliveryContext(rawText: string): NormalizedEntity<VietnameseAddress> {
   const text = normalizeComparable(rawText);
   const district = /\b(?:q\s*1|quan\s*1)\b/u.test(text) ? "Quận 1" : undefined;
-  const city = /\b(?:sg|sai gon|tphcm|tp hcm|ho chi minh)\b/u.test(text)
-    ? "TP. Hồ Chí Minh"
-    : undefined;
+  const city = /\b(?:sg|sai gon|tphcm|tp hcm|ho chi minh)\b/u.test(text) ? "TP. Hồ Chí Minh" : undefined;
   const valid = Boolean(district || city);
   return {
     raw: rawText.trim(),
@@ -134,16 +134,13 @@ export function normalizeVietnameseAddress(
   const ward = /\b(?:f|p|phuong)\s*(?:da\s*kao|dakao|dakhao)\b/u.test(comparable)
     ? "Phường Đa Kao"
     : undefined;
-  const streetMatch = comparable.match(
-    /\b(\d+[\d/]*)\s+(nguyen\s+th(?:i|j)\s+minh\s+khai)\b/u,
-  );
+  const streetMatch = comparable.match(/\b(\d+[\d/]*)\s+(nguyen\s+th(?:i|j)\s+minh\s+khai)\b/u);
   const street = streetMatch ? `${streetMatch[1]} Nguyễn Thị Minh Khai` : undefined;
   const district = context?.district ?? prior?.district;
   const city = context?.city ?? prior?.city;
-  const rawParts = [
-    ...(prior?.rawParts ?? []),
-    rawText.trim(),
-  ].filter((value, index, all) => value && all.indexOf(value) === index);
+  const rawParts = [...(prior?.rawParts ?? []), rawText.trim()].filter(
+    (value, index, all) => value && all.indexOf(value) === index,
+  );
   const mergedStreet = street ?? prior?.street;
   const mergedWard = ward ?? prior?.ward;
   const normalized: VietnameseAddress = {
@@ -179,7 +176,11 @@ export function normalizeDeliveryNotes(rawText: string): NormalizedEntity<string
   if (/\b(?:t2|thu\s*2)\b.{0,30}\b(?:t6|thu\s*6)\b/u.test(text)) {
     notes.push("Chỉ nhận hàng từ Thứ 2 đến Thứ 6");
   }
-  if (/\b(?:t7|thu\s*7)\b.{0,25}\b(?:nghi|ngi|khong nhan|ko nhan)\b|\b(?:nghi|ngi|khong nhan|ko nhan)\b.{0,25}\b(?:t7|thu\s*7)\b/u.test(text)) {
+  if (
+    /\b(?:t7|thu\s*7)\b.{0,25}\b(?:nghi|ngi|khong nhan|ko nhan)\b|\b(?:nghi|ngi|khong nhan|ko nhan)\b.{0,25}\b(?:t7|thu\s*7)\b/u.test(
+      text,
+    )
+  ) {
     notes.push("Không nhận hàng Thứ 7");
   }
   return {
@@ -193,7 +194,9 @@ export function normalizeDeliveryNotes(rawText: string): NormalizedEntity<string
 }
 
 export function mergeDeliveryNotes(existing: string | undefined, incoming: readonly string[]): string {
-  return [...new Set([...(existing ? existing.split(/\s*;\s*/u) : []), ...incoming].filter(Boolean))].join("; ");
+  return [...new Set([...(existing ? existing.split(/\s*;\s*/u) : []), ...incoming].filter(Boolean))].join(
+    "; ",
+  );
 }
 
 export function normalizeComparable(value: string): string {

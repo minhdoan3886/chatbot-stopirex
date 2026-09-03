@@ -18,9 +18,7 @@ checks.push({
 checks.push({
   name: "page_access_token",
   ok: Boolean(env.metaPageAccessToken),
-  detail: env.metaPageAccessToken
-    ? "đã cấu hình"
-    : "thiếu META_PAGE_ACCESS_TOKEN",
+  detail: env.metaPageAccessToken ? "đã cấu hình" : "thiếu META_PAGE_ACCESS_TOKEN",
 });
 
 let postgres: PostgresStore | undefined;

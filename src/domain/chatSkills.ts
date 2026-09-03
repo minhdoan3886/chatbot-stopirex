@@ -1,8 +1,4 @@
-import type {
-  CustomerIntent,
-  SemanticScenario,
-  SemanticTopic,
-} from "./consultation.js";
+import type { CustomerIntent, SemanticScenario, SemanticTopic } from "./consultation.js";
 import type { DecisionRoute } from "./conversationDecision.js";
 import type { IssueType } from "./customerCare.js";
 
@@ -46,7 +42,8 @@ export const conversationSkills: Readonly<Record<ConversationSkillId, Conversati
   "direct-answer": {
     id: "direct-answer",
     label: "Trả lời trực tiếp",
-    objective: "Trả lời ngay bằng câu ngắn, từ phổ thông và đủ tự tin; không tự chèn lời thoái thác; chỉ dẫn tiếp khi hữu ích.",
+    objective:
+      "Trả lời ngay bằng câu ngắn, từ phổ thông và đủ tự tin; không tự chèn lời thoái thác; chỉ dẫn tiếp khi hữu ích.",
     responsePattern: "kết luận thẳng → một ý giải thích dễ hiểu → bước tiếp theo tùy chọn",
     maxCharacters: 240,
     maxBubbles: 2,
@@ -56,8 +53,7 @@ export const conversationSkills: Readonly<Record<ConversationSkillId, Conversati
     id: "need-discovery",
     label: "Khai thác ngắn",
     objective: "Chỉ hỏi một dữ kiện còn thiếu bằng câu ngắn, phổ thông và dễ trả lời.",
-    responsePattern:
-      "ghi nhận trong một câu → một câu hỏi đơn giản",
+    responsePattern: "ghi nhận trong một câu → một câu hỏi đơn giản",
     maxCharacters: 220,
     maxBubbles: 2,
     maxQuestions: 1,
@@ -67,8 +63,7 @@ export const conversationSkills: Readonly<Record<ConversationSkillId, Conversati
     label: "Đưa giải pháp",
     objective:
       "Trả lời thẳng bằng từ phổ thông, tích cực, đủ mạnh; không tự chèn lời thoái thác và chỉ giữ một hướng dẫn hoặc lưu ý cần thiết.",
-    responsePattern:
-      "trả lời trực tiếp → một cách dùng/lưu ý thiết yếu → CTA tùy chọn",
+    responsePattern: "trả lời trực tiếp → một cách dùng/lưu ý thiết yếu → CTA tùy chọn",
     maxCharacters: 240,
     maxBubbles: 2,
     maxQuestions: 1,
@@ -152,9 +147,7 @@ export function isConversationSkillId(value: unknown): value is ConversationSkil
   return conversationSkillIds.includes(value as ConversationSkillId);
 }
 
-export function resolveConversationSkill(
-  input: ResolveConversationSkillInput,
-): ResolvedConversationSkill {
+export function resolveConversationSkill(input: ResolveConversationSkillInput): ResolvedConversationSkill {
   const forced = forcedSkill(input);
   if (forced) {
     return {
@@ -194,32 +187,21 @@ export function compactSkillCatalogForPrompt(): string {
   ].join("; ");
 }
 
-export function assertSkillResponseShape(
-  skillId: ConversationSkillId,
-  reply: string,
-): void {
+export function assertSkillResponseShape(skillId: ConversationSkillId, reply: string): void {
   const skill = conversationSkills[skillId];
   const questionCount = (reply.match(/[?？]/gu) ?? []).length;
   const bubbleCount = reply.split(/\n\s*\n+/u).filter((item) => item.trim()).length;
   if (/\bdạ được ạ[.!]?/iu.test(reply)) {
-    throw skillError(
-      `Skill ${skillId} dùng câu xác nhận cụt, không cung cấp giá trị`,
-    );
+    throw skillError(`Skill ${skillId} dùng câu xác nhận cụt, không cung cấp giá trị`);
   }
   if (reply.length > skill.maxCharacters) {
-    throw skillError(
-      `Skill ${skillId} vượt ${skill.maxCharacters} ký tự`,
-    );
+    throw skillError(`Skill ${skillId} vượt ${skill.maxCharacters} ký tự`);
   }
   if (bubbleCount > skill.maxBubbles) {
-    throw skillError(
-      `Skill ${skillId} vượt ${skill.maxBubbles} khối tin nhắn`,
-    );
+    throw skillError(`Skill ${skillId} vượt ${skill.maxBubbles} khối tin nhắn`);
   }
   if (questionCount > skill.maxQuestions) {
-    throw skillError(
-      `Skill ${skillId} vượt ${skill.maxQuestions} câu hỏi`,
-    );
+    throw skillError(`Skill ${skillId} vượt ${skill.maxQuestions} câu hỏi`);
   }
 }
 
@@ -243,10 +225,7 @@ function forcedSkill(
       reason: "Đang thu, recap hoặc xác nhận đơn nên khóa vào skill đơn hàng.",
     };
   }
-  if (
-    input.careIssue === "irritation" &&
-    input.scenario !== "hypothetical"
-  ) {
+  if (input.careIssue === "irritation" && input.scenario !== "hypothetical") {
     return {
       id: "safety-first",
       reason: "Kích ứng thực tế luôn ưu tiên an toàn trước bán hàng.",
@@ -273,10 +252,7 @@ function forcedSkill(
   return undefined;
 }
 
-function compatibleSuggestion(
-  skillId: ConversationSkillId,
-  input: ResolveConversationSkillInput,
-): boolean {
+function compatibleSuggestion(skillId: ConversationSkillId, input: ResolveConversationSkillInput): boolean {
   if (skillId === "pricing-objection") return isPricingObjectionIntent(input.intent);
   if (skillId === "solution-guidance") {
     return [
@@ -297,9 +273,7 @@ function compatibleSuggestion(
   return false;
 }
 
-function fallbackSkill(
-  input: ResolveConversationSkillInput,
-): { id: ConversationSkillId; reason: string } {
+function fallbackSkill(input: ResolveConversationSkillInput): { id: ConversationSkillId; reason: string } {
   if (isPricingObjectionIntent(input.intent)) {
     return {
       id: "pricing-objection",
@@ -334,12 +308,7 @@ function fallbackSkill(
 }
 
 function isPricingObjectionIntent(intent: CustomerIntent | undefined): boolean {
-  return [
-    "price_change",
-    "price_objection",
-    "negotiation",
-    "decline_purchase",
-  ].includes(intent ?? "");
+  return ["price_change", "price_objection", "negotiation", "decline_purchase"].includes(intent ?? "");
 }
 
 function skillError(message: string): Error {

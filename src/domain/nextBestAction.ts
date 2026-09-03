@@ -148,7 +148,8 @@ export function planNextBestAction(input: NextBestActionInput): PlannedNextBestA
       state: "asking_work_context",
       key: "discover_work_context",
       reason: "Đã biết vấn đề chính nhưng chưa biết hoàn cảnh làm triệu chứng rõ nhất.",
-      prompt: "Tình trạng này rõ nhất khi mình vận động/ra ngoài trời, hay cả lúc ngồi điều hòa và căng thẳng ạ?",
+      prompt:
+        "Tình trạng này rõ nhất khi mình vận động/ra ngoài trời, hay cả lúc ngồi điều hòa và căng thẳng ạ?",
     };
   }
   if (
@@ -174,11 +175,7 @@ export function planNextBestAction(input: NextBestActionInput): PlannedNextBestA
   };
 }
 
-function close(
-  key: string,
-  reason: string,
-  state: NextBestActionState = "stopped",
-): PlannedNextBestAction {
+function close(key: string, reason: string, state: NextBestActionState = "stopped"): PlannedNextBestAction {
   return { type: "close_without_question", state, key, reason };
 }
 
@@ -205,7 +202,10 @@ function hasWorkContextEvidence(value: string): boolean {
 
 function isEffectTimingQuestion(value: string): boolean {
   const text = normalize(value);
-  return /bao lau|may ngay|may tuan|tuan dau|khi nao/.test(text) && /kho|kho thoang|hieu qua|tac dung|do|giam/.test(text);
+  return (
+    /bao lau|may ngay|may tuan|tuan dau|khi nao/.test(text) &&
+    /kho|kho thoang|hieu qua|tac dung|do|giam/.test(text)
+  );
 }
 
 function isComplaintOrPolicyMessage(value: string): boolean {

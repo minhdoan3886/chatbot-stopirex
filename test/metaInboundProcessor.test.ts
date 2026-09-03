@@ -275,10 +275,7 @@ test("Meta inbound ghi attribution trước cả khi công tắc gửi phản h�
   ]);
 
   assert.equal(context.attributionTouches.length, 1);
-  assert.equal(
-    (context.attributionTouches[0]?.referral as { adId?: string } | undefined)?.adId,
-    "ad-123",
-  );
+  assert.equal((context.attributionTouches[0]?.referral as { adId?: string } | undefined)?.adId, "ad-123");
   assert.deepEqual(context.sent, []);
 });
 
@@ -308,8 +305,7 @@ test("Meta lấy tên hồ sơ Facebook làm tên người nhận khi khách ch�
   await context.processor.processBatch([
     job({
       eventId: "profile-order-1",
-      text:
-        "Cho 1 lọ. Đt 0963028734 đc: thôn Dương Trung, xã Trà Dương, huyện Bắc Trà My, Đà Nẵng",
+      text: "Cho 1 lọ. Đt 0963028734 đc: thôn Dương Trung, xã Trà Dương, huyện Bắc Trà My, Đà Nẵng",
     }),
   ]);
 
@@ -547,8 +543,7 @@ test("Meta brain không để trạng thái đơn đã tạo nuốt tin chỉ c�
         answeredQuestions: [],
         nextStep: "ask_discovery",
         groundingConfidence: 1,
-        draftReply:
-          "Dạ em chào mình ạ. Mình đang cần hỗ trợ về sản phẩm, cách dùng, giá hay đơn hàng ạ?",
+        draftReply: "Dạ em chào mình ạ. Mình đang cần hỗ trợ về sản phẩm, cách dùng, giá hay đơn hàng ạ?",
         slots: {},
       }),
   });
@@ -1921,12 +1916,7 @@ test("Meta brain sửa action giao hàng sai thành xác nhận giữ địa ch�
   const context = { orderConfirmationMode: "inbox" as const, orderEditable: true };
   chat.chat(sessionId, "Giá bao nhiêu?", {}, context);
   chat.chat(sessionId, "Mình lấy 2 lọ", {}, context);
-  chat.chat(
-    sessionId,
-    "Nguyễn Ngọc Mai, 0987654321, 15 Nguyễn Trãi, Thanh Xuân, Hà Nội",
-    {},
-    context,
-  );
+  chat.chat(sessionId, "Nguyễn Ngọc Mai, 0987654321, 15 Nguyễn Trãi, Thanh Xuân, Hà Nội", {}, context);
 
   const llm = new CodexLlmBridge({
     enabled: true,
@@ -1984,8 +1974,5 @@ test("reconciler chỉ sửa tham chiếu địa chỉ khẳng định, không s
   };
   const state = { orderDraft: { legacyAddress: "15 Nguyễn Trãi, Thanh Xuân, Hà Nội" } };
 
-  assert.equal(
-    reconcilePriorAddressConfirmation(semantic, state, "Địa chỉ cũ giao mất bao lâu?"),
-    semantic,
-  );
+  assert.equal(reconcilePriorAddressConfirmation(semantic, state, "Địa chỉ cũ giao mất bao lâu?"), semantic);
 });

@@ -55,9 +55,7 @@ test("E2E vùng hỗn mang: quantity math, spoken phone, selective overwrite, po
   assert.equal(t4.state.orderId, undefined);
   assert.equal(t4.state.nextBestAction?.state, "stopped_due_to_handoff_or_complaint");
   assert.ok(
-    t4.state.decisionTrace?.knowledgeEntityIds.includes(
-      "policy-clothing-damage-compensation-review",
-    ),
+    t4.state.decisionTrace?.knowledgeEntityIds.includes("policy-clothing-damage-compensation-review"),
   );
 
   const t5 = chat.chat(
@@ -72,8 +70,6 @@ test("E2E vùng hỗn mang: quantity math, spoken phone, selective overwrite, po
   assert.match(t5.reply, /đã hủy toàn bộ đơn.*có Alcohol.*dung môi.*ngưỡng an toàn/isu);
   assert.doesNotMatch(t5.reply, /chốt|mua thêm|giữ đơn|combo/iu);
   assert.ok(
-    t5.state.decisionTrace?.knowledgeEntityIds.includes(
-      "business-approved-alcohol-odor-guidance-2026-08",
-    ),
+    t5.state.decisionTrace?.knowledgeEntityIds.includes("business-approved-alcohol-odor-guidance-2026-08"),
   );
 });

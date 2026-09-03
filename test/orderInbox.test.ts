@@ -165,7 +165,9 @@ test("canEditPending() chỉ cho sửa đơn pending chưa có mã vận đơn",
   assert.equal(await service.canEditPending("session-001"), true);
 
   const locked = new OrderInboxService(
-    makePool([{ status: "completed", trackingNumber: "VTP123", trackingSentAt: "2026-08-30" } as never]) as never,
+    makePool([
+      { status: "completed", trackingNumber: "VTP123", trackingSentAt: "2026-08-30" } as never,
+    ]) as never,
   );
   assert.equal(await locked.canEditPending("session-001"), false);
 });
@@ -322,12 +324,7 @@ test("claimTrackingSend() chỉ nhận đơn pending chưa gửi và lưu mã th
   assert.equal(result?.trackingSendStatus, "sending");
   assert.match(queries[0]!.text, /tracking_sent_at IS NULL/u);
   assert.match(queries[0]!.text, /status = 'pending'/u);
-  assert.deepEqual(queries[0]!.params, [
-    savedRecord.id,
-    "viettel_post",
-    "VTP123456789",
-    null,
-  ]);
+  assert.deepEqual(queries[0]!.params, [savedRecord.id, "viettel_post", "VTP123456789", null]);
 });
 
 test("markTrackingSent() hoàn tất đơn chỉ sau khi Meta đã trả message id", async () => {

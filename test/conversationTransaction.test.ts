@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  reduceOrderTransaction,
-  type OrderMutationAction,
-} from "../src/domain/conversationTransaction.js";
+import { reduceOrderTransaction, type OrderMutationAction } from "../src/domain/conversationTransaction.js";
 
 const options = {
   sku: "STOPIREX",
@@ -82,7 +79,10 @@ test("low-confidence và phone sai không được reducer commit", () => {
     options,
   );
   assert.equal(transaction.after.order.phone, undefined);
-  assert.deepEqual(transaction.rejected.map((item) => item.reason), ["low_confidence", "invalid_phone"]);
+  assert.deepEqual(
+    transaction.rejected.map((item) => item.reason),
+    ["low_confidence", "invalid_phone"],
+  );
   assert.deepEqual(transaction.missingFields, [
     "recipientName",
     "phone",

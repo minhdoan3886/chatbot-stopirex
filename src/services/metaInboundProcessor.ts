@@ -18,11 +18,7 @@ import type { PushOrderInboxInput } from "./orderInbox.js";
 import type { MetaReferralAttribution } from "../domain/marketingAttribution.js";
 
 export type FollowupCoordinator = {
-  cancelConversation(input: {
-    tenantId: string;
-    conversationId: string;
-    reason: string;
-  }): Promise<number>;
+  cancelConversation(input: { tenantId: string; conversationId: string; reason: string }): Promise<number>;
   scheduleCycle(input: FollowupCycleSchedule): Promise<{ cycleId: string; created: boolean }>;
 };
 
@@ -58,7 +54,8 @@ export type MetaInboundStore = Pick<
   | "markConversationTurnOutboundSent"
   | "markInboundProcessed"
   | "canDispatchConversationOutbound"
-> & Partial<Pick<PostgresStore, "recordMarketingAttribution">>;
+> &
+  Partial<Pick<PostgresStore, "recordMarketingAttribution">>;
 
 export class MetaInboundProcessor {
   constructor(
@@ -108,9 +105,7 @@ export class MetaInboundProcessor {
     if (
       jobs.some(
         (job) =>
-          job.tenantId !== first.tenantId ||
-          job.pageId !== first.pageId ||
-          job.senderId !== first.senderId,
+          job.tenantId !== first.tenantId || job.pageId !== first.pageId || job.senderId !== first.senderId,
       )
     ) {
       throw new Error("meta_batch_scope_mismatch");
@@ -222,7 +217,10 @@ export class MetaInboundProcessor {
           anchorOutboundMessageId: lastMessageId,
           contextSnapshot: buildFollowupContextSnapshot({
             state: conversation.runtimeState,
-            customerMessage: contentJobs.map((job) => job.text ?? "").filter(Boolean).join("\n"),
+            customerMessage: contentJobs
+              .map((job) => job.text ?? "")
+              .filter(Boolean)
+              .join("\n"),
             assistantReplies: existingOutbound.texts,
             ...(conversation.displayName ? { customerDisplayName: conversation.displayName } : {}),
           }),
@@ -287,11 +285,7 @@ export class MetaInboundProcessor {
     }
     const orderEditable = await this.options.orderInbox?.canEditPending?.(sessionId);
     const chatContext = this.context(conversation.displayName, profileFirstName, orderEditable);
-    this.options.chat.restoreSession(
-      sessionId,
-      conversation.runtimeState,
-      chatContext,
-    );
+    this.options.chat.restoreSession(sessionId, conversation.runtimeState, chatContext);
     const text = batchMessages(
       contentJobs.map((job) => ({
         id: job.eventId,
@@ -318,11 +312,7 @@ export class MetaInboundProcessor {
       const reply =
         "Dạ em chào mình ạ. Mình đang cần hỗ trợ về mồ hôi, mùi cơ thể, cách dùng, giá hay đơn hàng ạ?";
       const replies = [reply];
-      const state = this.options.chat.replaceLatestAssistantTurns(
-        sessionId,
-        result.replies,
-        replies,
-      );
+      const state = this.options.chat.replaceLatestAssistantTurns(sessionId, result.replies, replies);
       this.options.logger.log("warn", "content_free_message_outbound_corrected", {
         traceId: first.traceId,
         rejectedReply: result.reply,
@@ -383,10 +373,7 @@ export class MetaInboundProcessor {
         humanStatus: "paused",
       });
     }
-    if (
-      dispatched.lastMessageId &&
-      isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)
-    ) {
+    if (dispatched.lastMessageId && isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)) {
       await this.scheduleFollowup({
         tenantId: first.tenantId,
         pageId: first.pageId,
@@ -407,7 +394,11 @@ export class MetaInboundProcessor {
     };
   }
 
-  private context(displayName?: string, firstName?: string, orderEditable?: boolean): {
+  private context(
+    displayName?: string,
+    firstName?: string,
+    orderEditable?: boolean,
+  ): {
     identity: {
       salutation: "anh/chị";
       staffFirstName: string;
@@ -538,19 +529,21 @@ export class MetaInboundProcessor {
     };
   }
 
-  private async scheduleFollowup(
-    input: Omit<FollowupCycleSchedule, "anchorSentAt">,
-  ): Promise<void> {
+  private async scheduleFollowup(input: Omit<FollowupCycleSchedule, "anchorSentAt">): Promise<void> {
     if (!this.options.followups) return;
     const scheduled = await this.options.followups.scheduleCycle({
       ...input,
       anchorSentAt: new Date(),
     });
-    this.options.logger.log("info", scheduled.created ? "followup_cycle_scheduled" : "followup_cycle_exists", {
-      conversationId: input.conversationId,
-      cycleId: scheduled.cycleId,
-      anchorOutboundMessageId: input.anchorOutboundMessageId,
-    });
+    this.options.logger.log(
+      "info",
+      scheduled.created ? "followup_cycle_scheduled" : "followup_cycle_exists",
+      {
+        conversationId: input.conversationId,
+        cycleId: scheduled.cycleId,
+        anchorOutboundMessageId: input.anchorOutboundMessageId,
+      },
+    );
   }
 
   private async markProcessed(jobs: readonly MetaInboundJob[]): Promise<void> {
@@ -622,13 +615,16 @@ function buildFollowupContextSnapshot(input: {
 
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : {};
 }
 
 function stringArray(value: unknown, limit: number): string[] {
   return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 120)).slice(0, limit)
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.slice(0, 120))
+        .slice(0, limit)
     : [];
 }
 

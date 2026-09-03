@@ -183,10 +183,7 @@ export function reconcileConversationActions(input: {
     (action) => action.type === "select_quantity" && action.source === "llm",
   );
   const explicitDeclineEvidence = extractExplicitDeclineEvidence(raw);
-  if (
-    explicitDeclineEvidence &&
-    !candidates.some((action) => action.type === "decline_purchase")
-  ) {
+  if (explicitDeclineEvidence && !candidates.some((action) => action.type === "decline_purchase")) {
     candidates.push(baseAction("decline_purchase", "guardrail", [explicitDeclineEvidence]));
   }
   if (explicitQuantity && !llmProposedQuantity) {
@@ -213,7 +210,10 @@ export function reconcileConversationActions(input: {
   if (!llmOwnsCurrentTurn) {
     for (const line of batchedMessageLines(raw)) {
       const topic = inferredBatchedLineAnswerTopic(line.normalized);
-      if (topic && !candidates.some((action) => action.type === "answer_question" && action.topic === topic)) {
+      if (
+        topic &&
+        !candidates.some((action) => action.type === "answer_question" && action.topic === topic)
+      ) {
         candidates.push({
           ...baseAction("answer_question", "state", [line.raw]),
           topic,
@@ -265,9 +265,7 @@ export function reconcileConversationActions(input: {
       action.source === "llm" &&
       action.confidence >= 0.85 &&
       hasGroundedEvidence(action, raw) &&
-      action.evidence.some((evidence) =>
-        /(?:^|\b)(?:cho|gui|lay|chot|dat)\b/u.test(normalize(evidence)),
-      ),
+      action.evidence.some((evidence) => /(?:^|\b)(?:cho|gui|lay|chot|dat)\b/u.test(normalize(evidence))),
   );
   for (const candidate of deduplicate(candidates)) {
     // A quantity mentioned inside a product/policy question is an entity, not a
@@ -347,15 +345,9 @@ export function reconcileConversationActions(input: {
           groundedLlmPurchaseProposition ||
           candidates.some(
             (action) =>
-              action.type === "update_order" &&
-              action.confidence >= 0.85 &&
-              hasGroundedEvidence(action, raw),
+              action.type === "update_order" && action.confidence >= 0.85 && hasGroundedEvidence(action, raw),
           )));
-    if (
-      llmOwnsCurrentTurn &&
-      isOrderExecution &&
-      !propositionAllowsOrderExecution
-    ) {
+    if (llmOwnsCurrentTurn && isOrderExecution && !propositionAllowsOrderExecution) {
       rejected.push({ action: candidate, reason: "llm_authority_conflict" });
       continue;
     }
@@ -426,9 +418,10 @@ export function reconcileConversationActions(input: {
   // A price/ship mention is not allowed to erase a high-confidence quantity
   // correction that the LLM grounded verbatim in an active order. Without
   // that trusted linguistic decision, the old policy guard remains intact.
-  const explicitPurchaseMatch = /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+cho)?(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:combo\s*)?(?:[1-5]|mot|hai|ba|bon|nam)\s+lo\b/.exec(
-    text,
-  );
+  const explicitPurchaseMatch =
+    /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+cho)?(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:combo\s*)?(?:[1-5]|mot|hai|ba|bon|nam)\s+lo\b/.exec(
+      text,
+    );
   const explicitUnconditionalPurchase =
     explicitQuantity !== undefined &&
     explicitPurchaseMatch?.index !== undefined &&
@@ -676,9 +669,7 @@ function trustedLlmPurchaseQuantity(input: {
       action.source === "llm" &&
       action.confidence >= 0.85 &&
       hasGroundedEvidence(action, input.raw) &&
-      action.evidence.some((evidence) =>
-        /(?:^|\b)(?:cho|gui|lay|chot|dat)\b/u.test(normalize(evidence)),
-      ),
+      action.evidence.some((evidence) => /(?:^|\b)(?:cho|gui|lay|chot|dat)\b/u.test(normalize(evidence))),
   );
   const semanticSupportsPurchase =
     input.semantic.intent === "buying" ||
@@ -874,9 +865,9 @@ function primaryIntent(
 function semanticAuthorityReady(semantic: SemanticUnderstanding): boolean {
   return Boolean(
     semantic.intent &&
-      semantic.intent !== "other" &&
-      (semantic.confidence ?? 0) >= 0.65 &&
-      semantic.needsClarification !== true,
+    semantic.intent !== "other" &&
+    (semantic.confidence ?? 0) >= 0.65 &&
+    semantic.needsClarification !== true,
   );
 }
 
@@ -901,7 +892,9 @@ function extractExplicitPurchaseQuantity(text: string): SupportedOrderQuantity |
     return 2;
   }
   if (
-    /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+cho)?(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:1|mot)\s+lo\b/.test(text)
+    /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+cho)?(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:1|mot)\s+lo\b/.test(
+      text,
+    )
   ) {
     return 1;
   }
@@ -997,14 +990,14 @@ function deduplicate(actions: readonly ConversationAction[]): ConversationAction
     const key = action.propositionId
       ? `proposition:${action.propositionId}`
       : `${action.type}:${
-      action.type === "select_quantity"
-        ? action.quantity
-        : action.type === "answer_question"
-          ? action.topic
-          : action.type === "start_customer_care"
-            ? action.issue
-            : ""
-    }`;
+          action.type === "select_quantity"
+            ? action.quantity
+            : action.type === "answer_question"
+              ? action.topic
+              : action.type === "start_customer_care"
+                ? action.issue
+                : ""
+        }`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

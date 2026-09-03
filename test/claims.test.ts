@@ -43,16 +43,12 @@ test("chặn lời trấn an tuyệt đối về kích ứng nhưng cho phép c�
 test("chỉ cho phép hoàn toàn yên tâm trong ngữ cảnh không lộn mùi nước hoa", () => {
   const registry = new ClaimRegistry(defaultBlockedClaims);
   assert.deepEqual(
-    registry.validate(
-      "Mình hoàn toàn yên tâm dùng chung với nước hoa mà không sợ bị lộn mùi đâu ạ.",
-    ),
+    registry.validate("Mình hoàn toàn yên tâm dùng chung với nước hoa mà không sợ bị lộn mùi đâu ạ."),
     [],
   );
   assert.throws(
     () =>
-      registry.assertSafe(
-        "Mình hoàn toàn yên tâm dùng chung với nước hoa, sản phẩm không gây kích ứng ạ.",
-      ),
+      registry.assertSafe("Mình hoàn toàn yên tâm dùng chung với nước hoa, sản phẩm không gây kích ứng ạ."),
     UnsafeClaimError,
   );
 });

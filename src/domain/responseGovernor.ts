@@ -31,9 +31,7 @@ export type ResponseGovernorInput = {
 const DEFAULT_MAX_CHARACTERS = 360;
 const DEFAULT_MAX_BUBBLES = 2;
 
-export function governCustomerResponse(
-  input: ResponseGovernorInput,
-): GovernedResponse {
+export function governCustomerResponse(input: ResponseGovernorInput): GovernedResponse {
   const answered = new Set(input.answeredTopics ?? []);
   const previouslyAsked = new Set(input.previouslyAskedTopics ?? []);
   const sourceBlocks = input.replies
@@ -70,9 +68,7 @@ export function governCustomerResponse(
   return {
     replies,
     askedTopics: [...new Set(askedTopics)],
-    ...(askedTopics.at(-1)
-      ? { pendingQuestionTopic: askedTopics.at(-1)! }
-      : {}),
+    ...(askedTopics.at(-1) ? { pendingQuestionTopic: askedTopics.at(-1)! } : {}),
     truncated,
   };
 }
@@ -108,10 +104,7 @@ export function inferAnsweredTopicFromMessage(
   if (/dong y|khong dong y/.test(text)) {
     topics.push("order_confirmation");
   }
-  if (
-    /(?<!\d)0\d{9}(?!\d)/.test(message) ||
-    /dia chi|sdt|so dien thoai|nguoi nhan/.test(text)
-  ) {
+  if (/(?<!\d)0\d{9}(?!\d)/.test(message) || /dia chi|sdt|so dien thoai|nguoi nhan/.test(text)) {
     topics.push("order_data");
   }
   if (
@@ -128,15 +121,15 @@ export function inferAnsweredTopicFromMessage(
 export function questionTopic(value: string): ConversationTopic | undefined {
   const withoutUrls = value.replace(/https?:\/\/\S+/giu, "");
   const questionEnd = Math.max(withoutUrls.lastIndexOf("?"), withoutUrls.lastIndexOf("？"));
-  const questionSource = questionEnd >= 0
-    ? withoutUrls
-        .slice(0, questionEnd + 1)
-        .split(/\n|(?<=[.!])\s+/u)
-        .at(-1) ?? withoutUrls
-    : withoutUrls;
+  const questionSource =
+    questionEnd >= 0
+      ? (withoutUrls
+          .slice(0, questionEnd + 1)
+          .split(/\n|(?<=[.!])\s+/u)
+          .at(-1) ?? withoutUrls)
+      : withoutUrls;
   const text = normalize(questionSource);
-  const implicitChildAgeQuestion =
-    /be bao nhieu tuoi|bao nhieu tuoi.*be|tuoi cua be/.test(text);
+  const implicitChildAgeQuestion = /be bao nhieu tuoi|bao nhieu tuoi.*be|tuoi cua be/.test(text);
   if (!/[?？]/u.test(withoutUrls) && !implicitChildAgeQuestion) return undefined;
   if (/ngoai troi|van dong|van phong|dieu hoa|cang thang|cong viec/.test(text)) {
     return "work_context";
@@ -172,13 +165,7 @@ export function questionTopic(value: string): ConversationTopic | undefined {
 }
 
 function isDiagnosticTopic(topic: ConversationTopic): boolean {
-  return [
-    "work_context",
-    "symptom",
-    "prior_product",
-    "usage",
-    "child_age",
-  ].includes(topic);
+  return ["work_context", "symptom", "prior_product", "usage", "child_age"].includes(topic);
 }
 
 function isMostlyQuestion(value: string): boolean {
@@ -275,11 +262,7 @@ function compactToCharacterLimit(
   return { replies: result, truncated: true };
 }
 
-function compactSentences(
-  value: string,
-  budget: number,
-  keepQuestion = false,
-): string {
+function compactSentences(value: string, budget: number, keepQuestion = false): string {
   if (budget <= 0) return "";
   if (value.length <= budget) return value;
   const sentences = value

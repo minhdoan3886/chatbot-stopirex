@@ -81,13 +81,12 @@ test("nút vận hành restart gateway và worker rồi kiểm tra các kết n�
   const result = await service.restartConnections();
 
   assert.equal(result.status, "healthy");
-  assert.deepEqual(restarted, [
-    "src/http/metaGateway.ts",
-    "src/worker.ts",
-    "src/followupWorker.ts",
-  ]);
+  assert.deepEqual(restarted, ["src/http/metaGateway.ts", "src/worker.ts", "src/followupWorker.ts"]);
   assert.equal(result.steps.length, 7);
-  assert.equal(result.steps.every((step) => step.status === "healthy"), true);
+  assert.equal(
+    result.steps.every((step) => step.status === "healthy"),
+    true,
+  );
   assert.match(result.steps.find((step) => step.id === "meta-public-webhook")?.detail ?? "", /Challenge/u);
   assert.match(result.steps.find((step) => step.id === "meta-graph")?.detail ?? "", /Yến Nhi/u);
 });
@@ -188,10 +187,7 @@ test("Public Webhook mất kết nối được tạo tunnel mới và cập nh�
       }
       if (url.pathname.endsWith("/app-id/subscriptions") && init?.method === "POST") {
         const body = new URLSearchParams(String(init.body));
-        assert.equal(
-          body.get("callback_url"),
-          "https://new.trycloudflare.com/webhooks/meta",
-        );
+        assert.equal(body.get("callback_url"), "https://new.trycloudflare.com/webhooks/meta");
         return Response.json({ success: true });
       }
       if (url.pathname.endsWith("/page-id/subscribed_apps")) {
@@ -223,10 +219,7 @@ test("Public Webhook mất kết nối được tạo tunnel mới và cập nh�
   assert.equal(publicWebhook?.status, "healthy");
   assert.equal(publicWebhook?.action, "restart");
   assert.match(publicWebhook?.detail ?? "", /tunnel mới/u);
-  assert.equal(
-    env.metaPublicWebhookUrl,
-    "https://new.trycloudflare.com/webhooks/meta",
-  );
+  assert.equal(env.metaPublicWebhookUrl, "https://new.trycloudflare.com/webhooks/meta");
   assert.equal(runtimeValues.length, 2);
   const stored = runtimeValues.find(
     (value) => typeof value === "object" && value !== null && "url" in value,

@@ -57,9 +57,14 @@ test("replay các lỗi hội thoại thực tế từ ảnh kiểm thử", () =
 
   for (const fixture of cases) {
     const chat = new DemoChatService();
-    const result = chat.chat(fixture.id, fixture.input, {}, {
-      actionExecutionMode: "multi_action",
-    });
+    const result = chat.chat(
+      fixture.id,
+      fixture.input,
+      {},
+      {
+        actionExecutionMode: "multi_action",
+      },
+    );
     assert.match(result.reply, fixture.match, fixture.id);
     assert.doesNotMatch(result.reply, fixture.reject, fixture.id);
     if (fixture.expectedQuantity) {
@@ -73,18 +78,8 @@ test("replay địa chỉ viết tiếp khi đang thu đơn không bị coi là 
   const context = { actionExecutionMode: "multi_action" as const };
   chat.chat("address-fragment-replay", "Giá bao nhiêu?", {}, context);
   chat.chat("address-fragment-replay", "Mình lấy 1 lọ", {}, context);
-  chat.chat(
-    "address-fragment-replay",
-    "Nguyễn Tuấn 0912345678, số 20 Nguyễn Trãi, Hà Nội",
-    {},
-    context,
-  );
-  const result = chat.chat(
-    "address-fragment-replay",
-    "Thanh Xuân Trung, Thanh Xuân",
-    {},
-    context,
-  );
+  chat.chat("address-fragment-replay", "Nguyễn Tuấn 0912345678, số 20 Nguyễn Trãi, Hà Nội", {}, context);
+  const result = chat.chat("address-fragment-replay", "Thanh Xuân Trung, Thanh Xuân", {}, context);
 
   assert.doesNotMatch(result.reply, /chưa hiểu rõ ý|sản phẩm hay vấn đề khác/iu);
   assert.match(result.reply, /Thanh Xuân Trung/iu);

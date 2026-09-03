@@ -1,10 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  dataDeletionPage,
-  privacyPolicyPage,
-  termsOfServicePage,
-} from "../src/http/publicPolicyPages.js";
+import { dataDeletionPage, privacyPolicyPage, termsOfServicePage } from "../src/http/publicPolicyPages.js";
 
 test("public policy pages expose the Meta review essentials", () => {
   assert.match(privacyPolicyPage, /Chính sách quyền riêng tư/u);

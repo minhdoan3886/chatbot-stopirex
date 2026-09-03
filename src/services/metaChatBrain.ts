@@ -1,10 +1,7 @@
 import { createHash } from "node:crypto";
 import { retrieveKnowledgeMatches, type KnowledgeMatch } from "../domain/knowledge.js";
 import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
-import {
-  allowedConversationCtas,
-  buildWorkflowResponseContract,
-} from "../domain/responseContract.js";
+import { allowedConversationCtas, buildWorkflowResponseContract } from "../domain/responseContract.js";
 import {
   responseGuardVerdict,
   type ResponseGuardVerdict,
@@ -262,14 +259,15 @@ export class MetaChatBrain {
         confidence: llmResult.confidence,
         actionCount: llmResult.actions?.length ?? 0,
         propositionCount: llmResult.propositions?.length ?? 0,
-        propositions: llmResult.propositions?.map((proposition) => ({
-          id: proposition.id,
-          speechAct: proposition.speechAct,
-          action: proposition.action,
-          target: proposition.target,
-          confidence: proposition.confidence,
-          evidenceRef: evidenceRef(proposition.rawEvidence),
-        })) ?? [],
+        propositions:
+          llmResult.propositions?.map((proposition) => ({
+            id: proposition.id,
+            speechAct: proposition.speechAct,
+            action: proposition.action,
+            target: proposition.target,
+            confidence: proposition.confidence,
+            evidenceRef: evidenceRef(proposition.rawEvidence),
+          })) ?? [],
         actions: llmResult.actions?.map((action) => action.type) ?? [],
         actionTopics:
           llmResult.actions
@@ -324,13 +322,7 @@ export class MetaChatBrain {
       response: DemoChatResponse,
       verdict: ResponseGuardVerdict,
       responseClaimedSavedFields: readonly string[] = [],
-    ): DemoChatResponse => this.deliverTurn(
-      input,
-      before,
-      response,
-      verdict,
-      responseClaimedSavedFields,
-    );
+    ): DemoChatResponse => this.deliverTurn(input, before, response, verdict, responseClaimedSavedFields);
     if (this.rollout.mode !== "enabled") {
       const alternateVariant = liveVariant === "multi_action" ? "legacy" : "multi_action";
       const alternateChat = new DemoChatService();
@@ -454,8 +446,7 @@ export class MetaChatBrain {
       ? { ...composed, claimedSavedFields: interpreted.claimedSavedFields }
       : composed;
     const requiresPostCommitComposition = Boolean(
-      interpreted.propositions?.length &&
-      base.state.orderTransactionTrace?.acceptedMutations?.length,
+      interpreted.propositions?.length && base.state.orderTransactionTrace?.acceptedMutations?.length,
     );
     if (requiresPostCommitComposition) {
       const postCommitComposition = await this.llm.composePostCommit({
@@ -596,8 +587,7 @@ export class MetaChatBrain {
       });
     }
     const missingHardRequiredTopic =
-      composed.status === "enhanced" &&
-      missingRequiredAnswerTopics(input.text, composed.reply).length > 0;
+      composed.status === "enhanced" && missingRequiredAnswerTopics(input.text, composed.reply).length > 0;
     if (!coverage.complete && (composed.status !== "enhanced" || missingHardRequiredTopic)) {
       const groundedBaseCoverage = assessQuestionCoverage({
         customerMessage: input.text,
@@ -774,16 +764,10 @@ export class MetaChatBrain {
           composed = repaired;
           compositionSource = "llm_repair";
         } catch {
-          return deliver(
-            base,
-            responseGuardVerdict({ reason, source: "workflow_safe_fallback" }),
-          );
+          return deliver(base, responseGuardVerdict({ reason, source: "workflow_safe_fallback" }));
         }
       } else {
-        return deliver(
-          base,
-          responseGuardVerdict({ reason, source: "workflow_safe_fallback" }),
-        );
+        return deliver(base, responseGuardVerdict({ reason, source: "workflow_safe_fallback" }));
       }
     }
     if (base.state.decisionTrace && interpreted.knowledgeIds) {
@@ -935,22 +919,24 @@ export class MetaChatBrain {
       orderLifecycleAfter: response.state.orderLifecycle ?? response.state.orderFlowStatus ?? "idle",
       selectedQuantityBefore: before.selectedQuantity ?? null,
       selectedQuantityAfter: response.state.selectedQuantity ?? null,
-      acceptedActions: actionPlan?.accepted.map((action) => ({
-        type: action.type,
-        source: action.source,
-        confidence: action.confidence,
-        propositionId: action.propositionId ?? null,
-        speechAct: action.speechAct ?? null,
-        target: action.target ?? null,
-        evidenceRefs: action.evidence.map(evidenceRef),
-      })) ?? [],
-      rejectedActions: actionPlan?.rejected.map((item) => ({
-        type: item.action.type,
-        source: item.action.source,
-        reason: item.reason,
-        propositionId: item.action.propositionId ?? null,
-        evidenceRefs: item.action.evidence.map(evidenceRef),
-      })) ?? [],
+      acceptedActions:
+        actionPlan?.accepted.map((action) => ({
+          type: action.type,
+          source: action.source,
+          confidence: action.confidence,
+          propositionId: action.propositionId ?? null,
+          speechAct: action.speechAct ?? null,
+          target: action.target ?? null,
+          evidenceRefs: action.evidence.map(evidenceRef),
+        })) ?? [],
+      rejectedActions:
+        actionPlan?.rejected.map((item) => ({
+          type: item.action.type,
+          source: item.action.source,
+          reason: item.reason,
+          propositionId: item.action.propositionId ?? null,
+          evidenceRefs: item.action.evidence.map(evidenceRef),
+        })) ?? [],
       acceptedOrderMutations,
       rejectedOrderMutations: trace?.rejectedMutations ?? [],
       unchangedOrderFields: trace?.unchangedFields ?? [],
@@ -1048,11 +1034,7 @@ export function reconcilePriorAddressConfirmation<T extends SemanticUnderstandin
   customerMessage: string,
 ): T {
   const currentAddress = state.orderDraft?.legacyAddress;
-  if (
-    !currentAddress ||
-    !isPriorAddressReference(customerMessage) ||
-    /[?？]/u.test(customerMessage)
-  ) {
+  if (!currentAddress || !isPriorAddressReference(customerMessage) || /[?？]/u.test(customerMessage)) {
     return semantic;
   }
 

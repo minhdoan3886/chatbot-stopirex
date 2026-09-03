@@ -95,7 +95,10 @@ test("E2E 5 lượt kiểm soát NBA từ khám phá tới đơn và chính sác
     sessionId,
     "Mình bị cả hai luôn. Mà cho mình hỏi cái này khác gì mấy loại lăn khử mùi trong siêu thị vậy? Cơ chế hoạt động của nó như thế nào mà đắt thế?",
   );
-  assert.match(t2.reply, /lăn khử mùi thông thường.*che mùi.*ngăn tiết mồ hôi chuyên sâu.*kiểm soát lượng mồ hôi/isu);
+  assert.match(
+    t2.reply,
+    /lăn khử mùi thông thường.*che mùi.*ngăn tiết mồ hôi chuyên sâu.*kiểm soát lượng mồ hôi/isu,
+  );
   assert.ok(t2.reply.length > 280);
   assert.doesNotMatch(t2.reply, /mình.*(?:hỏi|muốn|gửi).*[?？]/iu);
   assert.equal(t2.state.nextBestAction?.state, "stopped_due_to_length");

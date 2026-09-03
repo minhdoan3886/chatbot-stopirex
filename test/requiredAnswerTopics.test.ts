@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  missingRequiredAnswerTopics,
-  requiredAnswerTopics,
-} from "../src/domain/requiredAnswerTopics.js";
+import { missingRequiredAnswerTopics, requiredAnswerTopics } from "../src/domain/requiredAnswerTopics.js";
 
 const question =
   "Đứa bạn mình dùng bị xót rát nách lắm, nếu mình bôi mà cũng bị thế thì có được trả hàng hoàn tiền không?";
@@ -19,14 +16,11 @@ test("câu hỏi bảo hành do lo kích ứng phải xác nhận quyền lợi 
 test("không chấp nhận câu né xác nhận bảo hành rồi mới nói điều kiện", () => {
   const indirectReply =
     "Nếu bôi thấy rát kéo dài, mình ngưng dùng và nhắn bên em kiểm tra. Chính sách hoàn tiền áp dụng khi dùng đúng hướng dẫn đủ 2 tuần; hồ sơ có clip nhúng hủy và không cần gửi lại sản phẩm.";
-  assert.deepEqual(missingRequiredAnswerTopics(question, indirectReply), [
-    "hypothetical_irritation_refund",
-  ]);
+  assert.deepEqual(missingRequiredAnswerTopics(question, indirectReply), ["hypothetical_irritation_refund"]);
 });
 
 test("câu hỏi bôi buổi sáng bắt buộc đính chính thời điểm dùng buổi tối", () => {
-  const morningQuestion =
-    "Thế sáng dậy rửa mặt xong thì bôi Stopirex trước khi mặc áo đi làm đúng không?";
+  const morningQuestion = "Thế sáng dậy rửa mặt xong thì bôi Stopirex trước khi mặc áo đi làm đúng không?";
   assert.deepEqual(requiredAnswerTopics(morningQuestion), ["usage_time"]);
   assert.deepEqual(
     missingRequiredAnswerTopics(

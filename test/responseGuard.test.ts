@@ -27,13 +27,10 @@ test("giá, claim, action và state sai bị block cứng", () => {
 });
 
 test("draft hoặc repair đã qua validation được allow", () => {
-  assert.deepEqual(
-    responseGuardVerdict({ accepted: true, reason: "validated", source: "llm_repair" }),
-    {
-      outcome: "allow",
-      reason: "validated",
-      hard: false,
-      source: "llm_repair",
-    },
-  );
+  assert.deepEqual(responseGuardVerdict({ accepted: true, reason: "validated", source: "llm_repair" }), {
+    outcome: "allow",
+    reason: "validated",
+    hard: false,
+    source: "llm_repair",
+  });
 });

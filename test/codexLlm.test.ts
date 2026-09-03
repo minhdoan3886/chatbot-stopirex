@@ -49,10 +49,7 @@ test("hậu kiểm buộc tin dấu chấm có đúng một câu hỏi hỗ tr�
     ),
     true,
   );
-  assert.equal(
-    isHelpfulContentFreeReply(".", "Mình chưa thấy nội dung cần hỗ trợ từ tin nhắn này."),
-    false,
-  );
+  assert.equal(isHelpfulContentFreeReply(".", "Mình chưa thấy nội dung cần hỗ trợ từ tin nhắn này."), false);
   assert.equal(
     isHelpfulContentFreeReply(
       ".",
@@ -60,14 +57,8 @@ test("hậu kiểm buộc tin dấu chấm có đúng một câu hỏi hỗ tr�
     ),
     false,
   );
-  assert.equal(
-    isHelpfulContentFreeReply(".", "Dạ mình nói rõ hơn để em hỗ trợ đúng nhu cầu ạ?"),
-    false,
-  );
-  assert.equal(
-    isHelpfulContentFreeReply(".", "Dạ mình cần hỗ trợ gì ạ? Hay mình muốn xem giá ạ?"),
-    false,
-  );
+  assert.equal(isHelpfulContentFreeReply(".", "Dạ mình nói rõ hơn để em hỗ trợ đúng nhu cầu ạ?"), false);
+  assert.equal(isHelpfulContentFreeReply(".", "Dạ mình cần hỗ trợ gì ạ? Hay mình muốn xem giá ạ?"), false);
 });
 
 test("citation repair chỉ gắn nguồn retrieval khi LLM đã có draft và answer action", () => {
@@ -1292,8 +1283,7 @@ test("single-pass draft không được biến câu hỏi giá hiện tại thà
     customerMessage: "nay giá có đổi ko e",
     draftReply:
       "Dạ có ạ, hiện giá 1 lọ Stopirex là 285.000đ, phí giao 30.000đ. Lý do điều chỉnh là do chi phí nhập khẩu từ Pháp tăng ạ.",
-    baseReply:
-      "Dạ giá hiện tại chưa có thay đổi mới ạ: 1 lọ Stopirex 285.000đ + 30.000đ phí giao.",
+    baseReply: "Dạ giá hiện tại chưa có thay đổi mới ạ: 1 lọ Stopirex 285.000đ + 30.000đ phí giao.",
     state,
   });
 
@@ -1307,8 +1297,7 @@ test("single-pass draft không được khẳng định có mã vận đơn khi 
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const composed = bridge.adoptInterpretedDraft({
     customerMessage: "ib",
-    draftReply:
-      "Dạ đơn của mình đã có mã vận đơn nên em chưa thể tự sửa thông tin ạ.",
+    draftReply: "Dạ đơn của mình đã có mã vận đơn nên em chưa thể tự sửa thông tin ạ.",
     baseReply: "Dạ em chào mình ạ. Mình cần em hỗ trợ về sản phẩm hay đơn hàng ạ?",
     state,
   });
@@ -2019,11 +2008,10 @@ test("semantic parser giữ nhiều proposition độc lập và bridge sang act
     }),
   );
   assert.equal(result.propositions?.length, 3);
-  assert.deepEqual(result.actions?.map((action) => action.type), [
-    "select_quantity",
-    "answer_question",
-    "answer_question",
-  ]);
+  assert.deepEqual(
+    result.actions?.map((action) => action.type),
+    ["select_quantity", "answer_question", "answer_question"],
+  );
   assert.equal(result.actions?.[0]?.propositionId, "p1");
 });
 

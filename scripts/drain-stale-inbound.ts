@@ -28,14 +28,16 @@ try {
     const count = Number(preview.rows[0]?.count ?? 0);
     if (!apply || count === 0) {
       await client.query("ROLLBACK");
-      console.log(JSON.stringify({
-        event: "safe_drain_preview",
-        apply,
-        count,
-        cutoffMinutes,
-        oldestAt: iso(preview.rows[0]?.oldest_at),
-        newestAt: iso(preview.rows[0]?.newest_at),
-      }));
+      console.log(
+        JSON.stringify({
+          event: "safe_drain_preview",
+          apply,
+          count,
+          cutoffMinutes,
+          oldestAt: iso(preview.rows[0]?.oldest_at),
+          newestAt: iso(preview.rows[0]?.newest_at),
+        }),
+      );
     } else {
       const drained = await client.query(
         `WITH updated AS (
@@ -65,14 +67,16 @@ try {
         [cutoffMinutes, traceId],
       );
       await client.query("COMMIT");
-      console.log(JSON.stringify({
-        event: "safe_drain_applied",
-        traceId,
-        count: Number(drained.rows[0]?.count ?? 0),
-        cutoffMinutes,
-        oldestAt: iso(drained.rows[0]?.oldest_at),
-        newestAt: iso(drained.rows[0]?.newest_at),
-      }));
+      console.log(
+        JSON.stringify({
+          event: "safe_drain_applied",
+          traceId,
+          count: Number(drained.rows[0]?.count ?? 0),
+          cutoffMinutes,
+          oldestAt: iso(drained.rows[0]?.oldest_at),
+          newestAt: iso(drained.rows[0]?.newest_at),
+        }),
+      );
     }
   } catch (error) {
     await client.query("ROLLBACK");

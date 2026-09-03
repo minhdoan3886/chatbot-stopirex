@@ -1,12 +1,6 @@
 import type { SemanticTopic } from "./consultation.js";
 
-export type PropositionSpeechAct =
-  | "question"
-  | "provide_data"
-  | "update"
-  | "confirm"
-  | "reject"
-  | "request";
+export type PropositionSpeechAct = "question" | "provide_data" | "update" | "confirm" | "reject" | "request";
 
 export type PropositionAction =
   | "answer_question"
@@ -19,11 +13,7 @@ export type PropositionAction =
   | "handoff_to_human"
   | "record_fact";
 
-export type PropositionOrderField =
-  | "recipientName"
-  | "phone"
-  | "legacyAddress"
-  | "deliveryNote";
+export type PropositionOrderField = "recipientName" | "phone" | "legacyAddress" | "deliveryNote";
 
 /**
  * One independently verifiable meaning unit from the customer's message.

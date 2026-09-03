@@ -10,9 +10,7 @@ export class GraphMetaMessenger implements MetaMessenger {
     },
   ) {}
 
-  async getProfile(
-    recipientId: string,
-  ): Promise<ProviderResult<{ name?: string; firstName?: string }>> {
+  async getProfile(recipientId: string): Promise<ProviderResult<{ name?: string; firstName?: string }>> {
     try {
       const params = new URLSearchParams({
         fields: "first_name,last_name,name",
@@ -137,6 +135,10 @@ export class GraphMetaMessenger implements MetaMessenger {
 
 function cleanProfileName(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const cleaned = value.replace(/[<>{}#]/gu, "").replace(/\s+/gu, " ").trim().slice(0, 80);
+  const cleaned = value
+    .replace(/[<>{}#]/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 80);
   return cleaned || undefined;
 }

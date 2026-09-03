@@ -13,14 +13,27 @@ export type OrderMutationAction = (
   | { type: "set_quantity"; quantity: SupportedOrderQuantity; evidence: string }
   | { type: "set_phone"; phone: string; evidence: string }
   | { type: "set_recipient_name"; recipientName: string; evidence: string }
-  | { type: "set_address"; address: string; structured?: VietnameseAddress; operation: "replace" | "append"; evidence: string }
+  | {
+      type: "set_address";
+      address: string;
+      structured?: VietnameseAddress;
+      operation: "replace" | "append";
+      evidence: string;
+    }
   | { type: "set_delivery_note"; deliveryNote: string; evidence: string }
   | { type: "confirm_order"; confirmedAt: Date; evidence: string }
-) & OrderMutationMetadata;
+) &
+  OrderMutationMetadata;
 
 export type OrderMutationRejection = {
   action: OrderMutationAction;
-  reason: "low_confidence" | "missing_evidence" | "invalid_phone" | "invalid_name" | "invalid_address" | "invalid_delivery_note";
+  reason:
+    | "low_confidence"
+    | "missing_evidence"
+    | "invalid_phone"
+    | "invalid_name"
+    | "invalid_address"
+    | "invalid_delivery_note";
 };
 
 export type OrderTransactionState = {
@@ -190,7 +203,10 @@ function mutationChanged(
 function reconcileOrderMutations(actions: readonly OrderMutationAction[]): OrderMutationAction[] {
   const lastByField = new Map<string, OrderMutationAction>();
   for (const action of actions) {
-    const key = action.type === "set_address" && action.operation === "append" ? `${action.type}:${action.address}` : action.type;
+    const key =
+      action.type === "set_address" && action.operation === "append"
+        ? `${action.type}:${action.address}`
+        : action.type;
     lastByField.set(key, action);
   }
   return [...lastByField.values()];
@@ -199,7 +215,12 @@ function reconcileOrderMutations(actions: readonly OrderMutationAction[]): Order
 function collectMutationConflicts(actions: readonly OrderMutationAction[]): string[] {
   const conflicts: string[] = [];
   const quantities = new Set(
-    actions.filter((action): action is Extract<OrderMutationAction, { type: "set_quantity" }> => action.type === "set_quantity").map((action) => action.quantity),
+    actions
+      .filter(
+        (action): action is Extract<OrderMutationAction, { type: "set_quantity" }> =>
+          action.type === "set_quantity",
+      )
+      .map((action) => action.quantity),
   );
   if (quantities.size > 1) conflicts.push("multiple_quantity_values_last_write_wins");
   const replacements = new Set(

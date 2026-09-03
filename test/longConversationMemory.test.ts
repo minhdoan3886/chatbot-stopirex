@@ -74,9 +74,7 @@ memoryAuditTest("memory E2E: tư vấn, đổi chủ đề rồi quay lại ch�
   const score = {
     remembersSweat: /mồ hôi/iu.test(suitabilityReply) ? 2 : 0,
     remembersTrigger: /căng thẳng|họp/iu.test(suitabilityReply) ? 1 : 0,
-    remembersMildOdor: /mùi[^.!?\n]{0,40}(?:không|chưa)[^.!?\n]{0,20}nặng|mùi nhẹ/iu.test(
-      suitabilityReply,
-    )
+    remembersMildOdor: /mùi[^.!?\n]{0,40}(?:không|chưa)[^.!?\n]{0,20}nặng|mùi nhẹ/iu.test(suitabilityReply)
       ? 1
       : 0,
     remembersSensitiveSkin: /nhạy cảm/iu.test(suitabilityReply) ? 1 : 0,
@@ -92,10 +90,15 @@ memoryAuditTest("memory E2E: tư vấn, đổi chủ đề rồi quay lại ch�
       finalState.orderDraft?.phone === "0981234567"
         ? 2
         : 0,
-    accurateRecap:
-      hasAll(finalReply, [/2 lọ/iu, /Minh Anh/iu, /0981234567/u, /25 Lạch Tray/iu, /Hải Phòng/iu])
-        ? 1
-        : 0,
+    accurateRecap: hasAll(finalReply, [
+      /2 lọ/iu,
+      /Minh Anh/iu,
+      /0981234567/u,
+      /25 Lạch Tray/iu,
+      /Hải Phòng/iu,
+    ])
+      ? 1
+      : 0,
   };
   const total = Object.values(score).reduce((sum, value) => sum + value, 0);
 
@@ -145,11 +148,7 @@ memoryAuditTest("memory E2E: sửa thông tin đơn phải ghi đè giá trị c
   );
 
   assert.match(logs[13]?.bot ?? "", /2 lọ/iu, "Phải trả lời đúng số lượng ban đầu");
-  assert.match(
-    logs[14]?.bot ?? "",
-    /Nguyễn Ngọc Mai/iu,
-    "Phải đọc lại đúng người nhận hiện hành",
-  );
+  assert.match(logs[14]?.bot ?? "", /Nguyễn Ngọc Mai/iu, "Phải đọc lại đúng người nhận hiện hành");
   assert.match(logs[15]?.bot ?? "", /0987654321/u, "Phải đọc lại số điện thoại hiện hành");
   assert.doesNotMatch(
     logs[15]?.bot ?? "",

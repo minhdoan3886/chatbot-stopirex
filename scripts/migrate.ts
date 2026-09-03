@@ -17,27 +17,22 @@ try {
     .map((file) => `migrations/${file}`);
   for (const file of files) {
     const filename = file.split("/").at(-1)!;
-    const applied = await pool.query(
-      "SELECT 1 FROM schema_migrations WHERE filename = $1",
-      [filename],
-    );
+    const applied = await pool.query("SELECT 1 FROM schema_migrations WHERE filename = $1", [filename]);
     if (applied.rowCount === 1) {
       console.log(JSON.stringify({ event: "migration_skipped", file }));
       continue;
     }
     if (await legacyMigrationAlreadyPresent(filename)) {
-      await pool.query(
-        "INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING",
-        [filename],
-      );
+      await pool.query("INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING", [
+        filename,
+      ]);
       console.log(JSON.stringify({ event: "migration_baselined", file }));
       continue;
     }
     await pool.query(await readFile(file, "utf8"));
-    await pool.query(
-      "INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING",
-      [filename],
-    );
+    await pool.query("INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING", [
+      filename,
+    ]);
     console.log(JSON.stringify({ event: "migration_applied", file }));
   }
 } finally {
@@ -47,10 +42,8 @@ try {
 async function legacyMigrationAlreadyPresent(filename: string): Promise<boolean> {
   const sentinel: Record<string, string> = {
     "001_init.sql": "SELECT to_regclass('public.tenants') IS NOT NULL AS present",
-    "002_runtime.sql":
-      "SELECT to_regclass('public.knowledge_versions') IS NOT NULL AS present",
-    "003_conversation_quality.sql":
-      "SELECT to_regclass('public.care_cases') IS NOT NULL AS present",
+    "002_runtime.sql": "SELECT to_regclass('public.knowledge_versions') IS NOT NULL AS present",
+    "003_conversation_quality.sql": "SELECT to_regclass('public.care_cases') IS NOT NULL AS present",
     "004_meta_runtime.sql": `
       SELECT EXISTS (
         SELECT 1 FROM information_schema.columns

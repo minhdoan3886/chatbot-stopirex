@@ -73,9 +73,7 @@ export function isHelpfulContentFreeReply(customerMessage: string, reply: string
   if (!isContentFreeCustomerMessage(customerMessage)) return true;
   const questionCount = (reply.match(/[?？]/gu) ?? []).length;
   if (questionCount !== 1) return false;
-  const asksForNeed = /cần hỗ trợ|muốn (?:được )?hỗ trợ|muốn hỏi|quan tâm|nhu cầu|cần tư vấn/iu.test(
-    reply,
-  );
+  const asksForNeed = /cần hỗ trợ|muốn (?:được )?hỗ trợ|muốn hỏi|quan tâm|nhu cầu|cần tư vấn/iu.test(reply);
   const pushesClarificationBackToCustomer =
     /(?:chưa|không) (?:thấy|có|hiểu)[^.!?\n]{0,100}(?:nội dung|tin nhắn|ý)|(?:chuyển|nhờ) bộ phận liên quan|diễn đạt|nói rõ|viết lại|gửi lại|chính câu này|dấu chấm|ngữ cảnh/iu.test(
       reply,
@@ -483,9 +481,7 @@ export class CodexLlmBridge {
         understanding = parseAndValidate(raw);
       } catch (error) {
         if (!this.strictInterpretOutput || !isSemanticOutputContractError(error)) throw error;
-        raw = (
-          await this.run(buildSemanticContractRetryPrompt(prompt, error), "interpret")
-        ).trim();
+        raw = (await this.run(buildSemanticContractRetryPrompt(prompt, error), "interpret")).trim();
         understanding = parseAndValidate(raw);
       }
       if (cacheAllowed) remember(this.cache, prompt, raw);
@@ -536,15 +532,15 @@ export class CodexLlmBridge {
             ? "commerce_guard"
             : error instanceof Error && error.name === "ConversationDirectionError"
               ? "direction_guard"
-            : error instanceof Error && error.name === "AdvisorVoiceError"
+              : error instanceof Error && error.name === "AdvisorVoiceError"
                 ? "advisor_voice_guard"
                 : error instanceof Error && error.name === "PriceChangeGroundingError"
                   ? "price_change_guard"
                   : error instanceof Error && error.name === "ActionGroundingError"
                     ? "action_grounding_guard"
-                : error instanceof Error && error.name === "FactPreservationError"
-                  ? "fact_guard"
-                  : llmFailureReason(error);
+                    : error instanceof Error && error.name === "FactPreservationError"
+                      ? "fact_guard"
+                      : llmFailureReason(error);
       return this.result(input.baseReply, "fallback", startedAt, reason);
     }
   }
@@ -676,13 +672,13 @@ export class CodexLlmBridge {
                     ? "action_grounding_guard"
                     : error instanceof Error && error.name === "PriceChangeGroundingError"
                       ? "price_change_guard"
-                    : error instanceof Error && error.name === "ContentFreeMessageReplyError"
-                      ? "content_free_message_guard"
-                    : error instanceof Error && error.name === "SkillResponseError"
-                      ? "skill_shape_guard"
-                      : error instanceof KnowledgeGroundingError
-                        ? `knowledge_grounding_guard:${error.code}`
-                        : "fact_guard";
+                      : error instanceof Error && error.name === "ContentFreeMessageReplyError"
+                        ? "content_free_message_guard"
+                        : error instanceof Error && error.name === "SkillResponseError"
+                          ? "skill_shape_guard"
+                          : error instanceof KnowledgeGroundingError
+                            ? `knowledge_grounding_guard:${error.code}`
+                            : "fact_guard";
       if (
         input.softStylePolicy === "warn" &&
         (reason === "advisor_voice_guard" || reason === "skill_shape_guard")
@@ -791,13 +787,16 @@ export class CodexLlmBridge {
       try {
         validated = validate(raw);
       } catch (validationError) {
-        const feedback = validationError instanceof Error
-          ? `${validationError.name}: ${validationError.message}`
-          : "post_commit_validation_failed";
-        raw = (await this.run(
-          `${prompt}\nLẦN TRƯỚC KHÔNG ĐẠT HẬU KIỂM: ${feedback}. Tạo lại JSON, chỉ sửa flexible text; giữ đủ REQUIRED_FACTS và chỉ khai field đã commit.`,
-          "post_commit",
-        )).trim();
+        const feedback =
+          validationError instanceof Error
+            ? `${validationError.name}: ${validationError.message}`
+            : "post_commit_validation_failed";
+        raw = (
+          await this.run(
+            `${prompt}\nLẦN TRƯỚC KHÔNG ĐẠT HẬU KIỂM: ${feedback}. Tạo lại JSON, chỉ sửa flexible text; giữ đủ REQUIRED_FACTS và chỉ khai field đã commit.`,
+            "post_commit",
+          )
+        ).trim();
         validated = validate(raw);
       }
       const { parsed, reply } = validated;
@@ -1269,7 +1268,7 @@ function createOpenAiRunner(input: {
                   schema: postCommitOutputSchema(),
                 },
               }
-          : { verbosity: "low" },
+            : { verbosity: "low" },
     });
     const output = response.output_text?.trim();
     if (!output) {
@@ -1451,11 +1450,12 @@ function buildFollowupPrompt(input: {
   baseReply: string;
   context: FollowupContextSnapshot;
 }): string {
-  const stageRule = input.stage === "3h"
-    ? "Tiếp tục đúng nhu cầu còn dang dở, đưa một hỗ trợ hữu ích và kết thúc bằng đúng một câu hỏi khai thác; không hỏi chốt số lượng."
-    : input.stage === "6h"
-      ? "Dùng một góc mới chưa bị khách phản bác; không lặp luận điểm hoặc câu hỏi của nhịp trước; kết thúc bằng đúng một câu hỏi ngắn."
-      : "Khép lại lịch sự, không gây áp lực, không đặt câu hỏi và không mời chốt đơn.";
+  const stageRule =
+    input.stage === "3h"
+      ? "Tiếp tục đúng nhu cầu còn dang dở, đưa một hỗ trợ hữu ích và kết thúc bằng đúng một câu hỏi khai thác; không hỏi chốt số lượng."
+      : input.stage === "6h"
+        ? "Dùng một góc mới chưa bị khách phản bác; không lặp luận điểm hoặc câu hỏi của nhịp trước; kết thúc bằng đúng một câu hỏi ngắn."
+        : "Khép lại lịch sự, không gây áp lực, không đặt câu hỏi và không mời chốt đơn.";
   return [
     "Bạn soạn đúng một tin follow-up Messenger cho khách Stopirex.",
     "Chỉ xuất nội dung gửi khách, không giải thích và không dùng thẻ XML/JSON.",
@@ -1644,7 +1644,10 @@ export function parsePostCommitResponse(raw: string): {
   bubbles: string[];
   claimedSavedFields: ClaimedSavedField[];
 } {
-  const cleaned = raw.trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "");
+  const cleaned = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/iu, "")
+    .replace(/\s*```$/u, "");
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start < 0 || end <= start) throw new Error("post_commit_response_not_json");
@@ -1674,7 +1677,7 @@ function buildSemanticContractRetryPrompt(originalPrompt: string, error: unknown
 function isSemanticOutputContractError(error: unknown): boolean {
   return Boolean(
     error instanceof Error &&
-      ["SemanticSchemaError", "SemanticContractError", "SyntaxError"].includes(error.name),
+    ["SemanticSchemaError", "SemanticContractError", "SyntaxError"].includes(error.name),
   );
 }
 
@@ -2184,8 +2187,7 @@ function promptArgumentMemory(state: DemoChatState): {
       odorSeverity: state.conversationMemory?.consultationFacts.odorSeverity ?? null,
       triggers: [...(state.conversationMemory?.consultationFacts.triggers ?? [])],
       sensitiveSkin: state.conversationMemory?.consultationFacts.sensitiveSkin ?? null,
-      recommendedQuantity:
-        state.conversationMemory?.consultationFacts.recommendedQuantity ?? null,
+      recommendedQuantity: state.conversationMemory?.consultationFacts.recommendedQuantity ?? null,
     },
     salesContext: {
       objections: (state.conversationMemory?.salesContext?.objections ?? []).map((item) => ({
@@ -2568,15 +2570,15 @@ export function parseSemanticUnderstanding(
   if (typeof parsed.priorIrritation === "boolean") slots.priorIrritation = parsed.priorIrritation;
   const hasSemanticPayload = Boolean(
     result.intent ||
-      result.actions?.length ||
-      result.propositions?.length ||
-      result.draftReply ||
-      Object.keys(result.slots).length > 0 ||
-      result.answeredQuestions?.length ||
-      result.newAngle ||
-      result.rejectedArguments?.length ||
-      result.nextStep ||
-      result.knowledgeQueries?.length,
+    result.actions?.length ||
+    result.propositions?.length ||
+    result.draftReply ||
+    Object.keys(result.slots).length > 0 ||
+    result.answeredQuestions?.length ||
+    result.newAngle ||
+    result.rejectedArguments?.length ||
+    result.nextStep ||
+    result.knowledgeQueries?.length,
   );
   if (!hasSemanticPayload) {
     const error = new Error("JSON semantic không có intent, action hoặc draftReply hợp lệ");
@@ -2675,10 +2677,7 @@ function parseConversationPropositions(value: unknown): ConversationProposition[
       ? (input.value as string | number | boolean)
       : undefined;
     parsed.push({
-      id:
-        typeof input.id === "string" && input.id.trim()
-          ? input.id.trim().slice(0, 32)
-          : `p${index + 1}`,
+      id: typeof input.id === "string" && input.id.trim() ? input.id.trim().slice(0, 32) : `p${index + 1}`,
       speechAct: input.speechAct as PropositionSpeechAct,
       action: input.action as PropositionAction,
       ...(typeof input.target === "string" && input.target.trim()
@@ -2698,18 +2697,18 @@ function parseConversationPropositions(value: unknown): ConversationProposition[
 function parseClaimedSavedFields(value: unknown): ClaimedSavedField[] {
   if (!Array.isArray(value)) return [];
   const fields = ["recipientName", "phone", "legacyAddress", "deliveryNote", "quantity"] as const;
-  return value
-    .slice(0, 6)
-    .flatMap((item) => {
-      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-      const input = item as Record<string, unknown>;
-      if (!fields.includes(input.field as (typeof fields)[number])) return [];
-      if (typeof input.value !== "string" || !input.value.trim()) return [];
-      return [{
+  return value.slice(0, 6).flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const input = item as Record<string, unknown>;
+    if (!fields.includes(input.field as (typeof fields)[number])) return [];
+    if (typeof input.value !== "string" || !input.value.trim()) return [];
+    return [
+      {
         field: input.field as ClaimedSavedField["field"],
         value: input.value.trim().slice(0, 200),
-      }];
-    });
+      },
+    ];
+  });
 }
 
 function conversationActionsFromPropositions(
@@ -2731,7 +2730,8 @@ function conversationActionsFromPropositions(
         if (proposition.topic) output.push({ ...base, type: "answer_question", topic: proposition.topic });
         break;
       case "set_quantity":
-        if (proposition.quantity) output.push({ ...base, type: "select_quantity", quantity: proposition.quantity });
+        if (proposition.quantity)
+          output.push({ ...base, type: "select_quantity", quantity: proposition.quantity });
         break;
       case "provide_order_field":
       case "append_delivery_note": {
@@ -2745,13 +2745,21 @@ function conversationActionsFromPropositions(
         output.push({ ...base, type: "continue_order_collection" });
         break;
       case "pause_order":
-        output.push({ ...base, type: "pause_order", ...(proposition.target ? { reason: proposition.target } : {}) });
+        output.push({
+          ...base,
+          type: "pause_order",
+          ...(proposition.target ? { reason: proposition.target } : {}),
+        });
         break;
       case "decline_purchase":
         output.push({ ...base, type: "decline_purchase" });
         break;
       case "handoff_to_human":
-        output.push({ ...base, type: "handoff_to_human", ...(proposition.target ? { reason: proposition.target } : {}) });
+        output.push({
+          ...base,
+          type: "handoff_to_human",
+          ...(proposition.target ? { reason: proposition.target } : {}),
+        });
         break;
       case "record_fact":
         if (proposition.field && proposition.value !== undefined) {
@@ -3045,15 +3053,14 @@ function assertRequiredFactsForCustomerTurn(
   const message = normalizeGuardText(customerMessage);
   const facts = extractRequiredResponseFacts(baseReply);
   const isOrderReceipt = /người nhận:|sđt:|địa chỉ:|sản phẩm:|tổng thanh toán:/iu.test(baseReply);
-  const asksOrderRecap = /\b(?:tong ket|doc lai|xac nhan|kiem tra)\b.{0,35}\bdon\b|\bdon\b.{0,35}\b(?:gom|co|thong tin|dung chua)\b/.test(
-    message,
-  );
+  const asksOrderRecap =
+    /\b(?:tong ket|doc lai|xac nhan|kiem tra)\b.{0,35}\bdon\b|\bdon\b.{0,35}\b(?:gom|co|thong tin|dung chua)\b/.test(
+      message,
+    );
   const orderChangedThisTurn = (state?.orderTransactionTrace?.changedFields.length ?? 0) > 0;
   const asksPrice = /\b(?:gia|combo|bao nhieu tien|tong tien|thanh toan)\b/.test(message);
   const asksShipping = /\b(?:ship|giao|van chuyen|freeship|free ship|mien phi giao)\b/.test(message);
-  const asksDuration = /\b(?:bao lau|may ngay|khi nao|bao gio|tan suat|may lan|thang|gio)\b/.test(
-    message,
-  );
+  const asksDuration = /\b(?:bao lau|may ngay|khi nao|bao gio|tan suat|may lan|thang|gio)\b/.test(message);
   const asksGift = /\b(?:qua|tang|uu dai|khuyen mai)\b/.test(message) || asksPrice;
   const safetyTurn = /\b(?:rat|ngua|do da|kich ung|kho tho|sung moi|sung mat|choang)\b/.test(message);
   const required = facts.filter((fact) => {
@@ -3098,9 +3105,7 @@ function normalizedDraftBubbles(
 
 function isApprovedPriceCatalogBase(value: string): boolean {
   return (
-    /Dạ giá hiện tại:/u.test(value) &&
-    /Combo 3 lọ:/u.test(value) &&
-    /Herbal Body Wash 500\s*ml/iu.test(value)
+    /Dạ giá hiện tại:/u.test(value) && /Combo 3 lọ:/u.test(value) && /Herbal Body Wash 500\s*ml/iu.test(value)
   );
 }
 
@@ -3124,9 +3129,7 @@ function assertApprovedPriceCatalogComplete(
     throw error;
   }
 
-  const listedLines = generatedReply
-    .split("\n")
-    .filter((line) => /^\s*(?:[•*-]|\d+[.)])\s+/u.test(line));
+  const listedLines = generatedReply.split("\n").filter((line) => /^\s*(?:[•*-]|\d+[.)])\s+/u.test(line));
   if (listedLines.length < 6 || !/\n\s*\n/u.test(generatedReply)) {
     const error = new Error("LLM làm mất bố cục danh sách hai khối của bảng giá");
     error.name = "FactPreservationError";

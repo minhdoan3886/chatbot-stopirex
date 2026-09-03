@@ -1,9 +1,7 @@
 import { ProductCatalog, type PriceRecord } from "../domain/products.js";
 import type { TenantId } from "../domain/types.js";
 
-export const demoCommerceEffectiveAt = new Date(
-  "2026-07-22T00:00:00.000Z",
-);
+export const demoCommerceEffectiveAt = new Date("2026-07-22T00:00:00.000Z");
 
 export function createDemoProductCatalog(tenantId: TenantId): ProductCatalog {
   const records: PriceRecord[] = [

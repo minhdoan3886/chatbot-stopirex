@@ -1,12 +1,6 @@
 import type { PriceQuote } from "./products.js";
 
-export type OpeningVariantId =
-  | "AUTO.dynamic"
-  | "A.choice"
-  | "B.context"
-  | "C.prior"
-  | "D.pain"
-  | "E.number";
+export type OpeningVariantId = "AUTO.dynamic" | "A.choice" | "B.context" | "C.prior" | "D.pain" | "E.number";
 
 export type ConversationIdentity = {
   salutation?: "anh" | "chị" | "anh/chị";
@@ -80,17 +74,18 @@ export function openingMessage(
   return variant.text.replaceAll("anh/chị", salutation);
 }
 
-export function personalizeCustomerAddress(
-  text: string,
-  identity: ConversationIdentity = {},
-): string {
+export function personalizeCustomerAddress(text: string, identity: ConversationIdentity = {}): string {
   const salutation = identity.salutation ?? "anh/chị";
   const capitalized = `${salutation.charAt(0).toUpperCase()}${salutation.slice(1)}`;
   return text.replaceAll("Anh/chị", capitalized).replaceAll("anh/chị", salutation);
 }
 
 function safeName(value: string | undefined): string | undefined {
-  const cleaned = value?.replace(/[<>{}#]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
+  const cleaned = value
+    ?.replace(/[<>{}#]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
   return cleaned || undefined;
 }
 
@@ -124,9 +119,7 @@ export function formatPriceOffer(
 }
 
 export function stopirexGiftForQuantity(quantity: number): string | undefined {
-  return quantity >= 2
-    ? "1 túi đa năng vải dệt Stopirex"
-    : undefined;
+  return quantity >= 2 ? "1 túi đa năng vải dệt Stopirex" : undefined;
 }
 
 export function followupMessage(

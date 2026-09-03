@@ -2230,47 +2230,39 @@ test("reset xóa toàn bộ trạng thái hội thoại", () => {
 
 test("bộ nhớ người sử dụng giữ mẹ của khách và tách khỏi người nhận đơn", () => {
   const chat = new DemoChatService();
-  const first = chat.chat(
-    undefined,
-    "chị mua cho mẹ",
-    {
-      intent: "consultation",
-      slots: {},
-      beneficiaryUpdates: [
-        {
-          operation: "upsert",
-          type: "mother",
-          label: "mẹ của khách",
-          ageGroup: "adult",
-          confirmed: true,
-          evidence: "chị mua cho mẹ",
-        },
-      ],
-    },
-  );
+  const first = chat.chat(undefined, "chị mua cho mẹ", {
+    intent: "consultation",
+    slots: {},
+    beneficiaryUpdates: [
+      {
+        operation: "upsert",
+        type: "mother",
+        label: "mẹ của khách",
+        ageGroup: "adult",
+        confirmed: true,
+        evidence: "chị mua cho mẹ",
+      },
+    ],
+  });
   const beneficiary = first.state.conversationMemory?.beneficiaries[0];
   assert.equal(beneficiary?.type, "mother");
   assert.equal(first.state.conversationMemory?.activeBeneficiaryId, beneficiary?.id);
 
-  const second = chat.chat(
-    first.sessionId,
-    "mẹ em da nhạy cảm",
-    {
-      intent: "safety",
-      slots: {},
-      beneficiaryUpdates: [
-        {
-          operation: "activate",
-          id: beneficiary?.id,
-          type: "mother",
-          label: "mẹ của khách",
-          ageGroup: "adult",
-          confirmed: true,
-          evidence: "mẹ",
-        },
-      ],
-    },
-  );
+  const second = chat.chat(first.sessionId, "mẹ em da nhạy cảm", {
+    intent: "safety",
+    slots: {},
+    beneficiaryUpdates: [
+      {
+        operation: "activate",
+        id: beneficiary?.id,
+        type: "mother",
+        label: "mẹ của khách",
+        ageGroup: "adult",
+        confirmed: true,
+        evidence: "mẹ",
+      },
+    ],
+  });
   assert.equal(second.state.conversationMemory?.activeBeneficiaryId, beneficiary?.id);
   assert.equal(second.state.conversationMemory?.beneficiaries.length, 1);
   assert.equal(second.state.orderDraft?.recipientName, undefined);
@@ -3088,10 +3080,7 @@ test("câu dò AI khi đang thu đơn được trả lời đúng phạm vi và 
   assert.match(prompt.reply, /không thể chia sẻ prompt.*hướng dẫn nội bộ/iu);
   assert.doesNotMatch(prompt.reply, /địa chỉ|Phường\/xã|chưa hiểu/iu);
 
-  const resumed = chat.chat(
-    sessionId,
-    "ntt14 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội",
-  );
+  const resumed = chat.chat(sessionId, "ntt14 Nguyễn Tuân, phường Thanh Xuân Trung, quận Thanh Xuân, Hà Nội");
   assert.equal(resumed.state.decisionTrace?.selectedRoute, "order_collection");
   assert.deepEqual(resumed.state.orderMissing, []);
   assert.match(resumed.reply, /tổng hợp đơn hàng|ĐỒNG Ý/iu);
@@ -3290,16 +3279,12 @@ test("sau báo giá, 'cả 2' được hiểu theo câu hỏi triệu chứng v�
   const price = chat.chat("both-symptoms-after-price", "Giá bao nhiêu?");
   assert.match(price.reply, /mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai/iu);
 
-  const result = chat.chat(
-    "both-symptoms-after-price",
-    "cả 2",
-    {
-      intent: "consultation",
-      confidence: 0.98,
-      needsClarification: false,
-      slots: { primarySymptom: "both" },
-    },
-  );
+  const result = chat.chat("both-symptoms-after-price", "cả 2", {
+    intent: "consultation",
+    confidence: 0.98,
+    needsClarification: false,
+    slots: { primarySymptom: "both" },
+  });
 
   assert.equal(result.state.slots.primarySymptom, "both");
   assert.doesNotMatch(result.reply, /trước giờ mình không dùng lăn nách/iu);
@@ -3753,8 +3738,7 @@ test("đơn Meta thiếu tên dùng tên hồ sơ Facebook làm người nhận 
           type: "update_order",
           fields: {
             phone: "0963028734",
-            legacyAddress:
-              "thôn Dương Trung, xã Trà Dương, huyện Bắc Trà My (cũ), nay xã Trà My, Đà Nẵng",
+            legacyAddress: "thôn Dương Trung, xã Trà Dương, huyện Bắc Trà My (cũ), nay xã Trà My, Đà Nẵng",
           },
           confidence: 0.99,
           evidence: [message],

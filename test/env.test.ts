@@ -69,10 +69,7 @@ test("Page primary bị chặn canary nếu chưa có phê duyệt riêng", () =
 });
 
 test("tỷ giá hiển thị chi phí LLM phải là số dương", () => {
-  assert.equal(
-    loadEnv({ NODE_ENV: "development", LLM_USD_TO_VND_RATE: "25500" }).llmUsdToVndRate,
-    25_500,
-  );
+  assert.equal(loadEnv({ NODE_ENV: "development", LLM_USD_TO_VND_RATE: "25500" }).llmUsdToVndRate, 25_500);
   assert.throws(
     () => loadEnv({ NODE_ENV: "development", LLM_USD_TO_VND_RATE: "0" }),
     /LLM_USD_TO_VND_RATE phải là số dương/u,

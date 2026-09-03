@@ -365,11 +365,7 @@ export class DemoChatService {
     // cannot mutate the authoritative session before the LLM action plan has
     // been reconciled.
     const observationProjection = structuredClone(session);
-    const observedEntityCandidates = observeGlobalEntities(
-      observationProjection,
-      raw,
-      orderMutationAllowed,
-    );
+    const observedEntityCandidates = observeGlobalEntities(observationProjection, raw, orderMutationAllowed);
     const requestedQuantity = extractRequestedQuantity(text);
     const committedRequestedQuantity = extractExplicitOrderQuantity(text);
     const quantityOperation = extractQuantityOperation(text);
@@ -508,8 +504,8 @@ export class DemoChatService {
     });
     const deterministicDeliveryNoteReady = Boolean(
       session.selectedQuantity &&
-        normalizeDeliveryNotes(raw).valid &&
-        normalizeDeliveryNotes(raw).normalized?.length,
+      normalizeDeliveryNotes(raw).valid &&
+      normalizeDeliveryNotes(raw).normalized?.length,
     );
     session.dialogueState = reduceDialogueState(session.dialogueState, {
       type: "user_acts_observed",
@@ -533,9 +529,7 @@ export class DemoChatService {
               // commit before semantic mutations. Keeping it out of the
               // ownership filter prevents a malformed/partial LLM phone
               // proposition from suppressing the verified number entirely.
-              .filter(
-                (field) => field !== "phone" || !normalizeVietnamesePhone(raw).valid,
-              )
+              .filter((field) => field !== "phone" || !normalizeVietnamesePhone(raw).valid)
               .filter((field) => field !== "deliveryNote" || !deterministicDeliveryNoteReady)
           : [],
       ),
@@ -543,8 +537,8 @@ export class DemoChatService {
         orderMutationAllowed &&
         Boolean(
           actionPlan.accepted.some((action) => action.type === "update_order") ||
-            deterministicDeliveryNoteReady ||
-            (!semanticAuthorityReady && (session.selectedQuantity || isOrderCaptureMessage(raw))),
+          deterministicDeliveryNoteReady ||
+          (!semanticAuthorityReady && (session.selectedQuantity || isOrderCaptureMessage(raw))),
         ),
     });
     const quantityBlockedByConditionalRefund = actionPlan.conflicts.some((conflict) =>
@@ -1187,10 +1181,7 @@ export class DemoChatService {
       return this.respond(
         session,
         deliveryNoteChanged && session.order.deliveryNote
-          ? [
-              `Dạ em đã cập nhật ghi chú giao hàng: “${session.order.deliveryNote}” ạ.`,
-              inspectionReply,
-            ]
+          ? [`Dạ em đã cập nhật ghi chú giao hàng: “${session.order.deliveryNote}” ạ.`, inspectionReply]
           : inspectionReply,
       );
     }
@@ -2600,12 +2591,15 @@ export class DemoChatService {
     this.move(session, "followup_due");
     session.activeSkill = "follow-up";
     session.skillReason = "Follow-up đã bắt đầu nên quyền miễn phí giao cho 1 lọ được kích hoạt.";
-    return this.respond(session, followupMessage(stage, {
-      ...(session.lastIntent ? { lastIntent: session.lastIntent } : {}),
-      rejectedArguments: session.conversationMemory.rejectedArguments,
-      openQuestions: session.conversationMemory.openQuestions,
-      askedTopics: session.askedTopics,
-    }));
+    return this.respond(
+      session,
+      followupMessage(stage, {
+        ...(session.lastIntent ? { lastIntent: session.lastIntent } : {}),
+        rejectedArguments: session.conversationMemory.rejectedArguments,
+        openQuestions: session.conversationMemory.openQuestions,
+        askedTopics: session.askedTopics,
+      }),
+    );
   }
 
   replaceLatestAssistantTurn(sessionId: string | undefined, styledReply: string): DemoChatState {
@@ -2663,10 +2657,7 @@ export class DemoChatService {
     return stateOf(session);
   }
 
-  recordCanonicalAnswerFacts(
-    sessionId: string | undefined,
-    factIds: readonly string[],
-  ): DemoChatState {
+  recordCanonicalAnswerFacts(sessionId: string | undefined, factIds: readonly string[]): DemoChatState {
     const session = this.getOrCreate(sessionId);
     if (factIds.length === 0) return stateOf(session);
     session.dialogueState = {
@@ -2846,9 +2837,7 @@ export class DemoChatService {
         lastUserActs: [...(candidate.dialogueState?.lastUserActs ?? [])].slice(-12),
         lastAssistantActs: [...(candidate.dialogueState?.lastAssistantActs ?? [])].slice(-12),
         unresolvedTopics: [...(candidate.dialogueState?.unresolvedTopics ?? [])].slice(-12),
-        recentlyAnsweredFactIds: [
-          ...(candidate.dialogueState?.recentlyAnsweredFactIds ?? []),
-        ].slice(-20),
+        recentlyAnsweredFactIds: [...(candidate.dialogueState?.recentlyAnsweredFactIds ?? [])].slice(-20),
         expectedInputs: [...(candidate.dialogueState?.expectedInputs ?? [])].slice(-8),
       },
       workflowState: {
@@ -2934,20 +2923,13 @@ export class DemoChatService {
     });
     const semanticDecision = session.lastDecision?.semantic;
     const llmOwnsCta =
-      semanticDecision?.status === "interpreted" &&
-      semanticDecision.selectedCtaId !== undefined;
+      semanticDecision?.status === "interpreted" && semanticDecision.selectedCtaId !== undefined;
     const semanticCta =
-      llmOwnsCta && semanticDecision.selectedCtaId !== "none"
-        ? semanticDecision.ctaText?.trim()
-        : undefined;
+      llmOwnsCta && semanticDecision.selectedCtaId !== "none" ? semanticDecision.ctaText?.trim() : undefined;
     const promptToAppend = llmOwnsCta ? semanticCta : nextBestAction.prompt;
-    const activeResponseBudget =
-      session.lastIntent === "price_request"
-        ? 650
-        : 280;
+    const activeResponseBudget = session.lastIntent === "price_request" ? 650 : 280;
     const nextBestActionFits =
-      !promptToAppend ||
-      rawReplies.join("\n\n").length + promptToAppend.length + 2 <= activeResponseBudget;
+      !promptToAppend || rawReplies.join("\n\n").length + promptToAppend.length + 2 <= activeResponseBudget;
     session.lastNextBestAction = nextBestActionFits
       ? nextBestAction
       : {
@@ -3502,11 +3484,7 @@ function rememberTurn(session: DemoSession, turn: { role: "user" | "assistant"; 
   if (session.history.length > 40) session.history.splice(0, session.history.length - 40);
 }
 
-function rememberSemanticPlan(
-  session: DemoSession,
-  semantic: SemanticUnderstanding,
-  raw: string,
-): void {
+function rememberSemanticPlan(session: DemoSession, semantic: SemanticUnderstanding, raw: string): void {
   if (semantic.intent) session.conversationMemory.currentGoal = semantic.intent;
   if (semantic.subject) session.conversationMemory.activeSubject = semantic.subject;
   if (semantic.nextStep) session.conversationMemory.nextStep = semantic.nextStep;
@@ -3576,7 +3554,9 @@ function rememberCustomerConsultationFacts(session: DemoSession, raw: string): v
   const text = normalize(raw);
   const facts = session.conversationMemory.consultationFacts;
   if (/mo hoi|tiet mo hoi|uot ao|o ao/.test(text)) facts.sweatConcern = true;
-  if (/(?:khong|ko|k|chua)\s+(?:bi\s+)?mui\s+(?:nang|nhieu)|mui\s+(?:khong|ko|k)\s+(?:nang|nhieu)/.test(text)) {
+  if (
+    /(?:khong|ko|k|chua)\s+(?:bi\s+)?mui\s+(?:nang|nhieu)|mui\s+(?:khong|ko|k)\s+(?:nang|nhieu)/.test(text)
+  ) {
     facts.odorSeverity = "mild";
   } else if (/mui\s+(?:nang|nhieu)|hoi nach\s+(?:nang|nhieu)/.test(text)) {
     facts.odorSeverity = "strong";
@@ -3590,10 +3570,7 @@ function rememberCustomerConsultationFacts(session: DemoSession, raw: string): v
   facts.triggers = [...triggers].slice(-4);
 }
 
-function applyBeneficiaryUpdates(
-  session: DemoSession,
-  updates: readonly SemanticBeneficiaryUpdate[],
-): void {
+function applyBeneficiaryUpdates(session: DemoSession, updates: readonly SemanticBeneficiaryUpdate[]): void {
   if (updates.length === 0) return;
   const latestMessage = [...session.history].reverse().find((turn) => turn.role === "user")?.text ?? "";
   const normalizedMessage = normalize(latestMessage);
@@ -3642,10 +3619,7 @@ function applyBeneficiaryUpdates(
   }
 }
 
-function nextBeneficiaryId(
-  beneficiaries: readonly ConversationBeneficiary[],
-  type: BeneficiaryType,
-): string {
+function nextBeneficiaryId(beneficiaries: readonly ConversationBeneficiary[], type: BeneficiaryType): string {
   let suffix = beneficiaries.filter((item) => item.type === type).length + 1;
   while (beneficiaries.some((item) => item.id === `beneficiary-${type}-${suffix}`)) suffix += 1;
   return `beneficiary-${type}-${suffix}`;
@@ -4079,9 +4053,7 @@ export function isDeliveryInspectionQuestion(value: string): boolean {
       text,
     ) ||
     /\bmo\b.{0,20}\b(?:hang|hag|hop|seal|tem)\b/.test(text) ||
-    /\b(?:nhan|nhan hang|nhan hag)\b.{0,35}\b(?:kiem|kjem|kiem tra|kjem tra|kiem hang|kjem hang)\b/.test(
-      text,
-    )
+    /\b(?:nhan|nhan hang|nhan hag)\b.{0,35}\b(?:kiem|kjem|kiem tra|kjem tra|kiem hang|kjem hang)\b/.test(text)
   );
 }
 
@@ -4891,10 +4863,7 @@ function isMorningApplicationQuestion(value: string): boolean {
     !/\b(?:boi|lan|quet|dung)(?: xong)?\b.{0,60}\b(?:sang|buoi sang|sang hom sau)\b.{0,60}\b(?:tam|rua|xa phong|soap)\b/.test(
       text,
     ) &&
-    !(
-      /\b(?:tam|rua|xa phong|soap)\b/.test(text) &&
-      /\b(?:toi hom truoc|buoi toi|dem truoc)\b/.test(text)
-    )
+    !(/\b(?:tam|rua|xa phong|soap)\b/.test(text) && /\b(?:toi hom truoc|buoi toi|dem truoc)\b/.test(text))
   );
 }
 
@@ -5469,12 +5438,18 @@ function isOrderRecapRequest(text: string): boolean {
 }
 
 function isOrderPhoneUpdatePreparation(text: string): boolean {
-  return /\b(?:khoan|doi|thay|cap nhat)\b.{0,35}\b(?:sdt|so dien thoai|so phone)\b/.test(text) &&
-    !/(?<!\d)0\d{9}(?!\d)/u.test(text);
+  return (
+    /\b(?:khoan|doi|thay|cap nhat)\b.{0,35}\b(?:sdt|so dien thoai|so phone)\b/.test(text) &&
+    !/(?<!\d)0\d{9}(?!\d)/u.test(text)
+  );
 }
 
 function orderStateRecallReply(session: DemoSession, text: string): string | undefined {
-  if (/\b(?:ban dau|luc dau|truoc do)\b.{0,45}\b(?:dat|chot|lay)\b.{0,25}\b(?:may|bao nhieu)\s*lo\b|\bban dau minh dat may lo\b/.test(text)) {
+  if (
+    /\b(?:ban dau|luc dau|truoc do)\b.{0,45}\b(?:dat|chot|lay)\b.{0,25}\b(?:may|bao nhieu)\s*lo\b|\bban dau minh dat may lo\b/.test(
+      text,
+    )
+  ) {
     return session.selectedQuantity
       ? `Dạ ban đầu mình đặt ${quantityLabel(session.selectedQuantity)} ạ.`
       : undefined;
@@ -5484,7 +5459,11 @@ function orderStateRecallReply(session: DemoSession, text: string): string | und
       ? `Dạ người nhận hiện tại là ${session.order.recipientName} ạ.`
       : "Dạ đơn hiện chưa có tên người nhận ạ.";
   }
-  if (/\b(?:so|sdt|so dien thoai)\b.{0,25}\b(?:luc dau|ban dau|dau tien|cu)\b|\b(?:luc dau|ban dau)\b.{0,25}\b(?:so|sdt|so dien thoai)\b/.test(text)) {
+  if (
+    /\b(?:so|sdt|so dien thoai)\b.{0,25}\b(?:luc dau|ban dau|dau tien|cu)\b|\b(?:luc dau|ban dau)\b.{0,25}\b(?:so|sdt|so dien thoai)\b/.test(
+      text,
+    )
+  ) {
     const historical = session.conversationMemory.phoneHistory.find(
       (item) => item.status === "historical",
     )?.value;
@@ -5499,7 +5478,11 @@ function orderStateRecallReply(session: DemoSession, text: string): string | und
       ? `Dạ số điện thoại hiện đang dùng cho đơn là ${session.order.phone} ạ.`
       : "Dạ đơn hiện chưa có số điện thoại ạ.";
   }
-  if (/\b(?:cu|van|giu)\b.{0,25}\b(?:so moi|sdt moi|so dien thoai moi)\b|\b(?:so moi|sdt moi)\b.{0,20}\b(?:nhe|nha|a|dung|nguyen)\b/.test(text)) {
+  if (
+    /\b(?:cu|van|giu)\b.{0,25}\b(?:so moi|sdt moi|so dien thoai moi)\b|\b(?:so moi|sdt moi)\b.{0,20}\b(?:nhe|nha|a|dung|nguyen)\b/.test(
+      text,
+    )
+  ) {
     return session.order.phone
       ? `Dạ em giữ nguyên số mới ${session.order.phone} cho đơn ạ.`
       : "Dạ đơn hiện chưa có số điện thoại mới để giữ lại ạ.";
@@ -5865,9 +5848,7 @@ function multiActionAnswer(
         ? [deliveryContext.district, deliveryContext.city].filter(Boolean).join(", ")
         : undefined;
       const destinationReply =
-        uniqueTopics.includes("shipping") && destination
-          ? `Dạ bên em giao được đến ${destination}. `
-          : "";
+        uniqueTopics.includes("shipping") && destination ? `Dạ bên em giao được đến ${destination}. ` : "";
       answers.push(
         requested === 1
           ? `${destinationReply || "Dạ "}1 lọ giá 285.000đ + 30.000đ phí giao ạ.`
@@ -6544,14 +6525,16 @@ function selectQuantity(
   quantity: SupportedOrderQuantity,
   sourceAction?: ConversationAction,
 ): void {
-  commitOrderMutations(session, [{
-    type: "set_quantity",
-    quantity,
-    evidence: sourceAction?.rawEvidence ?? sourceAction?.evidence[0] ?? "resolved_quantity_action",
-    ...(sourceAction?.propositionId ? { propositionId: sourceAction.propositionId } : {}),
-    source: sourceAction?.source === "llm" ? "llm_extraction" : "deterministic_parser",
-    confidence: sourceAction?.confidence ?? 1,
-  }]);
+  commitOrderMutations(session, [
+    {
+      type: "set_quantity",
+      quantity,
+      evidence: sourceAction?.rawEvidence ?? sourceAction?.evidence[0] ?? "resolved_quantity_action",
+      ...(sourceAction?.propositionId ? { propositionId: sourceAction.propositionId } : {}),
+      source: sourceAction?.source === "llm" ? "llm_extraction" : "deterministic_parser",
+      confidence: sourceAction?.confidence ?? 1,
+    },
+  ]);
   session.orderCollectionPaused = false;
   session.consultation = { ...session.consultation, stage: "S8.order" };
 }
@@ -6596,14 +6579,11 @@ function commitOrderMutations(
       {
         value: session.order.phone,
         status: "current" as const,
-        evidence:
-          actions.find((action) => action.type === "set_phone")?.evidence ?? "Cập nhật SĐT đơn hàng",
+        evidence: actions.find((action) => action.type === "set_phone")?.evidence ?? "Cập nhật SĐT đơn hàng",
         sourceTurn: session.messages + 1,
       },
     ]
-      .filter((item, index, all) =>
-        all.slice(index + 1).every((candidate) => candidate.value !== item.value),
-      )
+      .filter((item, index, all) => all.slice(index + 1).every((candidate) => candidate.value !== item.value))
       .slice(-6);
   }
   const priorTrace = session.orderTransactionTrace;
@@ -6634,10 +6614,7 @@ function commitOrderMutations(
       })),
     ],
     unchangedFields: [
-      ...new Set([
-        ...(priorTrace?.unchangedFields ?? []),
-        ...transaction.unchanged.map(orderMutationField),
-      ]),
+      ...new Set([...(priorTrace?.unchangedFields ?? []), ...transaction.unchanged.map(orderMutationField)]),
     ],
     missingFields: [...transaction.missingFields],
     changedFields: [
@@ -6651,7 +6628,10 @@ function commitOrderMutations(
       {
         type: "order_mutated",
         evidence: workflowEvidenceRef(
-          transaction.accepted.map((action) => action.evidence).filter(Boolean).join(" | "),
+          transaction.accepted
+            .map((action) => action.evidence)
+            .filter(Boolean)
+            .join(" | "),
         ),
         changedFields: transaction.changedFields.map(String),
       },
@@ -6688,12 +6668,18 @@ function commitOrderMutations(
 
 function orderMutationField(action: OrderMutationAction): string {
   switch (action.type) {
-    case "set_quantity": return "quantity";
-    case "set_phone": return "phone";
-    case "set_recipient_name": return "recipientName";
-    case "set_address": return "legacyAddress";
-    case "set_delivery_note": return "deliveryNote";
-    case "confirm_order": return "customerConfirmedAt";
+    case "set_quantity":
+      return "quantity";
+    case "set_phone":
+      return "phone";
+    case "set_recipient_name":
+      return "recipientName";
+    case "set_address":
+      return "legacyAddress";
+    case "set_delivery_note":
+      return "deliveryNote";
+    case "confirm_order":
+      return "customerConfirmedAt";
   }
 }
 
@@ -6741,9 +6727,9 @@ function selectedOrderPriceReply(quantity: SupportedOrderQuantity): string {
 function clearOrderDraft(session: DemoSession): void {
   const hadOrderState = Boolean(
     session.selectedQuantity ||
-      session.orderId ||
-      session.trackingNumber ||
-      Object.keys(session.order).length > 0,
+    session.orderId ||
+    session.trackingNumber ||
+    Object.keys(session.order).length > 0,
   );
   session.order = {};
   session.conversationMemory.phoneHistory = [];
@@ -6819,7 +6805,10 @@ function applySemanticOrderUpdates(
         /(?:đổi|doi|thay|chuyển|chuyen).{0,24}(?:địa chỉ|dia chi|giao|ship)/iu.test(raw);
       // A region mention such as "q1 sg" is useful context, but it is not yet
       // a confirmed shipping address and must not be committed as one.
-      if (normalizedAddress.normalized?.street || looksLikeAddress(legacyAddress) && /\d/u.test(legacyAddress)) {
+      if (
+        normalizedAddress.normalized?.street ||
+        (looksLikeAddress(legacyAddress) && /\d/u.test(legacyAddress))
+      ) {
         mutations.push({
           type: "set_address",
           address: canonical,
@@ -6834,9 +6823,10 @@ function applySemanticOrderUpdates(
       const notes = normalizeDeliveryNotes(action.rawEvidence ?? raw);
       mutations.push({
         type: "set_delivery_note",
-        deliveryNote: notes.valid && notes.normalized
-          ? mergeDeliveryNotes(session.order.deliveryNote, notes.normalized)
-          : deliveryNote,
+        deliveryNote:
+          notes.valid && notes.normalized
+            ? mergeDeliveryNotes(session.order.deliveryNote, notes.normalized)
+            : deliveryNote,
         evidence: action.rawEvidence ?? raw,
         ...metadata,
       });
@@ -6867,10 +6857,9 @@ function rememberMentionedDeliveryContext(session: DemoSession, raw: string): vo
     ...(current?.ward ? { ward: current.ward } : {}),
     ...(district ? { district } : {}),
     ...(city ? { city } : {}),
-    rawParts: [
-      ...(current?.rawParts ?? []),
-      ...resolved.normalized.rawParts,
-    ].filter((value, index, all) => all.indexOf(value) === index),
+    rawParts: [...(current?.rawParts ?? []), ...resolved.normalized.rawParts].filter(
+      (value, index, all) => all.indexOf(value) === index,
+    ),
     status: "mentioned",
   };
 }
@@ -7000,9 +6989,9 @@ function mergeOrderData(session: DemoSession, raw: string): boolean {
     const nonPhone = parts.filter((part) => !part.includes(phone));
     const firstPartIsRecipient = Boolean(
       !session.order.recipientName &&
-        nonPhone[0] &&
-        !looksLikeAddress(nonPhone[0]) &&
-        looksLikeOrderRecipientCandidate(nonPhone[0]),
+      nonPhone[0] &&
+      !looksLikeAddress(nonPhone[0]) &&
+      looksLikeOrderRecipientCandidate(nonPhone[0]),
     );
     if (firstPartIsRecipient && nonPhone[0]) {
       commitOrderMutations(session, [
@@ -7093,20 +7082,14 @@ function commitReconciledObservations(input: {
   if (projection.order.phone && projection.order.phone !== session.order.phone) {
     proposed.push({ type: "set_phone", phone: projection.order.phone, evidence: raw });
   }
-  if (
-    projection.order.recipientName &&
-    projection.order.recipientName !== session.order.recipientName
-  ) {
+  if (projection.order.recipientName && projection.order.recipientName !== session.order.recipientName) {
     proposed.push({
       type: "set_recipient_name",
       recipientName: projection.order.recipientName,
       evidence: raw,
     });
   }
-  if (
-    projection.order.legacyAddress &&
-    projection.order.legacyAddress !== session.order.legacyAddress
-  ) {
+  if (projection.order.legacyAddress && projection.order.legacyAddress !== session.order.legacyAddress) {
     proposed.push({
       type: "set_address",
       address: projection.order.legacyAddress,
@@ -7114,10 +7097,7 @@ function commitReconciledObservations(input: {
       evidence: raw,
     });
   }
-  if (
-    projection.order.deliveryNote &&
-    projection.order.deliveryNote !== session.order.deliveryNote
-  ) {
+  if (projection.order.deliveryNote && projection.order.deliveryNote !== session.order.deliveryNote) {
     proposed.push({
       type: "set_delivery_note",
       deliveryNote: projection.order.deliveryNote,
@@ -7157,7 +7137,7 @@ function commitReconciledObservations(input: {
       acceptedMutations: [],
       changedFields: [],
       conflicts: [
-          `observation_rejected_by_semantic_plan:${[...new Set(eligibleProposed.map((action) => action.type))].join(",")}`,
+        `observation_rejected_by_semantic_plan:${[...new Set(eligibleProposed.map((action) => action.type))].join(",")}`,
       ],
     };
   }
@@ -7176,10 +7156,14 @@ function isOrderObservationField(value: string): value is OrderObservationField 
 
 function orderObservationField(action: OrderMutationAction): OrderObservationField {
   switch (action.type) {
-    case "set_recipient_name": return "recipientName";
-    case "set_phone": return "phone";
-    case "set_address": return "legacyAddress";
-    case "set_delivery_note": return "deliveryNote";
+    case "set_recipient_name":
+      return "recipientName";
+    case "set_phone":
+      return "phone";
+    case "set_address":
+      return "legacyAddress";
+    case "set_delivery_note":
+      return "deliveryNote";
     case "set_quantity":
     case "confirm_order":
       throw new Error(`not_an_observation_field:${action.type}`);
@@ -7211,15 +7195,15 @@ function observeGlobalEntities(
   // This lets an ETA/policy question also complete a draft without letting a
   // generic phrase such as "nghe ổn đấy" become the recipient name.
   const collectingOrderBeforeTurn = Boolean(session.selectedQuantity);
-  const shouldObserveOrder =
-    allowOrderMutations && (collectingOrderBeforeTurn || isOrderCaptureMessage(raw));
+  const shouldObserveOrder = allowOrderMutations && (collectingOrderBeforeTurn || isOrderCaptureMessage(raw));
   if (shouldObserveOrder) {
     const mayCaptureAddress = collectingOrderBeforeTurn || isOrderCaptureMessage(raw);
     const actions: OrderMutationAction[] = [];
     const normalizedPhone = normalizeVietnamesePhone(raw);
-    const phone = normalizedPhone.valid && normalizedPhone.normalized
-      ? normalizedPhone.normalized
-      : extractPhoneNumber(raw);
+    const phone =
+      normalizedPhone.valid && normalizedPhone.normalized
+        ? normalizedPhone.normalized
+        : extractPhoneNumber(raw);
     if (phone) {
       actions.push({ type: "set_phone", phone, evidence: raw });
     }
@@ -7234,11 +7218,10 @@ function observeGlobalEntities(
     }
     if (phone) {
       const phoneIndex = raw.indexOf(phone);
-      const beforePhone = phoneIndex >= 0 ? cleanLabel(raw.slice(0, phoneIndex).replace(/[,;:\s-]+$/gu, "")) : "";
+      const beforePhone =
+        phoneIndex >= 0 ? cleanLabel(raw.slice(0, phoneIndex).replace(/[,;:\s-]+$/gu, "")) : "";
       const afterPhone =
-        phoneIndex >= 0
-          ? cleanLabel(raw.slice(phoneIndex + phone.length).replace(/^[,;:\s-]+/gu, ""))
-          : "";
+        phoneIndex >= 0 ? cleanLabel(raw.slice(phoneIndex + phone.length).replace(/^[,;:\s-]+/gu, "")) : "";
       const combined = splitUnlabelledNameAndAddress(beforePhone);
       const candidateName = combined?.recipientName ?? beforePhone;
       if (
@@ -7270,9 +7253,10 @@ function observeGlobalEntities(
       }
     }
     const normalizedDeliveryNotes = normalizeDeliveryNotes(raw);
-    const observedDeliveryNote = normalizedDeliveryNotes.valid && normalizedDeliveryNotes.normalized
-      ? mergeDeliveryNotes(session.order.deliveryNote, normalizedDeliveryNotes.normalized)
-      : extractDeliveryNote(raw);
+    const observedDeliveryNote =
+      normalizedDeliveryNotes.valid && normalizedDeliveryNotes.normalized
+        ? mergeDeliveryNotes(session.order.deliveryNote, normalizedDeliveryNotes.normalized)
+        : extractDeliveryNote(raw);
     if (observedDeliveryNote) {
       actions.push({ type: "set_delivery_note", deliveryNote: observedDeliveryNote, evidence: raw });
     }
@@ -7288,9 +7272,10 @@ function observeGlobalEntities(
         : undefined;
     const destination = explicitDestination ?? standaloneOrderAddress;
     const normalizedAddress = normalizeVietnameseAddress(raw, session.locationMemory.addressContext);
-    const deterministicAddress = normalizedAddress.valid && normalizedAddress.normalized?.street
-      ? formatVietnameseAddress(normalizedAddress.normalized)
-      : undefined;
+    const deterministicAddress =
+      normalizedAddress.valid && normalizedAddress.normalized?.street
+        ? formatVietnameseAddress(normalizedAddress.normalized)
+        : undefined;
     const administrativeAddress = extractExplicitAdministrativeAddress(raw);
     const singleMissingAdministrativeAddress = collectingOrderBeforeTurn
       ? extractSingleMissingAdministrativeAddress(raw, session.order)
@@ -7597,7 +7582,10 @@ export function extractDeliveryDestination(raw: string): string | undefined {
   const destination = match
     .replace(/\s+(?:cho\s+(?:anh|chị|chi|em|mình|minh)\s+)?(?:nhé|nhe|ạ|a)\s*$/iu, "")
     .replace(/\s+cho\s+(?:anh|chị|chi|em|mình|minh)\s*$/iu, "")
-    .replace(/\s+(?:mất|mat)?\s*(?:bao lâu|bao lau|mấy ngày|may ngay|khi nào|khi nao|bao giờ|bao gio).*$/iu, "")
+    .replace(
+      /\s+(?:mất|mat)?\s*(?:bao lâu|bao lau|mấy ngày|may ngay|khi nào|khi nao|bao giờ|bao gio).*$/iu,
+      "",
+    )
     .trim();
   const normalized = normalize(destination);
   if (normalized === "cau giay" || normalized === "quan cau giay") {
@@ -7812,9 +7800,7 @@ function cleanExplicitRecipientName(value: string): string {
  * while also asking a product or delivery question.
  */
 function extractRecipientName(raw: string): string | undefined {
-  if (
-    /\b(?:nguoi nhan|ten nguoi nhan)\b.{0,25}\b(?:ai|gi|nhi)\b/.test(normalize(raw))
-  ) {
+  if (/\b(?:nguoi nhan|ten nguoi nhan)\b.{0,25}\b(?:ai|gi|nhi)\b/.test(normalize(raw))) {
     return undefined;
   }
   const recipientLabel = raw.match(
@@ -7883,7 +7869,10 @@ function splitUnlabelledNameAndAddress(
     /\b(?:Hà Nội|Ha Noi|Hồ Chí Minh|Ho Chi Minh|Hải Phòng|Hai Phong|Đà Nẵng|Da Nang|Cần Thơ|Can Tho|Huế|Hue)\b/iu.test(
       address,
     );
-  if (!looksLikeOrderRecipientCandidate(recipientName) || (!looksLikeAddress(address) && !strongAbbreviatedAddress)) {
+  if (
+    !looksLikeOrderRecipientCandidate(recipientName) ||
+    (!looksLikeAddress(address) && !strongAbbreviatedAddress)
+  ) {
     return undefined;
   }
   return { recipientName, address };

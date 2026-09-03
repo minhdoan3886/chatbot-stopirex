@@ -98,9 +98,9 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
   );
   const semanticReady = Boolean(
     input.semantic.intent &&
-      input.semantic.intent !== "other" &&
-      semanticConfidence >= 0.65 &&
-      input.semantic.needsClarification !== true,
+    input.semantic.intent !== "other" &&
+    semanticConfidence >= 0.65 &&
+    input.semantic.needsClarification !== true,
   );
   // `careScenario` is grounded from the customer's actual wording. When it is
   // available it must win over the LLM label in both directions: this prevents
@@ -232,18 +232,17 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
   const expectedPendingIntent = input.pendingAction ? pendingIntent(input.pendingAction) : undefined;
   const directQuestionInterruptsPendingAction = Boolean(
     semanticReady &&
-      input.semantic.intent &&
-      input.semantic.intent !== expectedPendingIntent &&
-      input.semantic.intent !== "buying" &&
-      input.semantic.intent !== "order_support",
+    input.semantic.intent &&
+    input.semantic.intent !== expectedPendingIntent &&
+    input.semantic.intent !== "buying" &&
+    input.semantic.intent !== "order_support",
   );
   const pendingMatches =
     pendingAction !== undefined &&
     !directQuestionInterruptsPendingAction &&
     !input.explicitPurchaseSelection &&
     (input.affirmativeFollowup ||
-      (expectedPendingReplyTo !== undefined &&
-        input.semantic.replyTo === expectedPendingReplyTo) ||
+      (expectedPendingReplyTo !== undefined && input.semantic.replyTo === expectedPendingReplyTo) ||
       (pendingAction === "send_usage_guidance" && input.semantic.intent === "usage_guidance"));
   if (pendingMatches && pendingAction) {
     return decision(

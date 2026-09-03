@@ -20,9 +20,7 @@ if (!profileResponse.ok || !profile.id) {
   throw new Error(profile.error?.message ?? "Không xác minh được Page Access Token");
 }
 if (profile.id !== env.metaPageId) {
-  throw new Error(
-    `Page Access Token thuộc Page ${profile.id}, không khớp META_PAGE_ID ${env.metaPageId}`,
-  );
+  throw new Error(`Page Access Token thuộc Page ${profile.id}, không khớp META_PAGE_ID ${env.metaPageId}`);
 }
 
 const subscribeUrl = new URL(`${graphBase}/${env.metaPageId}/subscribed_apps`);

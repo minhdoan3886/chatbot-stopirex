@@ -31,10 +31,7 @@ export function requiredAnswerTopics(customerMessage: string): RequiredAnswerTop
     !/\b(?:boi|lan|quet|dung)(?: xong)?\b.{0,60}\b(?:sang|buoi sang|sang hom sau)\b.{0,60}\b(?:tam|rua|xa phong|soap)\b/.test(
       text,
     ) &&
-    !(
-      /\b(?:tam|rua|xa phong|soap)\b/.test(text) &&
-      /\b(?:toi hom truoc|buoi toi|dem truoc)\b/.test(text)
-    )
+    !(/\b(?:tam|rua|xa phong|soap)\b/.test(text) && /\b(?:toi hom truoc|buoi toi|dem truoc)\b/.test(text))
   ) {
     topics.push("usage_time");
   }
@@ -101,15 +98,11 @@ export function replyCoversRequiredAnswerTopic(topic: RequiredAnswerTopic, custo
       );
     case "hypothetical_irritation_refund": {
       const directConfirmation = /^(?:da\s+)?co\b.{0,80}\b(?:bao hanh|hoan tien)\b/.test(text);
-      const conditions =
-        /\bdung dung huong dan\b/.test(text) && /\b(?:du )?2 tuan\b/.test(text);
+      const conditions = /\bdung dung huong dan\b/.test(text) && /\b(?:du )?2 tuan\b/.test(text);
       const evidenceAndNoReturn =
-        /\bclip\b.{0,35}\bnhung huy\b/.test(text) &&
-        /\bkhong can gui (?:lai )?san pham\b/.test(text);
+        /\bclip\b.{0,35}\bnhung huy\b/.test(text) && /\bkhong can gui (?:lai )?san pham\b/.test(text);
       const irritationSafety =
-        /\b(?:xot|rat)\b/.test(text) &&
-        /\bngung dung\b/.test(text) &&
-        /\b(?:nhan|lien he)\b/.test(text);
+        /\b(?:xot|rat)\b/.test(text) && /\bngung dung\b/.test(text) && /\b(?:nhan|lien he)\b/.test(text);
       return directConfirmation && conditions && evidenceAndNoReturn && irritationSafety;
     }
   }

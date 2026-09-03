@@ -3,21 +3,11 @@ import { pipeline } from "node:stream";
 
 const port = positivePort(process.env.META_GATEWAY_PORT ?? "8081");
 const targetPort = positivePort(process.env.PORT ?? "8080");
-const allowedHeaders = [
-  "content-type",
-  "x-hub-signature-256",
-  "x-request-id",
-] as const;
+const allowedHeaders = ["content-type", "x-hub-signature-256", "x-request-id"] as const;
 
 const server = createServer((incoming, outgoing) => {
-  const url = new URL(
-    incoming.url ?? "/",
-    `http://${incoming.headers.host ?? "localhost"}`,
-  );
-  if (
-    url.pathname !== "/webhooks/meta" ||
-    (incoming.method !== "GET" && incoming.method !== "POST")
-  ) {
+  const url = new URL(incoming.url ?? "/", `http://${incoming.headers.host ?? "localhost"}`);
+  if (url.pathname !== "/webhooks/meta" || (incoming.method !== "GET" && incoming.method !== "POST")) {
     outgoing.writeHead(404, {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
@@ -43,9 +33,7 @@ const server = createServer((incoming, outgoing) => {
     },
     (upstreamResponse) => {
       outgoing.writeHead(upstreamResponse.statusCode ?? 502, {
-        "content-type":
-          upstreamResponse.headers["content-type"] ??
-          "application/json; charset=utf-8",
+        "content-type": upstreamResponse.headers["content-type"] ?? "application/json; charset=utf-8",
         "cache-control": "no-store",
       });
       pipeline(upstreamResponse, outgoing, () => undefined);

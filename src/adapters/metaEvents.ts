@@ -37,14 +37,16 @@ export function parseMetaWebhook(payload: unknown): MetaInbound[] {
       const sender = event.sender as { id?: unknown } | undefined;
       const recipient = event.recipient as { id?: unknown } | undefined;
       if (typeof sender?.id !== "string") continue;
-      const message = event.message as {
-        mid?: unknown;
-        text?: unknown;
-        attachments?: Array<{ type?: unknown; payload?: { url?: unknown } }>;
-        is_echo?: unknown;
-        app_id?: unknown;
-        metadata?: unknown;
-      } | undefined;
+      const message = event.message as
+        | {
+            mid?: unknown;
+            text?: unknown;
+            attachments?: Array<{ type?: unknown; payload?: { url?: unknown } }>;
+            is_echo?: unknown;
+            app_id?: unknown;
+            metadata?: unknown;
+          }
+        | undefined;
       const postback = event.postback as { payload?: unknown; mid?: unknown } | undefined;
       const referral = parseReferral(event, message, postback);
       const systemTemplateOnly =
@@ -139,7 +141,7 @@ function firstRecord(...values: unknown[]): Record<string, unknown> | undefined 
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 

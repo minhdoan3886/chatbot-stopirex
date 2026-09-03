@@ -36,15 +36,11 @@ export function shouldRecordMarketingTouch(input: {
   return input.occurredAt.getTime() - input.lastActivityAt.getTime() >= sessionGapMs;
 }
 
-export function referralAdTitle(
-  referral: MetaReferralAttribution | undefined,
-): string | undefined {
+export function referralAdTitle(referral: MetaReferralAttribution | undefined): string | undefined {
   return boundedString(referral?.adsContextData.ad_title, 300);
 }
 
-export function referralPostId(
-  referral: MetaReferralAttribution | undefined,
-): string | undefined {
+export function referralPostId(referral: MetaReferralAttribution | undefined): string | undefined {
   return boundedString(referral?.adsContextData.post_id, 200);
 }
 

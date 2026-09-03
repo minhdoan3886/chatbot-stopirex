@@ -25,10 +25,7 @@ if (!env.redisUrl || !env.databaseUrl) {
   const redis = new RedisRuntime(env.redisUrl);
   const postgres = new PostgresStore(env.databaseUrl);
   const repository = new PgFollowupRepository(postgres.pool);
-  const llm = CodexLlmBridge.fromEnvironment(
-    process.env,
-    (event) => postgres.recordLlmUsage(event),
-  );
+  const llm = CodexLlmBridge.fromEnvironment(process.env, (event) => postgres.recordLlmUsage(event));
   const messenger = new GraphMetaMessenger({
     pageAccessToken: env.metaPageAccessToken ?? "",
     graphVersion: env.metaGraphVersion,
@@ -58,20 +55,19 @@ if (!env.redisUrl || !env.databaseUrl) {
   try {
     const [redisReady, databaseReady] = await Promise.all([redis.ready(), postgres.ready()]);
     if (!redisReady || !databaseReady) throw new Error("followup_worker_dependencies_not_ready");
-    workerLeaseAcquired = await redis.acquireLease(
-      workerLeaseKey,
-      workerLeaseOwner,
-      workerLeaseTtlMs,
-    );
+    workerLeaseAcquired = await redis.acquireLease(workerLeaseKey, workerLeaseOwner, workerLeaseTtlMs);
     if (!workerLeaseAcquired) {
       throw new Error(`followup_worker_already_active:${env.followupWorkerConsumer}`);
     }
     workerLeaseTimer = setInterval(() => {
-      void redis.renewLease(workerLeaseKey, workerLeaseOwner, workerLeaseTtlMs).then((renewed) => {
-        if (!renewed) stopping = true;
-      }).catch(() => {
-        stopping = true;
-      });
+      void redis
+        .renewLease(workerLeaseKey, workerLeaseOwner, workerLeaseTtlMs)
+        .then((renewed) => {
+          if (!renewed) stopping = true;
+        })
+        .catch(() => {
+          stopping = true;
+        });
     }, 5_000);
     workerLeaseTimer.unref();
     logger.log("info", "followup_worker_started", {
@@ -87,9 +83,7 @@ if (!env.redisUrl || !env.databaseUrl) {
     while (!stopping) {
       const now = new Date();
       if (Date.now() - lastStaleRecoveryAt >= 60_000) {
-        const recovered = await repository.releaseStaleClaims(
-          new Date(Date.now() - env.followupClaimTtlMs),
-        );
+        const recovered = await repository.releaseStaleClaims(new Date(Date.now() - env.followupClaimTtlMs));
         if (recovered > 0) logger.log("warn", "followup_stale_claims_recovered", { recovered });
         lastStaleRecoveryAt = Date.now();
       }
@@ -134,11 +128,9 @@ if (!env.redisUrl || !env.databaseUrl) {
             cycleId: job.cycleId,
             reason: error instanceof Error ? error.message : "unknown_error",
           });
-          await repository.releaseClaim(
-            job.id,
-            new Date(Date.now() + 30_000),
-            "worker_processing_error",
-          ).catch(() => undefined);
+          await repository
+            .releaseClaim(job.id, new Date(Date.now() + 30_000), "worker_processing_error")
+            .catch(() => undefined);
         } finally {
           await redis.releaseLease(leaseKey, leaseOwner);
         }

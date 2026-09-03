@@ -1,8 +1,8 @@
 import { FileBlob, SpreadsheetFile } from "@oai/artifact-tool";
 
 const files = process.argv.slice(2);
-const norm = (v) => v == null ? "" : String(v).trim();
-const safe = (v) => v instanceof Date ? v.toISOString() : v;
+const norm = (v) => (v == null ? "" : String(v).trim());
+const safe = (v) => (v instanceof Date ? v.toISOString() : v);
 
 function findHeader(values) {
   let best = { index: 0, score: -1 };
@@ -29,11 +29,17 @@ for (const path of files) {
     const distribution = (name) => {
       const idx = col(name);
       if (idx < 0) return null;
-      return Object.fromEntries([...dataRows.reduce((m, r) => {
-        const key = norm(r[idx]) || "(trống)";
-        m.set(key, (m.get(key) ?? 0) + 1);
-        return m;
-      }, new Map())].sort((a,b) => b[1]-a[1]).slice(0,30));
+      return Object.fromEntries(
+        [
+          ...dataRows.reduce((m, r) => {
+            const key = norm(r[idx]) || "(trống)";
+            m.set(key, (m.get(key) ?? 0) + 1);
+            return m;
+          }, new Map()),
+        ]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 30),
+      );
     };
     workbook.sheets.push({
       name: sheet.name,
@@ -42,7 +48,7 @@ for (const path of files) {
       columnCount: Math.max(0, ...values.map((r) => r.length)),
       headerRow: headerIndex + 1,
       headers,
-      samples: dataRows.slice(0,5).map((r) => r.map(safe)),
+      samples: dataRows.slice(0, 5).map((r) => r.map(safe)),
       distributions: {
         source: distribution("Nguồn"),
         orderStatus: distribution("Trạng thái đơn hàng"),

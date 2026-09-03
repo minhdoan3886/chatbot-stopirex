@@ -2,13 +2,7 @@ import { createHash } from "node:crypto";
 import type { CustomerIntent } from "./consultation.js";
 import type { KnowledgeEntity, KnowledgeMatch } from "./knowledge.js";
 
-export type CanonicalFactKind =
-  | "price"
-  | "shipping"
-  | "gift"
-  | "duration"
-  | "safety"
-  | "claim";
+export type CanonicalFactKind = "price" | "shipping" | "gift" | "duration" | "safety" | "claim";
 
 export type CanonicalAnswerFact = {
   id: string;
@@ -66,10 +60,9 @@ export function assertCanonicalClaimsSupported(input: {
   authoritativeReply: string;
   resolution: CanonicalKnowledgeResolution;
 }): void {
-  const support = [
-    ...input.resolution.facts.map((fact) => fact.text),
-    input.authoritativeReply,
-  ].filter(Boolean);
+  const support = [...input.resolution.facts.map((fact) => fact.text), input.authoritativeReply].filter(
+    Boolean,
+  );
   for (const sentence of input.reply.split(/(?<=[.!?])\s+|\n+/u).map((item) => item.trim())) {
     if (!isProductClaimSentence(sentence)) continue;
     const claimTokens = materialClaimTokens(sentence);
@@ -98,10 +91,7 @@ export function assertCanonicalFactApplicability(input: {
   ) {
     throw new FactApplicabilityError("fact_applicability_guard:shipping_unresolved");
   }
-  if (
-    input.resolution.unresolvedFacts.includes("gift") &&
-    /quà|tặng|khuyến mãi|ưu đãi/iu.test(input.reply)
-  ) {
+  if (input.resolution.unresolvedFacts.includes("gift") && /quà|tặng|khuyến mãi|ưu đãi/iu.test(input.reply)) {
     throw new FactApplicabilityError("fact_applicability_guard:gift_unresolved");
   }
   for (const conflict of input.resolution.conflicts) {
@@ -119,9 +109,7 @@ export function assertCanonicalFactApplicability(input: {
   ]);
   const unsupported = replyAmounts.filter((amount) => !allowed.has(amount));
   if (unsupported.length > 0) {
-    throw new FactApplicabilityError(
-      `fact_applicability_guard:unsupported_money:${unsupported.join(",")}`,
-    );
+    throw new FactApplicabilityError(`fact_applicability_guard:unsupported_money:${unsupported.join(",")}`);
   }
 }
 
@@ -309,15 +297,49 @@ function vndAmounts(value: string): number[] {
 function isProductClaimSentence(value: string): boolean {
   if (/[?？]$/u.test(value)) return false;
   const normalized = normalize(value);
-  const hasProductSubject = /\b(?:stopirex|san pham|lan nach|sua tam|body wash|cong thuc|hoat chat)\b/u.test(normalized);
-  const hasClaimPredicate = /\b(?:co|khong|giup|ho tro|giam|kiem soat|ngan|chua|tri|lam|dung|lan|boi|tham|gay|duy tri|bao ve)\b/u.test(normalized);
+  const hasProductSubject = /\b(?:stopirex|san pham|lan nach|sua tam|body wash|cong thuc|hoat chat)\b/u.test(
+    normalized,
+  );
+  const hasClaimPredicate =
+    /\b(?:co|khong|giup|ho tro|giam|kiem soat|ngan|chua|tri|lam|dung|lan|boi|tham|gay|duy tri|bao ve)\b/u.test(
+      normalized,
+    );
   return hasProductSubject && hasClaimPredicate;
 }
 
 function materialClaimTokens(value: string): string[] {
   const stop = new Set([
-    "stopirex", "san", "pham", "minh", "anh", "chi", "em", "da", "de", "va", "la", "nay",
-    "do", "mot", "cac", "cho", "khi", "thi", "voi", "the", "a", "nhe", "giup", "ho", "tro",
+    "stopirex",
+    "san",
+    "pham",
+    "minh",
+    "anh",
+    "chi",
+    "em",
+    "da",
+    "de",
+    "va",
+    "la",
+    "nay",
+    "do",
+    "mot",
+    "cac",
+    "cho",
+    "khi",
+    "thi",
+    "voi",
+    "the",
+    "a",
+    "nhe",
+    "giup",
+    "ho",
+    "tro",
   ]);
-  return [...new Set(normalize(value).split(/[^a-z0-9]+/u).filter((token) => token.length >= 2 && !stop.has(token)))];
+  return [
+    ...new Set(
+      normalize(value)
+        .split(/[^a-z0-9]+/u)
+        .filter((token) => token.length >= 2 && !stop.has(token)),
+    ),
+  ];
 }

@@ -66,7 +66,9 @@ test("shadow đánh dấu job nhưng tuyệt đối không gọi Meta", async ()
   let metaCalls = 0;
   let shadowed = "";
   const repository = {
-    async markShadowed(jobId: string) { shadowed = jobId; },
+    async markShadowed(jobId: string) {
+      shadowed = jobId;
+    },
   } as unknown as PgFollowupRepository;
   const messenger = messengerFixture(async () => {
     metaCalls += 1;
@@ -90,7 +92,9 @@ test("shadow đánh dấu job nhưng tuyệt đối không gọi Meta", async ()
 test("timeout Meta được đánh dấu delivery_unknown và không retry tự động", async () => {
   let failureInput: Record<string, unknown> | undefined;
   const repository = {
-    async isStillClaimed() { return true; },
+    async isStillClaimed() {
+      return true;
+    },
     async markSendFailure(input: Record<string, unknown>) {
       failureInput = input;
       return "delivery_unknown" as const;
@@ -119,8 +123,12 @@ test("dispatcher ưu tiên nội dung OpenAI và lưu câu hỏi follow-up vào 
   let sentText = "";
   let marked: Record<string, unknown> | undefined;
   const repository = {
-    async isStillClaimed() { return true; },
-    async markSent(input: Record<string, unknown>) { marked = input; },
+    async isStillClaimed() {
+      return true;
+    },
+    async markSent(input: Record<string, unknown>) {
+      marked = input;
+    },
   } as unknown as PgFollowupRepository;
   const dispatcher = new FollowupDispatcher({
     repository,
@@ -146,12 +154,14 @@ test("dispatcher ưu tiên nội dung OpenAI và lưu câu hỏi follow-up vào 
     now: () => new Date("2026-08-17T04:00:00.000Z"),
   });
 
-  const result = await dispatcher.process(claimed({
-    contextSnapshot: {
-      customerMessage: "Giá bao nhiêu?",
-      lastIntent: "price_request",
-    },
-  }));
+  const result = await dispatcher.process(
+    claimed({
+      contextSnapshot: {
+        customerMessage: "Giá bao nhiêu?",
+        lastIntent: "price_request",
+      },
+    }),
+  );
 
   assert.equal(result, "sent");
   assert.match(sentText, /mồ hôi.*mùi.*cả hai/iu);
@@ -166,7 +176,14 @@ test("markSent ghi tin follow-up vào history để lượt trả lời ngắn t
       if (/SELECT runtime_state/iu.test(text)) {
         return {
           rowCount: 1,
-          rows: [{ runtime_state: { pipeline: "3.Đã báo giá", history: [{ role: "user", text: "Giá bao nhiêu?" }] } }],
+          rows: [
+            {
+              runtime_state: {
+                pipeline: "3.Đã báo giá",
+                history: [{ role: "user", text: "Giá bao nhiêu?" }],
+              },
+            },
+          ],
         };
       }
       if (/UPDATE conversations/iu.test(text)) runtimeUpdate = params;
@@ -175,7 +192,9 @@ test("markSent ghi tin follow-up vào history để lượt trả lời ngắn t
     release() {},
   };
   const repository = new PgFollowupRepository({
-    async connect() { return client; },
+    async connect() {
+      return client;
+    },
   } as never);
 
   await repository.markSent({
@@ -203,12 +222,14 @@ test("markSent ghi tin follow-up vào history để lượt trả lời ngắn t
   });
 });
 
-function messengerFixture(
-  sendText: MetaMessenger["sendText"],
-): MetaMessenger {
+function messengerFixture(sendText: MetaMessenger["sendText"]): MetaMessenger {
   return {
     sendText,
-    async sendImage() { return { ok: true, value: { messageId: "image-1" } }; },
-    async sendTyping() { return { ok: true, value: undefined }; },
+    async sendImage() {
+      return { ok: true, value: { messageId: "image-1" } };
+    },
+    async sendTyping() {
+      return { ok: true, value: undefined };
+    },
   };
 }

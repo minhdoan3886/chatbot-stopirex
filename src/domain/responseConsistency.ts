@@ -39,11 +39,7 @@ export function assertReplyMatchesConversationState(input: {
   if (claimedCombo && input.selectedQuantity !== Number(claimedCombo)) {
     throw consistencyError(`reply_claims_uncommitted_quantity_${claimedCombo}`);
   }
-  if (
-    /da (?:len|tao) don thanh cong|ma van don/.test(text) &&
-    !input.orderId &&
-    !input.orderReceived
-  ) {
+  if (/da (?:len|tao) don thanh cong|ma van don/.test(text) && !input.orderId && !input.orderReceived) {
     throw consistencyError("reply_claims_uncommitted_order");
   }
   if (input.botPaused && /gui.*ten nguoi nhan|gui.*sdt|gui.*dia chi/.test(text)) {
@@ -83,9 +79,10 @@ function assertClaimedSavedValuesMatchState(input: {
   selectedQuantity?: SupportedOrderQuantity;
 }): void {
   for (const claim of input.claimedSavedFields ?? []) {
-    const committed = claim.field === "quantity"
-      ? input.orderDraft?.quantity ?? input.selectedQuantity
-      : input.orderDraft?.[claim.field];
+    const committed =
+      claim.field === "quantity"
+        ? (input.orderDraft?.quantity ?? input.selectedQuantity)
+        : input.orderDraft?.[claim.field];
     if (
       committed === undefined ||
       normalizeClaimValue(String(committed)) !== normalizeClaimValue(claim.value)
@@ -129,5 +126,7 @@ function normalize(value: string): string {
 }
 
 function normalizeClaimValue(value: string): string {
-  return normalize(value).replace(/[^a-z0-9]+/gu, " ").trim();
+  return normalize(value)
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim();
 }

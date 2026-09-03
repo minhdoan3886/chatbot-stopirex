@@ -33,11 +33,7 @@ import {
   negativeReviewSteps,
   resumeAfterHuman,
 } from "../src/domain/customerCare.js";
-import {
-  isBotAuthoredEcho,
-  parseMetaWebhook,
-  PageTenantRegistry,
-} from "../src/adapters/metaEvents.js";
+import { isBotAuthoredEcho, parseMetaWebhook, PageTenantRegistry } from "../src/adapters/metaEvents.js";
 import {
   CircuitBreaker,
   retryProvider,
@@ -340,9 +336,7 @@ test("Meta parser bỏ thẻ cập nhật vận chuyển dạng template nhưng 
             timestamp: 2,
             message: {
               mid: "real-photo",
-              attachments: [
-                { type: "image", payload: { url: "https://example.test/customer-photo.jpg" } },
-              ],
+              attachments: [{ type: "image", payload: { url: "https://example.test/customer-photo.jpg" } }],
             },
           },
         ],

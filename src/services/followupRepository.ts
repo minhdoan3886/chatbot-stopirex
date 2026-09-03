@@ -117,7 +117,11 @@ export class PgFollowupRepository {
         ],
       );
       const cycleId = String(cycle.rows[0].id);
-      for (const [stage, hours] of [["3h", 3], ["6h", 6], ["9h", 9]] as const) {
+      for (const [stage, hours] of [
+        ["3h", 3],
+        ["6h", 6],
+        ["9h", 9],
+      ] as const) {
         const dueAt = new Date(input.anchorSentAt.getTime() + hours * 60 * 60 * 1_000);
         const idempotencyKey = [
           input.tenantId,
@@ -313,19 +317,20 @@ export class PgFollowupRepository {
       history.push({ role: "assistant", text: input.text });
       currentState.history = history;
       currentState.freeShippingApproved = true;
-      currentState.lastNextBestAction = input.job.stage === "9h"
-        ? {
-            type: "close_without_question",
-            state: "stopped",
-            key: "followup_cycle_completed",
-            reason: "Đã gửi nhịp cuối và khép vòng follow-up.",
-          }
-        : {
-            type: "ask_relevant_fact",
-            state: "preserved_existing_question",
-            key: `followup_${input.job.stage}`,
-            reason: "Câu hỏi follow-up đã gửi và được lưu vào lịch sử hội thoại.",
-          };
+      currentState.lastNextBestAction =
+        input.job.stage === "9h"
+          ? {
+              type: "close_without_question",
+              state: "stopped",
+              key: "followup_cycle_completed",
+              reason: "Đã gửi nhịp cuối và khép vòng follow-up.",
+            }
+          : {
+              type: "ask_relevant_fact",
+              state: "preserved_existing_question",
+              key: `followup_${input.job.stage}`,
+              reason: "Câu hỏi follow-up đã gửi và được lưu vào lịch sử hội thoại.",
+            };
       if (input.job.stage === "9h") {
         currentState.pipeline = "N.Nuôi dưỡng";
         delete currentState.pendingQuestionTopic;
@@ -495,7 +500,7 @@ function asFollowupContext(value: unknown): FollowupContextSnapshot {
 
 function asRuntimeState(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? structuredClone(value) as Record<string, unknown>
+    ? (structuredClone(value) as Record<string, unknown>)
     : {};
 }
 

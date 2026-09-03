@@ -60,7 +60,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     "MULTI_ACTION_CANARY_PERCENT",
   );
   const followupMode = source.FOLLOWUP_MODE ?? "shadow";
-  if (!( ["disabled", "shadow", "enabled"] as const).includes(followupMode as never)) {
+  if (!(["disabled", "shadow", "enabled"] as const).includes(followupMode as never)) {
     throw new Error("FOLLOWUP_MODE phải là disabled, shadow hoặc enabled");
   }
   const env: AppEnv = {
@@ -83,10 +83,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     followupMaxAttempts: positiveInteger(source.FOLLOWUP_MAX_ATTEMPTS ?? "3", "FOLLOWUP_MAX_ATTEMPTS"),
     followupClaimTtlMs: positiveInteger(source.FOLLOWUP_CLAIM_TTL_MS ?? "60000", "FOLLOWUP_CLAIM_TTL_MS"),
     followupPrimaryApproved: source.FOLLOWUP_PRIMARY_APPROVED === "true",
-    llmUsdToVndRate: positiveNumber(
-      source.LLM_USD_TO_VND_RATE ?? "26000",
-      "LLM_USD_TO_VND_RATE",
-    ),
+    llmUsdToVndRate: positiveNumber(source.LLM_USD_TO_VND_RATE ?? "26000", "LLM_USD_TO_VND_RATE"),
     multiActionRolloutMode: multiActionRolloutMode as AppEnv["multiActionRolloutMode"],
     multiActionCanaryPercent,
     multiActionPrimaryApproved: source.MULTI_ACTION_PRIMARY_APPROVED === "true",
@@ -140,16 +137,10 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     env.multiActionRolloutMode !== "shadow" &&
     !env.multiActionPrimaryApproved
   ) {
-    throw new Error(
-      "Page primary chỉ được chạy shadow cho tới khi MULTI_ACTION_PRIMARY_APPROVED=true",
-    );
+    throw new Error("Page primary chỉ được chạy shadow cho tới khi MULTI_ACTION_PRIMARY_APPROVED=true");
   }
 
-  if (
-    env.metaActivePage === "primary" &&
-    env.followupMode === "enabled" &&
-    !env.followupPrimaryApproved
-  ) {
+  if (env.metaActivePage === "primary" && env.followupMode === "enabled" && !env.followupPrimaryApproved) {
     throw new Error(
       "Follow-up trên Page primary chỉ được chạy shadow cho tới khi FOLLOWUP_PRIMARY_APPROVED=true",
     );

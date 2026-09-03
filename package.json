@@ -49,5 +49,8 @@
     "pg": "^8.22.0",
     "read-excel-file": "^9.3.4",
     "redis": "^6.1.0"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.9"
   }
 }

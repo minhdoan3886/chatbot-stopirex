@@ -10,11 +10,7 @@ test("mỗi turn phát audit về state, action và nguồn câu trả lời cu�
   const logger = new StructuredLogger((line) => {
     records.push(JSON.parse(line) as Record<string, unknown>);
   });
-  const brain = new MetaChatBrain(
-    new DemoChatService(),
-    new CodexLlmBridge({ enabled: false }),
-    logger,
-  );
+  const brain = new MetaChatBrain(new DemoChatService(), new CodexLlmBridge({ enabled: false }), logger);
 
   const result = await brain.reply({
     sessionId: "architecture-audit",

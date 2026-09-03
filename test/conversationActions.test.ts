@@ -84,9 +84,7 @@ test("hai proposition FAQ cùng topic vẫn được giữ độc lập theo pro
   });
   assert.equal(plan.accepted.filter((action) => action.type === "answer_question").length, 2);
   assert.deepEqual(
-    plan.accepted
-      .filter((action) => action.type === "answer_question")
-      .map((action) => action.propositionId),
+    plan.accepted.filter((action) => action.type === "answer_question").map((action) => action.propositionId),
     ["p-delivery", "p-fee"],
   );
 });
@@ -112,7 +110,10 @@ test("FAQ proposition không tự tạo mutation đơn hàng", () => {
     optOut: false,
     collectingOrder: true,
   });
-  assert.equal(plan.accepted.some((action) => action.type === "update_order"), false);
+  assert.equal(
+    plan.accepted.some((action) => action.type === "update_order"),
+    false,
+  );
 });
 
 test("LLM được sửa số lượng đơn dù cùng câu còn hỏi tổng tiền và địa chỉ giao", () => {
@@ -183,7 +184,10 @@ test("fallback không biến câu hỏi giả định một lọ thành lệnh s
   });
 
   assert.equal(plan.quantity, undefined);
-  assert.equal(plan.accepted.some((action) => action.type === "select_quantity"), false);
+  assert.equal(
+    plan.accepted.some((action) => action.type === "select_quantity"),
+    false,
+  );
 });
 
 test("bổ sung chủ đề chính bị thiếu khi LLM mới tạo answer action cho ý còn lại", () => {
@@ -236,7 +240,10 @@ test("batch không cho fallback regex tự thêm topic khi LLM đã đủ quyề
 
   assert.deepEqual(plan.answerTopics, ["comparison"]);
   assert.equal(plan.hasMultipleActions, false);
-  assert.equal(plan.accepted.some((action) => action.source === "state"), false);
+  assert.equal(
+    plan.accepted.some((action) => action.source === "state"),
+    false,
+  );
 });
 
 test("an toàn kích ứng chặn chọn số lượng trong cùng tin nhắn", () => {
@@ -335,7 +342,10 @@ test("LLM không được tạo đơn khi evidence không nằm trong lời khá
   });
 
   assert.equal(plan.quantity, undefined);
-  assert.equal(plan.accepted.some((action) => action.type === "continue_order_collection"), false);
+  assert.equal(
+    plan.accepted.some((action) => action.type === "continue_order_collection"),
+    false,
+  );
   assert.ok(plan.rejected.some((item) => item.reason === "missing_evidence"));
   assert.ok(plan.rejected.some((item) => item.reason === "policy_verification_required"));
 });
@@ -411,7 +421,10 @@ test("Reconciler chấp nhận số lượng 3 đến 5 lọ đã duyệt", () =
       collectingOrder: false,
     });
     assert.equal(plan.quantity, quantity);
-    assert.equal(plan.accepted.some((action) => action.type === "select_quantity"), true);
+    assert.equal(
+      plan.accepted.some((action) => action.type === "select_quantity"),
+      true,
+    );
   }
 });
 
@@ -480,7 +493,10 @@ test("ý từ chối cuối cùng của LLM thắng state mua cũ khi không có
   assert.equal(plan.shouldClarify, false);
   assert.equal(plan.quantity, undefined);
   assert.equal(plan.primaryIntent, "decline_purchase");
-  assert.equal(plan.conflicts.some((conflict) => conflict.includes("vừa có tín hiệu mua")), false);
+  assert.equal(
+    plan.conflicts.some((conflict) => conflict.includes("vừa có tín hiệu mua")),
+    false,
+  );
 });
 
 test("không nhận số lượng do LLM suy diễn nếu không có bằng chứng trong tin khách", () => {
@@ -531,8 +547,14 @@ test("Reconciler không mở ca kích ứng từ câu hỏi giả định về s
   });
 
   assert.equal(plan.careIssue, undefined);
-  assert.equal(plan.accepted.some((action) => action.type === "start_customer_care"), false);
-  assert.equal(plan.accepted.some((action) => action.type === "answer_question"), true);
+  assert.equal(
+    plan.accepted.some((action) => action.type === "start_customer_care"),
+    false,
+  );
+  assert.equal(
+    plan.accepted.some((action) => action.type === "answer_question"),
+    true,
+  );
 });
 
 test("Reconciler loại action mở CSKH do LLM đề xuất khi khách nói rõ chưa dùng", () => {
@@ -567,9 +589,18 @@ test("Reconciler loại action mở CSKH do LLM đề xuất khi khách nói rõ
   });
 
   assert.equal(plan.careIssue, undefined);
-  assert.equal(plan.accepted.some((action) => action.type === "start_customer_care"), false);
-  assert.equal(plan.accepted.some((action) => action.type === "answer_question"), true);
-  assert.equal(plan.accepted.some((action) => action.type === "pause_order"), true);
+  assert.equal(
+    plan.accepted.some((action) => action.type === "start_customer_care"),
+    false,
+  );
+  assert.equal(
+    plan.accepted.some((action) => action.type === "answer_question"),
+    true,
+  );
+  assert.equal(
+    plan.accepted.some((action) => action.type === "pause_order"),
+    true,
+  );
   assert.ok(plan.rejected.some((item) => item.reason === "non_current_care_scenario"));
 });
 
@@ -594,8 +625,14 @@ test("phần chưa có nguồn tự tạo handoff nhưng vẫn giữ action tr�
     collectingOrder: false,
   });
 
-  assert.equal(plan.accepted.some((action) => action.type === "answer_question"), true);
-  assert.equal(plan.accepted.some((action) => action.type === "handoff_to_human"), true);
+  assert.equal(
+    plan.accepted.some((action) => action.type === "answer_question"),
+    true,
+  );
+  assert.equal(
+    plan.accepted.some((action) => action.type === "handoff_to_human"),
+    true,
+  );
 });
 
 test("handoff after-sales có căn cứ được hoàn tất thành action khiếu nại", () => {
@@ -623,10 +660,7 @@ test("handoff after-sales có căn cứ được hoàn tất thành action khi�
   });
 
   assert.equal(plan.careIssue, "complaint");
-  assert.equal(
-    plan.accepted.find((action) => action.type === "start_customer_care")?.source,
-    "state",
-  );
+  assert.equal(plan.accepted.find((action) => action.type === "start_customer_care")?.source, "state");
   assert.equal(plan.primaryIntent, "order_support");
 });
 
@@ -683,7 +717,10 @@ test("update_order không nhận dữ liệu LLM tự suy diễn ngoài tin khá
     collectingOrder: true,
   });
 
-  assert.equal(plan.accepted.some((action) => action.type === "update_order"), false);
+  assert.equal(
+    plan.accepted.some((action) => action.type === "update_order"),
+    false,
+  );
   assert.ok(plan.rejected.some((item) => item.reason === "invalid_order_update"));
 });
 
@@ -719,7 +756,10 @@ test("LLM chặn action thu đơn cũ khi lượt mới quay sang hỏi tư vấ
   });
 
   assert.equal(plan.primaryIntent, "consultation");
-  assert.equal(plan.accepted.some((action) => action.type === "continue_order_collection"), false);
+  assert.equal(
+    plan.accepted.some((action) => action.type === "continue_order_collection"),
+    false,
+  );
   assert.ok(
     plan.rejected.some(
       ({ action, reason }) =>

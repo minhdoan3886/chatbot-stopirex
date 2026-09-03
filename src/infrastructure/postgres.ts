@@ -582,9 +582,7 @@ export class PostgresStore {
         ),
       ]);
 
-    const summaries = new Map(
-      summaryRows.rows.map((row) => [String(row.name), llmUsageTotals(row)]),
-    );
+    const summaries = new Map(summaryRows.rows.map((row) => [String(row.name), llmUsageTotals(row)]));
     return {
       summaries: {
         hours24: summaries.get("hours24") ?? emptyLlmUsageTotals(),
@@ -772,14 +770,17 @@ export class PostgresStore {
       const activityDates = [row.last_touch_at, row.last_inbound_at]
         .filter(Boolean)
         .map((value) => new Date(value));
-      const lastActivityAt = activityDates.length > 0
-        ? new Date(Math.max(...activityDates.map((value) => value.getTime())))
-        : undefined;
-      if (!shouldRecordMarketingTouch({
-        occurredAt: input.occurredAt,
-        ...(lastActivityAt ? { lastActivityAt } : {}),
-        hasReferral: Boolean(input.referral),
-      })) {
+      const lastActivityAt =
+        activityDates.length > 0
+          ? new Date(Math.max(...activityDates.map((value) => value.getTime())))
+          : undefined;
+      if (
+        !shouldRecordMarketingTouch({
+          occurredAt: input.occurredAt,
+          ...(lastActivityAt ? { lastActivityAt } : {}),
+          hasReferral: Boolean(input.referral),
+        })
+      ) {
         return { recorded: false, sourceCategory, customerStage };
       }
       const inserted = await client.query(
@@ -815,10 +816,12 @@ export class PostgresStore {
     });
   }
 
-  async marketingAttributionSnapshot(input: {
-    periodDays?: number;
-    pageId?: string;
-  } = {}): Promise<MarketingAttributionSnapshot> {
+  async marketingAttributionSnapshot(
+    input: {
+      periodDays?: number;
+      pageId?: string;
+    } = {},
+  ): Promise<MarketingAttributionSnapshot> {
     const periodDays = Math.max(1, Math.min(Math.trunc(input.periodDays ?? 30), 365));
     const pageId = input.pageId ?? null;
     const [segmentRows, adRows, orderRows] = await Promise.all([
@@ -1053,12 +1056,7 @@ export class PostgresStore {
              AND (inbound_events.payload ? 'message' OR inbound_events.payload ? 'postback')
              AND inbound_events.received_at > current_batch.received_at
          ) AS has_newer`,
-        [
-          input.tenantId,
-          input.pageId,
-          input.externalCustomerId,
-          [...input.currentEventIds],
-        ],
+        [input.tenantId, input.pageId, input.externalCustomerId, [...input.currentEventIds]],
       );
       return result.rows[0]?.has_newer === true;
     });
@@ -1254,9 +1252,7 @@ function mapOutboundPlan(row: Record<string, unknown>): ConversationOutboundPlan
       ? payload.sourceEventIds.filter((item): item is string => typeof item === "string")
       : [],
     status: row.status as ConversationOutboundPlan["status"],
-    ...(typeof payload.lastMessageId === "string"
-      ? { lastMessageId: payload.lastMessageId }
-      : {}),
+    ...(typeof payload.lastMessageId === "string" ? { lastMessageId: payload.lastMessageId } : {}),
   };
 }
 

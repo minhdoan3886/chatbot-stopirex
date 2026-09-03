@@ -3,13 +3,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: [
-      "dist/**",
-      "node_modules/**",
-      "tmp/**",
-      "outputs/**",
-      ".codex_spreadsheet_work/**",
-    ],
+    ignores: ["dist/**", "node_modules/**", "tmp/**", "outputs/**", ".codex_spreadsheet_work/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

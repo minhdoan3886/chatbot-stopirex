@@ -35,10 +35,7 @@ if (!env.redisUrl || !env.databaseUrl) {
   const followups = new PgFollowupRepository(postgres.pool);
   const orderInbox = new OrderInboxService(postgres.pool);
   const chat = new DemoChatService();
-  const llm = CodexLlmBridge.fromEnvironment(
-    process.env,
-    (event) => postgres.recordLlmUsage(event),
-  );
+  const llm = CodexLlmBridge.fromEnvironment(process.env, (event) => postgres.recordLlmUsage(event));
   const brain = new MetaChatBrain(chat, llm, logger, {
     mode: env.multiActionRolloutMode,
     canaryPercent: env.multiActionCanaryPercent,
@@ -78,11 +75,7 @@ if (!env.redisUrl || !env.databaseUrl) {
     if (!redisReady || !databaseReady) {
       throw new Error("worker_dependencies_not_ready");
     }
-    workerLeaseAcquired = await redis.acquireLease(
-      workerLeaseKey,
-      workerLeaseOwner,
-      workerLeaseTtlMs,
-    );
+    workerLeaseAcquired = await redis.acquireLease(workerLeaseKey, workerLeaseOwner, workerLeaseTtlMs);
     if (!workerLeaseAcquired) {
       throw new Error(`worker_consumer_already_active:${env.metaWorkerConsumer}`);
     }
@@ -152,9 +145,7 @@ if (!env.redisUrl || !env.databaseUrl) {
           Boolean(item),
         );
       const validIds = new Set(valid.map((item) => item.id));
-      const invalidIds = firstRead
-        .filter((item) => !validIds.has(item.id))
-        .map((item) => item.id);
+      const invalidIds = firstRead.filter((item) => !validIds.has(item.id)).map((item) => item.id);
       if (invalidIds.length > 0) {
         await redis.acknowledge(queueTopic, queueGroup, invalidIds);
         logger.log("warn", "meta_queue_invalid_jobs_acked", {
@@ -227,10 +218,7 @@ if (!env.redisUrl || !env.databaseUrl) {
   }
 }
 
-async function publishWorkerHeartbeat(
-  redis: RedisRuntime,
-  llm: LlmHealthSnapshot,
-): Promise<void> {
+async function publishWorkerHeartbeat(redis: RedisRuntime, llm: LlmHealthSnapshot): Promise<void> {
   await redis.setJson(
     "health:worker:meta",
     {
@@ -335,10 +323,7 @@ async function collectConversationBurst(
   const batch = [...initialBatch];
   const seenIds = new Set(batch.map((message) => message.id));
   const startedAt = Date.now();
-  const maximumBurstMs = Math.max(
-    env.metaDebounceMs,
-    Math.min(env.metaDebounceMs * 3, 12_000),
-  );
+  const maximumBurstMs = Math.max(env.metaDebounceMs, Math.min(env.metaDebounceMs * 3, 12_000));
   let quietUntil = startedAt + env.metaDebounceMs;
   const stopAt = startedAt + maximumBurstMs;
 
@@ -358,9 +343,7 @@ async function collectConversationBurst(
       .map(parseQueueMessage)
       .filter((item): item is RedisQueueMessage<MetaInboundJob> => Boolean(item));
     const parsedIds = new Set(parsed.map((message) => message.id));
-    const invalidIds = newlyRead
-      .filter((message) => !parsedIds.has(message.id))
-      .map((message) => message.id);
+    const invalidIds = newlyRead.filter((message) => !parsedIds.has(message.id)).map((message) => message.id);
     if (invalidIds.length > 0) {
       await redis.acknowledge(queueTopic, queueGroup, invalidIds);
       logger.log("warn", "meta_queue_invalid_jobs_acked", {
@@ -368,10 +351,7 @@ async function collectConversationBurst(
       });
     }
     for (const message of parsed) {
-      if (
-        conversationKey(message.payload) !== targetKey ||
-        seenIds.has(message.id)
-      ) {
+      if (conversationKey(message.payload) !== targetKey || seenIds.has(message.id)) {
         // Event của hội thoại khác vẫn ở pending và sẽ được xử lý ở vòng sau.
         continue;
       }

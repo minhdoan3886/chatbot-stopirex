@@ -4,7 +4,8 @@ import { FileBlob, SpreadsheetFile } from "@oai/artifact-tool";
 const files = {
   shopee: "/Volumes/lưu trữ/Stopirex/shoppe/Order.all.20260711_20260810.xlsx",
   tiktok: "/Volumes/lưu trữ/Stopirex/tiktok/Shop Analytics_Key metrics_20260810.xlsx",
-  facebook: "/Volumes/lưu trữ/Stopirex/facebook/danh_sach_don_hang_10.08.2026_1cd6393886028e2b8a8675f8a11412c1.xlsx",
+  facebook:
+    "/Volumes/lưu trữ/Stopirex/facebook/danh_sach_don_hang_10.08.2026_1cd6393886028e2b8a8675f8a11412c1.xlsx",
 };
 
 const key = process.argv[2];

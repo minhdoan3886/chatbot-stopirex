@@ -201,7 +201,18 @@ export class OperationsDashboardService {
     const redisReady = this.dependencies.redis ? await this.dependencies.redis.ready() : false;
     const redisLatencyMs = Math.round(performance.now() - redisStartedAt);
 
-    const [databaseSnapshot, llmUsage, actionRollout, followup, queue, worker, followupWorker, gateway, publicWebhookRuntime, pageSubscriptionRuntime] = await Promise.all([
+    const [
+      databaseSnapshot,
+      llmUsage,
+      actionRollout,
+      followup,
+      queue,
+      worker,
+      followupWorker,
+      gateway,
+      publicWebhookRuntime,
+      pageSubscriptionRuntime,
+    ] = await Promise.all([
       databaseReady && this.dependencies.database
         ? this.dependencies.database.operationalSnapshot(500)
         : Promise.resolve(emptyDatabaseSnapshot),
@@ -243,8 +254,7 @@ export class OperationsDashboardService {
 
     const sessions = databaseSnapshot.sessions.map((session) => diagnoseSession(session, now));
     const rolloutMode = worker?.multiActionRolloutMode ?? this.dependencies.env.multiActionRolloutMode;
-    const canaryPercent =
-      worker?.multiActionCanaryPercent ?? this.dependencies.env.multiActionCanaryPercent;
+    const canaryPercent = worker?.multiActionCanaryPercent ?? this.dependencies.env.multiActionCanaryPercent;
     const rolloutGate = evaluateActionRolloutGate(actionRollout);
     const workerAgeMs = worker ? now.getTime() - new Date(worker.at).getTime() : Number.POSITIVE_INFINITY;
     // Dashboard và worker là hai process riêng. Cho phép heartbeat đi trước thời
@@ -253,8 +263,7 @@ export class OperationsDashboardService {
     const followupWorkerAgeMs = followupWorker
       ? now.getTime() - new Date(followupWorker.at).getTime()
       : Number.POSITIVE_INFINITY;
-    const followupWorkerHealthy =
-      followupWorkerAgeMs >= -5_000 && followupWorkerAgeMs <= 45_000;
+    const followupWorkerHealthy = followupWorkerAgeMs >= -5_000 && followupWorkerAgeMs <= 45_000;
     const lastMetaActivity = latestDate(databaseSnapshot.lastInboundAt, databaseSnapshot.lastOutboundAt);
     const metaConfigured = Boolean(
       this.dependencies.env.metaPageId && this.dependencies.env.metaPageAccessToken,
@@ -262,10 +271,7 @@ export class OperationsDashboardService {
     const llmEnabled = worker?.llmEnabled ?? this.dependencies.llm.enabled;
     const llmProvider = worker?.llmProvider ?? this.dependencies.llm.provider ?? "codex";
     const llmModel = worker?.llmModel ?? this.dependencies.llm.model;
-    const llmFailureActive = isLaterThan(
-      worker?.llmLastFailureAt,
-      worker?.llmLastSuccessAt,
-    );
+    const llmFailureActive = isLaterThan(worker?.llmLastFailureAt, worker?.llmLastSuccessAt);
     let llmStatus: OperationalStatus = !llmEnabled
       ? "disabled"
       : !workerHealthy
@@ -337,9 +343,9 @@ export class OperationsDashboardService {
         detail: publicWebhookUrl
           ? publicWebhook.ok
             ? pageSubscriptionRuntime?.status === "down"
-              ? pageSubscriptionRuntime.detail ?? "Page chưa subscribe app nhận messages"
+              ? (pageSubscriptionRuntime.detail ?? "Page chưa subscribe app nhận messages")
               : pageSubscriptionRuntime?.status === "degraded"
-                ? pageSubscriptionRuntime.detail ?? "Không đọc lại được trạng thái subscribed_apps"
+                ? (pageSubscriptionRuntime.detail ?? "Không đọc lại được trạng thái subscribed_apps")
                 : `HTTPS công khai → gateway → API hoạt động · ${publicWebhook.latencyMs} ms${pageSubscriptionRuntime?.status === "healthy" ? " · Page đã subscribe app" : ""}`
             : "URL công khai không gọi được gateway/API"
           : "Chưa cấu hình URL HTTPS công khai; Meta chưa thể kết nối webhook",
@@ -433,15 +439,9 @@ export class OperationsDashboardService {
                 enabled: llmEnabled,
                 provider: llmProvider,
                 workerHealthy,
-                ...(worker?.llmLastSuccessAt
-                  ? { lastSuccessAt: worker.llmLastSuccessAt }
-                  : {}),
-                ...(worker?.llmLastLatencyMs !== undefined
-                  ? { lastLatencyMs: worker.llmLastLatencyMs }
-                  : {}),
-                ...(llmFailureActive && worker?.llmLastError
-                  ? { lastError: worker.llmLastError }
-                  : {}),
+                ...(worker?.llmLastSuccessAt ? { lastSuccessAt: worker.llmLastSuccessAt } : {}),
+                ...(worker?.llmLastLatencyMs !== undefined ? { lastLatencyMs: worker.llmLastLatencyMs } : {}),
+                ...(llmFailureActive && worker?.llmLastError ? { lastError: worker.llmLastError } : {}),
               }),
         ...(worker ? { lastSeenAt: worker.at } : {}),
       },
@@ -494,7 +494,7 @@ export class OperationsDashboardService {
         activeSessions24h: databaseSnapshot.activeSessions24h,
         sessionsNeedAttention: sessions.filter((session) => session.health !== "healthy").length,
         pendingInboundEvents: databaseSnapshot.pendingInboundEvents,
-      queuePending: queue.pending,
+        queuePending: queue.pending,
         followupDue: followup.due,
         followupFailed: followup.failed + followup.deliveryUnknown,
       },
@@ -644,9 +644,7 @@ async function probePublicWebhookWithPublicDns(target: URL): Promise<boolean> {
           response.resume();
           resolve(
             response.statusCode === 403 ||
-              (response.statusCode !== undefined &&
-                response.statusCode >= 200 &&
-                response.statusCode < 300),
+              (response.statusCode !== undefined && response.statusCode >= 200 && response.statusCode < 300),
           );
         },
       );
@@ -819,9 +817,7 @@ function providerConnection(input: {
     endpoint,
     status,
     detail,
-    ...(input.health?.lastLatencyMs !== undefined
-      ? { latencyMs: input.health.lastLatencyMs }
-      : {}),
+    ...(input.health?.lastLatencyMs !== undefined ? { latencyMs: input.health.lastLatencyMs } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {}),
   };
 }
@@ -839,20 +835,14 @@ function providerErrorDetail(error: string | undefined): string {
   return labels[error ?? ""] ?? `Lỗi gần nhất: ${error ?? "unknown_error"}`;
 }
 
-function hybridRouterStatus(
-  openAi: OperationalConnection,
-  codex: OperationalConnection,
-): OperationalStatus {
+function hybridRouterStatus(openAi: OperationalConnection, codex: OperationalConnection): OperationalStatus {
   const active = [openAi, codex].filter((item) => item.status !== "disabled");
   if (active.some((item) => item.status === "healthy")) return "healthy";
   if (active.length > 0 && active.every((item) => item.status === "down")) return "down";
   return "degraded";
 }
 
-function hybridRouterDetail(
-  openAi: OperationalConnection,
-  codex: OperationalConnection,
-): string {
+function hybridRouterDetail(openAi: OperationalConnection, codex: OperationalConnection): string {
   const healthy = [openAi, codex].filter((item) => item.status === "healthy");
   if (healthy.length === 2) return "OpenAI và Codex đều sẵn sàng; OpenAI được ưu tiên";
   if (healthy.length === 1) {

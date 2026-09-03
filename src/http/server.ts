@@ -10,11 +10,7 @@ import {
   reconcileKnowledgeBackedPopulationSafety,
   reconcilePendingConsultationAnswer,
 } from "../services/metaChatBrain.js";
-import {
-  DemoChatService,
-  type DemoChatResponse,
-  type DemoChatState,
-} from "../services/demoChat.js";
+import { DemoChatService, type DemoChatResponse, type DemoChatState } from "../services/demoChat.js";
 import {
   CodexLlmBridge,
   repairMissingKnowledgeCitations,
@@ -35,11 +31,7 @@ import { buildProductInformationSnapshot } from "../services/productInformation.
 import { operationsPage } from "./operationsPage.js";
 import { productPage } from "./productPage.js";
 import { ordersPage } from "./ordersPage.js";
-import {
-  dataDeletionPage,
-  privacyPolicyPage,
-  termsOfServicePage,
-} from "./publicPolicyPages.js";
+import { dataDeletionPage, privacyPolicyPage, termsOfServicePage } from "./publicPolicyPages.js";
 import { OrderInboxService } from "../services/orderInbox.js";
 import { GraphMetaMessenger } from "../adapters/metaMessenger.js";
 import {
@@ -259,7 +251,10 @@ const server = createServer(async (request, response) => {
       return json(response, 400, { error: "days_must_be_between_1_and_365" });
     }
     const pageId = url.searchParams.get("pageId")?.trim() || undefined;
-    if (pageId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(pageId)) {
+    if (
+      pageId &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(pageId)
+    ) {
       return json(response, 400, { error: "invalid_page_id" });
     }
     try {

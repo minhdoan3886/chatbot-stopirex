@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  compareActionRollout,
-  selectActionExecutionMode,
-} from "../src/domain/actionRollout.js";
+import { compareActionRollout, selectActionExecutionMode } from "../src/domain/actionRollout.js";
 import type { SemanticUnderstanding } from "../src/domain/consultation.js";
 import { DemoChatService } from "../src/services/demoChat.js";
 import { evaluateActionRolloutGate } from "../src/services/operationsDashboard.js";
@@ -97,12 +94,6 @@ test("quality gate chỉ pass khi đủ mẫu và các tỷ lệ dưới ngưỡ
     multiActionMessageRate: 0.15,
   };
   assert.equal(evaluateActionRolloutGate(base).gateStatus, "pass");
-  assert.equal(
-    evaluateActionRolloutGate({ ...base, handoffMismatchRate: 0.02 }).gateStatus,
-    "blocked",
-  );
-  assert.equal(
-    evaluateActionRolloutGate({ ...base, sampleSize24h: 99 }).gateStatus,
-    "collecting",
-  );
+  assert.equal(evaluateActionRolloutGate({ ...base, handoffMismatchRate: 0.02 }).gateStatus, "blocked");
+  assert.equal(evaluateActionRolloutGate({ ...base, sampleSize24h: 99 }).gateStatus, "collecting");
 });

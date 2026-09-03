@@ -8,7 +8,14 @@ import type { AppEnv } from "../config/env.js";
 import type { FollowupWorkerHeartbeat, WorkerHeartbeat } from "./operationsDashboard.js";
 
 export type OperationsControlStep = {
-  id: "meta-gateway" | "meta-worker" | "followup-worker" | "meta-public-webhook" | "meta-graph" | "openai-llm" | "codex-cli";
+  id:
+    | "meta-gateway"
+    | "meta-worker"
+    | "followup-worker"
+    | "meta-public-webhook"
+    | "meta-graph"
+    | "openai-llm"
+    | "codex-cli";
   name: string;
   action: "restart" | "check";
   status: "healthy" | "down" | "skipped";
@@ -85,11 +92,11 @@ export class OperationsControlService {
   constructor(private readonly dependencies: OperationsControlDependencies) {
     this.source = dependencies.source ?? process.env;
     this.projectRoot = dependencies.projectRoot ?? process.cwd();
-    this.runtime =
-      dependencies.processRuntime ?? createLocalProcessRuntime(this.projectRoot);
+    this.runtime = dependencies.processRuntime ?? createLocalProcessRuntime(this.projectRoot);
     this.fetcher = dependencies.fetch ?? fetch;
     this.now = dependencies.now ?? (() => new Date());
-    this.sleep = dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.sleep =
+      dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   }
 
   async restartConnections(): Promise<OperationsRestartResult> {
@@ -186,12 +193,7 @@ export class OperationsControlService {
   private async restartFollowupWorker(startedAt: Date): Promise<OperationsControlStep> {
     const started = performance.now();
     if (this.dependencies.env.followupMode === "disabled") {
-      return skippedStep(
-        "followup-worker",
-        "Follow-up Worker",
-        "FOLLOWUP_MODE đang disabled",
-        started,
-      );
+      return skippedStep("followup-worker", "Follow-up Worker", "FOLLOWUP_MODE đang disabled", started);
     }
     if (!this.dependencies.redis) {
       return skippedStep(
@@ -208,9 +210,8 @@ export class OperationsControlService {
         "followup-worker.log",
       );
       const ready = await this.waitUntil(async () => {
-        const heartbeat = await this.dependencies.redis?.getJson<FollowupWorkerHeartbeat>(
-          "health:worker:followup",
-        );
+        const heartbeat =
+          await this.dependencies.redis?.getJson<FollowupWorkerHeartbeat>("health:worker:followup");
         return Boolean(heartbeat && new Date(heartbeat.at).getTime() >= startedAt.getTime());
       }, 12_000);
       return step(
@@ -344,8 +345,7 @@ export class OperationsControlService {
           status: "degraded",
           pageId,
           appId,
-          detail:
-            "Meta đã nhận lệnh subscribe; token hiện tại không có quyền đọc lại subscribed_apps",
+          detail: "Meta đã nhận lệnh subscribe; token hiện tại không có quyền đọc lại subscribed_apps",
         });
         return;
       }
@@ -373,11 +373,7 @@ export class OperationsControlService {
     const body = (await response.json().catch(() => ({}))) as {
       data?: { app_id?: unknown; is_valid?: unknown };
     };
-    if (
-      !response.ok ||
-      body.data?.is_valid !== true ||
-      typeof body.data.app_id !== "string"
-    ) {
+    if (!response.ok || body.data?.is_valid !== true || typeof body.data.app_id !== "string") {
       throw new Error("Không xác định được App ID từ Page token");
     }
     return body.data.app_id;
@@ -412,15 +408,11 @@ export class OperationsControlService {
       : [];
     return {
       found: Boolean(app),
-      hasAllRequiredFields: requiredMetaWebhookFields.every((field) =>
-        subscribedFields.includes(field),
-      ),
+      hasAllRequiredFields: requiredMetaWebhookFields.every((field) => subscribedFields.includes(field)),
     };
   }
 
-  private async storePageSubscriptionHealth(
-    health: Omit<PageSubscriptionHealth, "at">,
-  ): Promise<void> {
+  private async storePageSubscriptionHealth(health: Omit<PageSubscriptionHealth, "at">): Promise<void> {
     await this.dependencies.redis?.setJson?.(
       "health:meta:page-subscription",
       { ...health, at: this.now().toISOString() },
@@ -492,9 +484,7 @@ export class OperationsControlService {
     const token = this.dependencies.env.metaPageAccessToken;
     if (!token) return skippedStep("meta-graph", "Meta Graph API", "Thiếu Page Access Token", started);
     try {
-      const target = new URL(
-        `https://graph.facebook.com/${this.dependencies.env.metaGraphVersion}/me`,
-      );
+      const target = new URL(`https://graph.facebook.com/${this.dependencies.env.metaGraphVersion}/me`);
       target.searchParams.set("fields", "id,name");
       target.searchParams.set("access_token", token);
       const response = await this.fetcher(target, { signal: AbortSignal.timeout(8_000) });
@@ -505,7 +495,9 @@ export class OperationsControlService {
         "Meta Graph API",
         "check",
         ok ? "healthy" : "down",
-        ok ? `Page token hợp lệ${typeof body.name === "string" ? ` · ${body.name}` : ""}` : `Meta từ chối · HTTP ${response.status}`,
+        ok
+          ? `Page token hợp lệ${typeof body.name === "string" ? ` · ${body.name}` : ""}`
+          : `Meta từ chối · HTTP ${response.status}`,
         started,
       );
     } catch (error) {
@@ -517,19 +509,13 @@ export class OperationsControlService {
     const started = performance.now();
     const apiKey = this.source.OPENAI_API_KEY?.trim();
     const model = this.source.OPENAI_MODEL?.trim() || "gpt-5.4-nano";
-    const baseUrl = (this.source.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(
-      /\/+$/u,
-      "",
-    );
+    const baseUrl = (this.source.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/u, "");
     if (!apiKey) return skippedStep("openai-llm", "OpenAI Responses API", "Chưa cấu hình API key", started);
     try {
-      const response = await this.fetcher(
-        `${baseUrl}/models/${encodeURIComponent(model)}`,
-        {
-          headers: { authorization: `Bearer ${apiKey}` },
-          signal: AbortSignal.timeout(8_000),
-        },
-      );
+      const response = await this.fetcher(`${baseUrl}/models/${encodeURIComponent(model)}`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8_000),
+      });
       return step(
         "openai-llm",
         "OpenAI Responses API",
@@ -580,10 +566,7 @@ function requiresPublicDnsProbe(hostname: string): boolean {
   return hostname.endsWith(".trycloudflare.com") || hostname.endsWith(".ts.net");
 }
 
-async function probeWebhookWithPublicDns(
-  target: URL,
-  expectedChallenge: string,
-): Promise<boolean> {
+async function probeWebhookWithPublicDns(target: URL, expectedChallenge: string): Promise<boolean> {
   try {
     const resolver = new Resolver();
     resolver.setServers(["1.1.1.1", "8.8.8.8"]);
@@ -630,9 +613,7 @@ export function createLocalProcessRuntime(projectRoot: string): ProcessRuntime {
   return {
     async restart(entrypoint, marker, logName) {
       const processes = await listProcesses();
-      const targets = processes.filter(
-        (item) => item.pid !== process.pid && item.command.includes(marker),
-      );
+      const targets = processes.filter((item) => item.pid !== process.pid && item.command.includes(marker));
       for (const target of targets) process.kill(target.pid, "SIGTERM");
       const deadline = Date.now() + 4_000;
       for (const target of targets) {
@@ -677,16 +658,12 @@ export function createLocalProcessRuntime(projectRoot: string): ProcessRuntime {
       const log = await open(logPath, "w");
       let child: ReturnType<typeof spawn>;
       try {
-        child = spawn(
-          executable,
-          ["tunnel", "--no-autoupdate", "--protocol", "http2", "--url", origin],
-          {
-            cwd: projectRoot,
-            detached: true,
-            env: process.env,
-            stdio: ["ignore", log.fd, log.fd],
-          },
-        );
+        child = spawn(executable, ["tunnel", "--no-autoupdate", "--protocol", "http2", "--url", origin], {
+          cwd: projectRoot,
+          detached: true,
+          env: process.env,
+          stdio: ["ignore", log.fd, log.fd],
+        });
         await new Promise<void>((resolve, reject) => {
           child.once("spawn", resolve);
           child.once("error", reject);
@@ -718,9 +695,7 @@ export function createLocalProcessRuntime(projectRoot: string): ProcessRuntime {
 
 async function stopMatchingProcesses(marker: string): Promise<void> {
   const processes = await listProcesses();
-  const targets = processes.filter(
-    (item) => item.pid !== process.pid && item.command.includes(marker),
-  );
+  const targets = processes.filter((item) => item.pid !== process.pid && item.command.includes(marker));
   for (const target of targets) {
     try {
       process.kill(target.pid, "SIGTERM");

@@ -2,10 +2,7 @@ import type { MetaMessenger } from "../integrations/contracts.js";
 import { followupMessage } from "../domain/sales.js";
 import { questionTopic } from "../domain/responseGovernor.js";
 import type { FollowupComposeResult } from "./codexLlm.js";
-import type {
-  ClaimedFollowupJob,
-  PgFollowupRepository,
-} from "./followupRepository.js";
+import type { ClaimedFollowupJob, PgFollowupRepository } from "./followupRepository.js";
 import type { StructuredLogger } from "./logger.js";
 
 export type FollowupMode = "disabled" | "shadow" | "enabled";
@@ -26,11 +23,7 @@ export type FollowupEligibility =
         | "missing_customer_activity";
     };
 
-const ELIGIBLE_PIPELINES = new Set([
-  "3.Đã báo giá",
-  "4.XL băn khoăn",
-  "7.Chờ followup",
-]);
+const ELIGIBLE_PIPELINES = new Set(["3.Đã báo giá", "4.XL băn khoăn", "7.Chờ followup"]);
 
 export function evaluateFollowupEligibility(
   job: ClaimedFollowupJob,
@@ -78,15 +71,11 @@ export class FollowupDispatcher {
     },
   ) {}
 
-  async process(job: ClaimedFollowupJob): Promise<
-    "sent" | "shadowed" | "cancelled" | "scheduled" | "failed" | "delivery_unknown"
-  > {
+  async process(
+    job: ClaimedFollowupJob,
+  ): Promise<"sent" | "shadowed" | "cancelled" | "scheduled" | "failed" | "delivery_unknown"> {
     const now = (this.options.now ?? (() => new Date()))();
-    const eligibility = evaluateFollowupEligibility(
-      job,
-      now,
-      this.options.outboundWindowHours,
-    );
+    const eligibility = evaluateFollowupEligibility(job, now, this.options.outboundWindowHours);
     if (!eligibility.eligible) {
       await this.options.repository.markCancelled(job.id, eligibility.reason);
       this.options.logger.log("info", "followup_cancelled", {

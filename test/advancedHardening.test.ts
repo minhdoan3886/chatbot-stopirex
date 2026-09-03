@@ -24,16 +24,12 @@ test("LLM bị tắt vẫn trả đủ giá và mồ hôi thay vì làm mất m�
 
   assert.match(result.reply, /kiểm soát.*mồ hôi.*1 lọ.*285\.000đ/isu);
   assert.equal(result.state.lastIntent, "product_effect");
-  assert.ok(
-    result.state.decisionTrace?.knowledgeEntityIds.includes("pricing-approved-options-2026-08"),
-  );
+  assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("pricing-approved-options-2026-08"));
 });
 
 test("LLM hết quota vẫn xử lý băn khoăn giá bằng dữ kiện chuẩn", () => {
   const chat = new DemoChatService();
-  const fallback = chat.approvedKnowledgeFallback(
-    "Giá cao quá, chỗ khác rẻ hơn nhiều mà cũng là lăn nách.",
-  );
+  const fallback = chat.approvedKnowledgeFallback("Giá cao quá, chỗ khác rẻ hơn nhiều mà cũng là lăn nách.");
 
   assert.ok(fallback);
   assert.equal(fallback.intent, "price_objection");
@@ -87,10 +83,7 @@ test("hoàn tiền không hiệu quả: hủy sản phẩm nên không yêu cầ
   assert.doesNotMatch(result.reply, /nhân viên CSKH|mang ra bưu điện|qua lấy hàng/iu);
   assert.notEqual(result.state.pipeline, "C3.Chờ CSKH");
   assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("refund-used-ineffective"));
-  assert.equal(
-    result.state.decisionTrace?.knowledgeEntityIds.includes("returns-process-fees-refund"),
-    false,
-  );
+  assert.equal(result.state.decisionTrace?.knowledgeEntityIds.includes("returns-process-fees-refund"), false);
 });
 
 test("cơ chế tuyến mồ hôi và tỷ lệ tái phát được trả một lần, không handoff", () => {
@@ -153,9 +146,7 @@ test("quên dùng buổi tối được hướng dẫn không bôi bù sáng b�
   assert.match(result.reply, /tuyến mồ hôi hoạt động ít hơn/iu);
   assert.match(result.reply, /bôi buổi sáng thường kém hiệu quả hơn/iu);
   assert.ok(
-    result.state.decisionTrace?.knowledgeEntityIds.includes(
-      "usage-timing-missed-evening-application",
-    ),
+    result.state.decisionTrace?.knowledgeEntityIds.includes("usage-timing-missed-evening-application"),
   );
   assert.equal(
     result.state.decisionTrace?.knowledgeEntityIds.includes("usage-exercise-sweat-washoff"),
@@ -374,9 +365,7 @@ test("stress 6 lượt: thoát handoff sỉ, lưu đơn lẻ và giữ đúng ch
   assert.doesNotMatch(turn2.reply, /hồ sơ hiện có|không tự nêu|phần trăm/iu);
   assert.doesNotMatch(turn2.reply, /^Dạ có ạ/iu);
   assert.ok(
-    turn2.state.decisionTrace?.knowledgeEntityIds.includes(
-      "business-approved-alcohol-odor-guidance-2026-08",
-    ),
+    turn2.state.decisionTrace?.knowledgeEntityIds.includes("business-approved-alcohol-odor-guidance-2026-08"),
   );
 
   const turn3 = chat.chat(
@@ -407,7 +396,10 @@ test("stress 6 lượt: thoát handoff sỉ, lưu đơn lẻ và giữ đúng ch
   assert.equal(turn5.state.selectedQuantity, 1);
   assert.equal(turn5.state.handoffReason, undefined);
   assert.equal(turn5.state.orderDraft?.phone, "0987654321");
-  assert.match(turn5.state.orderDraft?.legacyAddress ?? "", /Tòa V6.*Phường Văn Phú.*Quận Hà Đông.*Hà Nội/isu);
+  assert.match(
+    turn5.state.orderDraft?.legacyAddress ?? "",
+    /Tòa V6.*Phường Văn Phú.*Quận Hà Đông.*Hà Nội/isu,
+  );
   assert.equal(turn5.state.orderDraft?.deliveryNote, "Gọi và giao trong giờ hành chính");
   assert.deepEqual(turn5.state.orderMissing, ["recipientName"]);
   assert.match(turn5.reply, /không theo dõi thời tiết theo thời gian thực/iu);
@@ -481,9 +473,7 @@ test("Gaslighting về cồn và khỏi vĩnh viễn luôn trả đủ hai fact 
       "business-approved-alcohol-odor-guidance-2026-08",
     ),
   );
-  assert.ok(
-    result.state.decisionTrace?.knowledgeEntityIds.includes("mechanism-control-not-permanent"),
-  );
+  assert.ok(result.state.decisionTrace?.knowledgeEntityIds.includes("mechanism-control-not-permanent"));
 });
 
 test("LLM timeout ở câu nhổ lông vẫn trả đủ thời điểm dùng và lo ố áo", () => {
@@ -508,10 +498,7 @@ test("state reducer cập nhật quantity, thay/khôi phục địa chỉ, recap
   const sessionId = "advanced-order-transaction-blueprint";
 
   chat.chat(sessionId, "Hôm nay Hà Nội mưa to, ship có chậm không shop?");
-  const opened = chat.chat(
-    sessionId,
-    "Thôi lấy 1 lọ đi. Giao về số 15 ngõ 50 Định Công, Hoàng Mai nhé.",
-  );
+  const opened = chat.chat(sessionId, "Thôi lấy 1 lọ đi. Giao về số 15 ngõ 50 Định Công, Hoàng Mai nhé.");
   assert.equal(opened.state.selectedQuantity, 1);
   assert.match(opened.state.orderDraft?.legacyAddress ?? "", /Phường Định Công.*Quận Hoàng Mai.*Hà Nội/iu);
 
@@ -524,7 +511,10 @@ test("state reducer cập nhật quantity, thay/khôi phục địa chỉ, recap
     sessionId,
     "Đổi địa chỉ ship qua công ty mình ở tòa nhà Keangnam, Phạm Hùng, Nam Từ Liêm nha. SĐT 0912345678.",
   );
-  assert.match(moved.state.orderDraft?.legacyAddress ?? "", /Keangnam.*Phạm Hùng.*Quận Nam Từ Liêm.*Hà Nội/isu);
+  assert.match(
+    moved.state.orderDraft?.legacyAddress ?? "",
+    /Keangnam.*Phạm Hùng.*Quận Nam Từ Liêm.*Hà Nội/isu,
+  );
   assert.doesNotMatch(moved.state.orderDraft?.legacyAddress ?? "", /Định Công/iu);
   assert.equal(moved.state.orderDraft?.phone, "0912345678");
 
@@ -630,7 +620,10 @@ test("khách kỹ tính đi đủ knowledge rồi chốt đơn trong một trans
 
   const t6 = chat.chat(sessionId, "Mình tên Lan. Phường Dịch Vọng Hậu nhé.");
   assert.equal(t6.state.orderDraft?.recipientName, "Lan");
-  assert.match(t6.state.orderDraft?.legacyAddress ?? "", /số 10 Duy Tân.*Phường Dịch Vọng Hậu.*Quận Cầu Giấy.*Hà Nội/isu);
+  assert.match(
+    t6.state.orderDraft?.legacyAddress ?? "",
+    /số 10 Duy Tân.*Phường Dịch Vọng Hậu.*Quận Cầu Giấy.*Hà Nội/isu,
+  );
   assert.deepEqual(t6.state.orderMissing, []);
   assert.match(t6.reply, /Lan.*0988111222.*315\.000/isu);
   assert.deepEqual(

@@ -89,13 +89,7 @@ export type ConversationCtaId =
   | "ask_care_symptom"
   | "ask_clarification";
 
-export type BeneficiaryType =
-  | "self"
-  | "spouse"
-  | "child"
-  | "mother"
-  | "father"
-  | "other";
+export type BeneficiaryType = "self" | "spouse" | "child" | "mother" | "father" | "other";
 
 export type BeneficiaryAgeGroup = "child" | "adolescent" | "adult" | "older_adult" | "unknown";
 

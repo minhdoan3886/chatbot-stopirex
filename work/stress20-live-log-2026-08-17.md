@@ -12,28 +12,28 @@
 
 ## Tóm tắt đánh giá
 
-| Lượt | Đánh giá | Intent | Pipeline sau lượt | Quantity | Lỗi chính |
-|---:|---|---|---|---:|---|
-| 1 | Đạt | product_comparison | 2.Đang tư vấn | — | — |
-| 2 | Đạt | product_effect | 2.Đang tư vấn | — | — |
-| 3 | Không đạt | consultation | C3.Chờ CSKH | — | Quality Gate handoff sai |
-| 4 | Không đạt | knowledge_unknown | C3.Chờ CSKH | — | Không trả ETA Hà Nội; bị nhận như địa chỉ |
-| 5 | Không đạt luồng | price_request | C3.Chờ CSKH | — | Giá đúng nhưng handoff cũ còn kẹt |
-| 6 | Đạt một phần | buying | 5.Chờ TT KH | 1 | Lưu đơn nhưng vẫn hỏi lại phần địa chỉ |
-| 7 | Không đạt | buying | C3.Chờ CSKH | 1 | Không ghi đè 1 → 3 |
-| 8 | Không đạt | buying | 5.Chờ TT KH | 1 | Lưu SĐT nhưng không thay địa chỉ Keangnam |
-| 9 | Không đạt | promotion_inquiry | C3.Chờ CSKH | 1 | Không khẳng định chính sách hiện tại không có quà |
-| 10 | Đạt nội dung | usage_time | 2.Đang tư vấn | 1 | Trả đúng cách dùng buổi tối |
-| 11 | Không đạt | ineffective | 2.Đang tư vấn | 1 | Trả sai hoàn toàn chính sách hoàn tiền |
-| 12 | Không đạt | price_request | C3.Chờ CSKH | 1 | Không trả quy trình nhúng hủy/không cần vỏ hộp |
-| 13 | Không đạt | buying | 5.Chờ TT KH | 1 | Không thực hiện phép trừ 3 − 1 = 2 |
-| 14 | Không đạt | price_request | C3.Chờ CSKH | 1 | Không báo đúng recap 2 lọ 510.000đ |
-| 15 | Đạt một phần | other | 5.Chờ TT KH | 1 | Lưu tên Nướng nhưng phản hồi “chưa hiểu” |
-| 16 | Không đủ điều kiện xác minh | buying | 5.Chờ TT KH | 1 | Định Công chưa từng bị thay ở lượt 8 nên chưa test được phục hồi ký ức |
-| 17 | Đạt một phần | order_support | 5.Chờ TT KH | 1 | Lưu note nhưng trả lời lạc sang công dụng |
-| 18 | Không đạt | price_request | 3.Đã báo giá | 1 | Không recap đơn; gửi lại toàn bộ bảng giá |
-| 19 | Đạt nội dung | buying | C3.Chờ CSKH | 1 | Handoff sỉ đúng, giữ đơn lẻ nhưng đơn lẻ đang sai quantity |
-| 20 | Không đạt | other | 3.Đã báo giá | 1 | Không xác nhận đơn; hỏi lại phường/quận |
+| Lượt | Đánh giá                    | Intent             | Pipeline sau lượt | Quantity | Lỗi chính                                                              |
+| ---: | --------------------------- | ------------------ | ----------------- | -------: | ---------------------------------------------------------------------- |
+|    1 | Đạt                         | product_comparison | 2.Đang tư vấn     |        — | —                                                                      |
+|    2 | Đạt                         | product_effect     | 2.Đang tư vấn     |        — | —                                                                      |
+|    3 | Không đạt                   | consultation       | C3.Chờ CSKH       |        — | Quality Gate handoff sai                                               |
+|    4 | Không đạt                   | knowledge_unknown  | C3.Chờ CSKH       |        — | Không trả ETA Hà Nội; bị nhận như địa chỉ                              |
+|    5 | Không đạt luồng             | price_request      | C3.Chờ CSKH       |        — | Giá đúng nhưng handoff cũ còn kẹt                                      |
+|    6 | Đạt một phần                | buying             | 5.Chờ TT KH       |        1 | Lưu đơn nhưng vẫn hỏi lại phần địa chỉ                                 |
+|    7 | Không đạt                   | buying             | C3.Chờ CSKH       |        1 | Không ghi đè 1 → 3                                                     |
+|    8 | Không đạt                   | buying             | 5.Chờ TT KH       |        1 | Lưu SĐT nhưng không thay địa chỉ Keangnam                              |
+|    9 | Không đạt                   | promotion_inquiry  | C3.Chờ CSKH       |        1 | Không khẳng định chính sách hiện tại không có quà                      |
+|   10 | Đạt nội dung                | usage_time         | 2.Đang tư vấn     |        1 | Trả đúng cách dùng buổi tối                                            |
+|   11 | Không đạt                   | ineffective        | 2.Đang tư vấn     |        1 | Trả sai hoàn toàn chính sách hoàn tiền                                 |
+|   12 | Không đạt                   | price_request      | C3.Chờ CSKH       |        1 | Không trả quy trình nhúng hủy/không cần vỏ hộp                         |
+|   13 | Không đạt                   | buying             | 5.Chờ TT KH       |        1 | Không thực hiện phép trừ 3 − 1 = 2                                     |
+|   14 | Không đạt                   | price_request      | C3.Chờ CSKH       |        1 | Không báo đúng recap 2 lọ 510.000đ                                     |
+|   15 | Đạt một phần                | other              | 5.Chờ TT KH       |        1 | Lưu tên Nướng nhưng phản hồi “chưa hiểu”                               |
+|   16 | Không đủ điều kiện xác minh | buying             | 5.Chờ TT KH       |        1 | Định Công chưa từng bị thay ở lượt 8 nên chưa test được phục hồi ký ức |
+|   17 | Đạt một phần                | order_support      | 5.Chờ TT KH       |        1 | Lưu note nhưng trả lời lạc sang công dụng                              |
+|   18 | Không đạt                   | price_request      | 3.Đã báo giá      |        1 | Không recap đơn; gửi lại toàn bộ bảng giá                              |
+|   19 | Đạt nội dung                | buying             | C3.Chờ CSKH       |        1 | Handoff sỉ đúng, giữ đơn lẻ nhưng đơn lẻ đang sai quantity             |
+|   20 | Không đạt                   | other              | 3.Đã báo giá      |        1 | Không xác nhận đơn; hỏi lại phường/quận                                |
 
 ## Log đầy đủ
 

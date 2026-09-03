@@ -1,10 +1,7 @@
 import type { Pool } from "pg";
 import type { ShipmentTracking } from "../integrations/contracts.js";
 
-export function trackingUrl(
-  carrier: ShipmentTracking["carrier"],
-  trackingNumber: string,
-): string {
+export function trackingUrl(carrier: ShipmentTracking["carrier"], trackingNumber: string): string {
   if (carrier === "viettel_post") return "";
   if (carrier === "spx") {
     return `https://spx.vn/track?${encodeURIComponent(trackingNumber)}`;
@@ -42,9 +39,7 @@ export class PgShipmentTrackingRepository {
     );
   }
 
-  async find(
-    trackingNumber: string,
-  ): Promise<ShipmentTracking | undefined> {
+  async find(trackingNumber: string): Promise<ShipmentTracking | undefined> {
     const result = await this.pool.query(
       `SELECT carrier, tracking_number, tracking_url, eta_at, status
        FROM shipment_tracking WHERE tracking_number=$1

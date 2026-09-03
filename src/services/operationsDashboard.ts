@@ -10,6 +10,7 @@ import type {
 } from "../infrastructure/postgres.js";
 import type { RedisQueueSnapshot } from "../infrastructure/redis.js";
 import type { LlmProvider, LlmProviderHealthSnapshot } from "./codexLlm.js";
+import type { PipelineStageTelemetry } from "./pipelineTelemetry.js";
 
 export type OperationalStatus = "healthy" | "degraded" | "down" | "disabled";
 
@@ -44,6 +45,7 @@ export type WorkerHeartbeat = {
   llmProviders?: Partial<Record<LlmProvider, LlmProviderHealthSnapshot>>;
   multiActionRolloutMode?: "shadow" | "canary" | "enabled";
   multiActionCanaryPercent?: number;
+  pipelineStages?: PipelineStageTelemetry[];
 };
 
 export type FollowupWorkerHeartbeat = FollowupOperationalSnapshot & {
@@ -96,6 +98,7 @@ export type OperationsSnapshot = {
   followup: FollowupOperationalSnapshot & {
     mode: "disabled" | "shadow" | "enabled";
   };
+  pipelineStages: PipelineStageTelemetry[];
 };
 
 type OperationsDatabase = {
@@ -234,7 +237,9 @@ export class OperationsDashboardService {
       redisReady && this.dependencies.redis
         ? this.dependencies.redis.getJson<FollowupWorkerHeartbeat>("health:worker:followup")
         : Promise.resolve(undefined),
-      (this.dependencies.gatewayProbe ?? probeMetaGateway)(this.dependencies.env.metaGatewayPort),
+      this.dependencies.env.metaGatewayEnabled
+        ? (this.dependencies.gatewayProbe ?? probeMetaGateway)(this.dependencies.env.metaGatewayPort)
+        : Promise.resolve({ ok: false, latencyMs: 0 }),
       redisReady && this.dependencies.redis
         ? this.dependencies.redis.getJson<PublicWebhookRuntime>("health:meta:public-webhook")
         : Promise.resolve(undefined),
@@ -321,11 +326,13 @@ export class OperationsDashboardService {
         id: "meta-gateway",
         name: "Meta Webhook Gateway",
         endpoint: `http://127.0.0.1:${this.dependencies.env.metaGatewayPort}`,
-        status: gateway.ok ? "healthy" : "down",
-        detail: gateway.ok
-          ? `Gateway → API hoạt động · ${gateway.latencyMs} ms`
-          : "Không kết nối được gateway hoặc upstream API",
-        latencyMs: gateway.latencyMs,
+        status: !this.dependencies.env.metaGatewayEnabled ? "disabled" : gateway.ok ? "healthy" : "down",
+        detail: !this.dependencies.env.metaGatewayEnabled
+          ? "Không dùng trong kiến trúc Docker; API xác thực webhook trực tiếp"
+          : gateway.ok
+            ? `Gateway → API hoạt động · ${gateway.latencyMs} ms`
+            : "Không kết nối được gateway hoặc upstream API",
+        ...(this.dependencies.env.metaGatewayEnabled ? { latencyMs: gateway.latencyMs } : {}),
       },
       {
         id: "meta-public-webhook",
@@ -346,7 +353,7 @@ export class OperationsDashboardService {
               ? (pageSubscriptionRuntime.detail ?? "Page chưa subscribe app nhận messages")
               : pageSubscriptionRuntime?.status === "degraded"
                 ? (pageSubscriptionRuntime.detail ?? "Không đọc lại được trạng thái subscribed_apps")
-                : `HTTPS công khai → gateway → API hoạt động · ${publicWebhook.latencyMs} ms${pageSubscriptionRuntime?.status === "healthy" ? " · Page đã subscribe app" : ""}`
+                : `HTTPS công khai → API hoạt động · ${publicWebhook.latencyMs} ms${pageSubscriptionRuntime?.status === "healthy" ? " · Page đã subscribe app" : ""}`
             : "URL công khai không gọi được gateway/API"
           : "Chưa cấu hình URL HTTPS công khai; Meta chưa thể kết nối webhook",
         ...(databaseSnapshot.lastWebhookAt ? { lastSeenAt: databaseSnapshot.lastWebhookAt } : {}),
@@ -520,8 +527,24 @@ export class OperationsDashboardService {
         ...followup,
         mode: followupWorker?.mode ?? this.dependencies.env.followupMode,
       },
+      pipelineStages: worker?.pipelineStages ?? idlePipelineStages(),
     };
   }
+}
+
+function idlePipelineStages(): PipelineStageTelemetry[] {
+  return [
+    ["interpret", "Interpret"],
+    ["normalize", "Normalize"],
+    ["reducer", "Reducer"],
+    ["compose", "Compose"],
+    ["guard", "Guard"],
+  ].map(([id, label]) => ({
+    id: id as PipelineStageTelemetry["id"],
+    label: label!,
+    status: "idle" as const,
+    detail: "Chưa có lượt xử lý",
+  }));
 }
 
 export function evaluateActionRolloutGate(snapshot: ActionRolloutSnapshot): {
@@ -547,12 +570,21 @@ export function evaluateActionRolloutGate(snapshot: ActionRolloutSnapshot): {
 export function diagnoseSession(session: OperationalSessionRecord, now = new Date()): OperationalSession {
   const inboundAt = session.lastInboundAt ? new Date(session.lastInboundAt).getTime() : undefined;
   const outboundAt = session.lastOutboundAt ? new Date(session.lastOutboundAt).getTime() : undefined;
+  const unansweredAgeMs = inboundAt === undefined ? undefined : now.getTime() - inboundAt;
   if (
     inboundAt !== undefined &&
     (outboundAt === undefined || inboundAt > outboundAt) &&
-    now.getTime() - inboundAt > 30_000 &&
+    unansweredAgeMs !== undefined &&
+    unansweredAgeMs > 30_000 &&
     session.humanStatus === "bot"
   ) {
+    if (unansweredAgeMs > 24 * 60 * 60 * 1_000) {
+      return {
+        ...session,
+        health: "attention",
+        issue: "Phiên lịch sử có inbound sau outbound; không nằm trong hàng đợi hiện tại",
+      };
+    }
     return {
       ...session,
       health: "critical",

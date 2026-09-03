@@ -1,6 +1,7 @@
 export type AppEnv = {
   nodeEnv: "development" | "test" | "production";
   port: number;
+  metaGatewayEnabled: boolean;
   metaGatewayPort: number;
   metaVerifyToken?: string;
   metaAppId?: string;
@@ -66,6 +67,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const env: AppEnv = {
     nodeEnv: nodeEnv as AppEnv["nodeEnv"],
     port,
+    metaGatewayEnabled: source.META_GATEWAY_ENABLED === "true",
     metaGatewayPort: positivePort(source.META_GATEWAY_PORT ?? "8081", "META_GATEWAY_PORT"),
     metaActivePage,
     metaGraphVersion: source.META_GRAPH_VERSION ?? "v25.0",

@@ -22,7 +22,10 @@ export function redact(value: unknown, key = ""): unknown {
 }
 
 export class StructuredLogger {
-  constructor(private readonly sink: (line: string) => void = console.log) {}
+  constructor(
+    private readonly sink: (line: string) => void = console.log,
+    private readonly observer?: (record: LogRecord) => void,
+  ) {}
 
   log(level: LogLevel, event: string, context: Record<string, unknown> = {}): void {
     const record: LogRecord = {
@@ -32,5 +35,10 @@ export class StructuredLogger {
       ...(redact(context) as Record<string, unknown>),
     };
     this.sink(JSON.stringify(record));
+    try {
+      this.observer?.(record);
+    } catch {
+      // Telemetry must never interrupt the customer-facing pipeline.
+    }
   }
 }

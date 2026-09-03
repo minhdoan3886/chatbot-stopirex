@@ -388,6 +388,19 @@ test("phiên bot có inbound mới hơn outbound quá 30 giây được đánh d
   assert.match(result.issue ?? "", /chưa được bot phản hồi/u);
 });
 
+test("phiên lịch sử không còn nằm trong queue được hạ khỏi cảnh báo critical", () => {
+  const result = diagnoseSession(
+    {
+      ...databaseSnapshot.sessions[0]!,
+      lastInboundAt: "2026-08-10T02:59:00.000Z",
+      lastOutboundAt: "2026-08-10T02:57:00.000Z",
+    },
+    now,
+  );
+  assert.equal(result.health, "attention");
+  assert.match(result.issue ?? "", /Phiên lịch sử/u);
+});
+
 test("worker heartbeat cũ được báo mất kết nối", async () => {
   const service = new OperationsDashboardService({
     env: loadEnv({ NODE_ENV: "development" }),

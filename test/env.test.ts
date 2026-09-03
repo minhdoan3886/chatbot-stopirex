@@ -7,6 +7,7 @@ test("development cho phép chạy khi chưa có credential bên ngoài", () => 
   assert.deepEqual(loadEnv({ NODE_ENV: "development", PORT: "8080" }), {
     nodeEnv: "development",
     port: 8080,
+    metaGatewayEnabled: false,
     metaGatewayPort: 8081,
     metaActivePage: "primary",
     metaGraphVersion: "v25.0",

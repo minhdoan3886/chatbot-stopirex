@@ -10,6 +10,7 @@ import { DemoChatService } from "./services/demoChat.js";
 import { StructuredLogger } from "./services/logger.js";
 import { MetaChatBrain } from "./services/metaChatBrain.js";
 import { MetaInboundProcessor, type MetaInboundJob } from "./services/metaInboundProcessor.js";
+import { PipelineTelemetryTracker } from "./services/pipelineTelemetry.js";
 import { PgFollowupRepository } from "./services/followupRepository.js";
 import { OrderInboxService } from "./services/orderInbox.js";
 
@@ -17,7 +18,8 @@ const queueTopic = "inbound";
 const queueGroup = "meta-inbound-v1";
 const maximumAttempts = 3;
 const env = loadEnv();
-const logger = new StructuredLogger();
+const pipelineTelemetry = new PipelineTelemetryTracker();
+const logger = new StructuredLogger(console.log, (record) => pipelineTelemetry.observe(record));
 
 if (!env.redisUrl || !env.databaseUrl) {
   logger.log("error", "worker_disabled", {
@@ -100,7 +102,7 @@ if (!env.redisUrl || !env.databaseUrl) {
     }, 5_000);
     workerLeaseTimer.unref();
     await redis.ensureConsumerGroup(queueTopic, queueGroup);
-    await publishWorkerHeartbeat(redis, llm.healthSnapshot());
+    await publishWorkerHeartbeat(redis, llm.healthSnapshot(), pipelineTelemetry.snapshot());
     logger.log("info", "worker_started", {
       redisReady,
       databaseReady,
@@ -118,7 +120,7 @@ if (!env.redisUrl || !env.databaseUrl) {
     });
 
     while (!stopping) {
-      await publishWorkerHeartbeat(redis, llm.healthSnapshot());
+      await publishWorkerHeartbeat(redis, llm.healthSnapshot(), pipelineTelemetry.snapshot());
       const ownPending = await redis.readGroup<unknown>({
         topic: queueTopic,
         group: queueGroup,
@@ -156,7 +158,7 @@ if (!env.redisUrl || !env.databaseUrl) {
       const initialBatch = groupByConversation(valid)[0];
       if (!initialBatch) continue;
       const batch = await collectConversationBurst(redis, initialBatch);
-      await publishWorkerHeartbeat(redis, llm.healthSnapshot());
+      await publishWorkerHeartbeat(redis, llm.healthSnapshot(), pipelineTelemetry.snapshot());
       if (env.metaPageId && batch[0]?.payload.externalPageId !== env.metaPageId) {
         await redis.acknowledge(
           queueTopic,
@@ -196,7 +198,7 @@ if (!env.redisUrl || !env.databaseUrl) {
           status: result.status,
           replyCount: result.replyCount,
         });
-        await publishWorkerHeartbeat(redis, llm.healthSnapshot());
+        await publishWorkerHeartbeat(redis, llm.healthSnapshot(), pipelineTelemetry.snapshot());
       } catch (error) {
         await retryOrAcknowledge(redis, batch, error instanceof Error ? error.name : "unknown_error");
       } finally {
@@ -218,7 +220,11 @@ if (!env.redisUrl || !env.databaseUrl) {
   }
 }
 
-async function publishWorkerHeartbeat(redis: RedisRuntime, llm: LlmHealthSnapshot): Promise<void> {
+async function publishWorkerHeartbeat(
+  redis: RedisRuntime,
+  llm: LlmHealthSnapshot,
+  pipelineStages: ReturnType<PipelineTelemetryTracker["snapshot"]>,
+): Promise<void> {
   await redis.setJson(
     "health:worker:meta",
     {
@@ -232,6 +238,7 @@ async function publishWorkerHeartbeat(redis: RedisRuntime, llm: LlmHealthSnapsho
       llmProviders: llm.providers,
       multiActionRolloutMode: env.multiActionRolloutMode,
       multiActionCanaryPercent: env.multiActionCanaryPercent,
+      pipelineStages,
       ...(llm.lastRequestAt ? { llmLastRequestAt: llm.lastRequestAt } : {}),
       ...(llm.lastSuccessAt ? { llmLastSuccessAt: llm.lastSuccessAt } : {}),
       ...(llm.lastFailureAt ? { llmLastFailureAt: llm.lastFailureAt } : {}),

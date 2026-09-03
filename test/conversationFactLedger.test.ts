@@ -75,3 +75,35 @@ test("lịch gym và thời điểm cạo dùng last-evidence-wins nhưng giữ 
   assert.equal(currentConversationFact(yesterday.ledger, "hair_removal_time")?.value, "yesterday");
   assert.equal(yesterday.ledger.facts.filter((fact) => fact.status === "superseded").length, 2);
 });
+
+test("fact từ OpenAI được chuẩn hóa đóng trước khi có thể che fact deterministic", () => {
+  const raw = "ê shop, tui bị mh nách nh dữ lắm á, mùi thì k bao nhiêu mà áo cứ ướt quài";
+  const result = reduceConversationFactLedger({
+    ledger: initialConversationFactLedger(),
+    raw,
+    turn: 1,
+    semanticFacts: [
+      {
+        field: "sweat_concern",
+        value: "nặng",
+        target: "self",
+        evidence: ["tui bị mh nách nh dữ lắm á"],
+        confidence: 0.95,
+      },
+      {
+        field: "sweat_concern",
+        value: "áo_ướt_thường_xuyên",
+        target: "self",
+        evidence: ["áo cứ ướt quài"],
+        confidence: 0.95,
+      },
+    ],
+  });
+
+  assert.equal(currentConversationFact(result.ledger, "sweat_concern")?.value, true);
+  assert.equal(
+    result.ledger.facts.filter((fact) => fact.status === "current" && fact.predicate === "sweat_concern")
+      .length,
+    1,
+  );
+});

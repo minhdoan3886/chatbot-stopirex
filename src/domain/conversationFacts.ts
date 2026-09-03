@@ -326,18 +326,64 @@ function normalizeFactValue(
   predicate: ConversationFactPredicate,
   value: string | number | boolean,
 ): string | number | boolean | undefined {
+  if (predicate === "sweat_concern") {
+    if (typeof value === "boolean") return value;
+    if (typeof value !== "string") return undefined;
+    const normalized = normalize(value);
+    if (/^(?:false|no|none|khong|ko|k)$/.test(normalized)) return false;
+    if (
+      /^(?:true|yes|co|heavy|severe|high|nang|nhieu)$/.test(normalized) ||
+      /(?:mo hoi|mh|uot|dam|nhu tam)/.test(normalized)
+    ) {
+      return true;
+    }
+    return undefined;
+  }
   if (typeof value !== "string") return value;
   const normalized = normalize(value);
   if (predicate === "skin_type") {
     if (/normal|binh thuong|\bbt\b/.test(normalized)) return "normal";
     if (/sensitive|nhay cam/.test(normalized)) return "sensitive";
+    return undefined;
   }
   if (predicate === "odor_severity") {
     if (/none|khong mui/.test(normalized)) return "none";
-    if (/mild|it|binh thuong|khong nang/.test(normalized)) return "mild";
-    if (/strong|nang|nhieu/.test(normalized)) return "strong";
+    if (/mild|light|it|nhe|binh thuong|khong (?:nang|nhieu|dang ke)|khong_dang_ke/.test(normalized)) {
+      return "mild";
+    }
+    if (/strong|heavy|severe|nang|nhieu/.test(normalized)) return "strong";
+    return undefined;
   }
-  return value.trim().slice(0, 160) || undefined;
+  if (predicate === "skin_sensitivity_context") {
+    return /after.hair.removal|sau (?:wax|cao)|wax|cao/.test(normalized) ? "after_hair_removal" : undefined;
+  }
+  if (predicate === "exercise_schedule") {
+    const period = /morning|sang/.test(normalized)
+      ? "morning"
+      : /evening|toi/.test(normalized)
+        ? "evening"
+        : undefined;
+    const days = [...normalized.matchAll(/[2-7]/g)].map((match) => match[0]);
+    return period && days.length > 0 ? `${period}|${[...new Set(days)].join(",")}` : undefined;
+  }
+  if (predicate === "hair_removal_time") {
+    if (/yesterday|hom qua|hqua|bua qua/.test(normalized)) return "yesterday";
+    if (/today|hom nay|bua nay|bua ni/.test(normalized)) return "today";
+    if (/past|truoc do|truoc day/.test(normalized)) return "past";
+    return undefined;
+  }
+  if (predicate === "hair_removal_reaction") {
+    if (/none|no irritation|khong xot|khong rat/.test(normalized)) return "none";
+    if (/irritation|xot|rat/.test(normalized)) return "irritation";
+    return undefined;
+  }
+  if (predicate === "product_reaction") {
+    if (/itch|ngua/.test(normalized)) return "itching";
+    if (/red|do da/.test(normalized)) return "redness";
+    if (/irritation|rat|kich ung|di ung|viem/.test(normalized)) return "irritation";
+    return undefined;
+  }
+  return undefined;
 }
 
 export function planConversationFactResponse(input: {

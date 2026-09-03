@@ -74,7 +74,9 @@ Tiêu chí hoàn tất:
 - [x] `a new FAQ may interrupt order collection without losing draft`.
 - [x] `raw and normalized entity values remain traceable`.
 - [x] `response summary must be derivable entirely from committed state`.
-- [ ] Chạy lại hai kịch bản production dài: khách đổi ý và khách teencode.
+- [x] Chạy lại hai kịch bản production dài: khách đổi ý và khách teencode.
+
+Bằng chứng 2026-09-03: scenario 3 và scenario 4 đã chạy qua product path với OpenAI thật trên staging cô lập; các regression phát hiện trong scenario 4 đã được sửa và khóa bằng test.
 
 ## P1 — Chất lượng tư vấn và an toàn nội dung
 
@@ -105,7 +107,9 @@ Tiêu chí hoàn tất:
 - [x] Log proposition accepted/rejected với evidenceRef.
 - [x] Log normalization raw/normalized/confidence nhưng mask PII.
 - [x] Log commit receipt, response claimed fields và kết quả invariant.
-- [ ] Dashboard có thể phân biệt lỗi interpret, normalize, reducer, compose và guard.
+- [x] Dashboard có thể phân biệt lỗi interpret, normalize, reducer, compose và guard.
+
+Bằng chứng 2026-09-03: worker tổng hợp telemetry đã che PII vào Redis heartbeat và trang `/operations` hiển thị riêng năm chặng.
 
 ### P2.2 — Race/idempotency recovery
 
@@ -118,9 +122,11 @@ Tiêu chí hoàn tất:
 - [x] Unit test proposition parser/bridge.
 - [x] Unit test phone/address/note normalization.
 - [x] Unit test mutation firewall/receipt/invariants.
-- [ ] Integration test `MetaChatBrain + OpenAI` với transcript nguyên văn.
+- [x] Integration test `MetaChatBrain + OpenAI` với transcript nguyên văn.
 - [x] `lint`, `typecheck`, toàn bộ test và build đều pass.
-- [ ] Chỉ deploy production sau khi có báo cáo test và người dùng xác nhận phát hành.
+- [x] Chỉ deploy production sau khi có báo cáo test và người dùng xác nhận phát hành.
+
+Bằng chứng phát hành 2026-09-03: 570 test cục bộ không lỗi, 4/4 PostgreSQL/Redis/memory integration test đạt trên staging, GitHub CI và Security đạt trước rolling deploy Coolify.
 
 ## Definition of Done tổng
 

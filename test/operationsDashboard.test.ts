@@ -433,3 +433,47 @@ test("worker heartbeat cũ được báo mất kết nối", async () => {
   assert.equal(result.connections.find((item) => item.id === "meta-worker")?.status, "down");
   assert.equal(result.overall, "down");
 });
+
+test("router dùng lần OpenAI thành công đã lưu sau khi worker vừa restart", async () => {
+  const service = new OperationsDashboardService({
+    env: loadEnv({ NODE_ENV: "development", REDIS_URL: "redis://127.0.0.1:6379" }),
+    database: {
+      async ready() {
+        return true;
+      },
+      async operationalSnapshot() {
+        return { ...databaseSnapshot, pendingInboundEvents: 0, sessions: [] };
+      },
+      async llmUsageSnapshot() {
+        return llmUsageSnapshot;
+      },
+    },
+    redis: {
+      async ready() {
+        return true;
+      },
+      async getJson<T>(key: string) {
+        if (key !== "health:worker:meta") return undefined;
+        return {
+          at: "2026-08-12T02:59:50.000Z",
+          consumer: "worker-restarted",
+          activePage: "test",
+          liveSendEnabled: false,
+          llmEnabled: true,
+          llmProvider: "openai",
+          llmModel: "gpt-mini",
+          llmProviders: { openai: { enabled: true, model: "gpt-mini" } },
+        } as T;
+      },
+      async queueSnapshot() {
+        return { streamLength: 0, pending: 0 };
+      },
+    },
+    llm: { enabled: true, provider: "openai", model: "gpt-mini" },
+    now: () => now,
+  });
+
+  const result = await service.snapshot();
+  assert.equal(result.connections.find((item) => item.id === "openai-llm")?.status, "healthy");
+  assert.equal(result.connections.find((item) => item.id === "hybrid-router")?.status, "healthy");
+});

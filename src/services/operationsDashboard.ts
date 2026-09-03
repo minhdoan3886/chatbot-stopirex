@@ -310,8 +310,13 @@ export class OperationsDashboardService {
       ...(codexHealth ? { health: codexHealth } : {}),
       fallbackModel: llmProvider === "codex" ? llmModel : llmModel.split("→")[1]?.trim() || "Codex CLI",
     });
-    if (llmProvider === "hybrid" && llmEnabled && workerHealthy && !llmFailureActive) {
-      llmStatus = hybridRouterStatus(openAiConnection, codexConnection);
+    if (llmEnabled && workerHealthy && !llmFailureActive) {
+      llmStatus =
+        llmProvider === "hybrid"
+          ? hybridRouterStatus(openAiConnection, codexConnection)
+          : llmProvider === "openai"
+            ? openAiConnection.status
+            : codexConnection.status;
     }
 
     const connections: OperationalConnection[] = [
@@ -442,14 +447,20 @@ export class OperationsDashboardService {
         detail:
           llmProvider === "hybrid" && llmEnabled && workerHealthy && !llmFailureActive
             ? hybridRouterDetail(openAiConnection, codexConnection)
-            : llmConnectionDetail({
-                enabled: llmEnabled,
-                provider: llmProvider,
-                workerHealthy,
-                ...(worker?.llmLastSuccessAt ? { lastSuccessAt: worker.llmLastSuccessAt } : {}),
-                ...(worker?.llmLastLatencyMs !== undefined ? { lastLatencyMs: worker.llmLastLatencyMs } : {}),
-                ...(llmFailureActive && worker?.llmLastError ? { lastError: worker.llmLastError } : {}),
-              }),
+            : llmProvider === "openai" && llmEnabled && workerHealthy && !llmFailureActive
+              ? openAiConnection.detail
+              : llmProvider === "codex" && llmEnabled && workerHealthy && !llmFailureActive
+                ? codexConnection.detail
+                : llmConnectionDetail({
+                    enabled: llmEnabled,
+                    provider: llmProvider,
+                    workerHealthy,
+                    ...(worker?.llmLastSuccessAt ? { lastSuccessAt: worker.llmLastSuccessAt } : {}),
+                    ...(worker?.llmLastLatencyMs !== undefined
+                      ? { lastLatencyMs: worker.llmLastLatencyMs }
+                      : {}),
+                    ...(llmFailureActive && worker?.llmLastError ? { lastError: worker.llmLastError } : {}),
+                  }),
         ...(worker ? { lastSeenAt: worker.at } : {}),
       },
       ...disabledAdapters(),

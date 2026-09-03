@@ -2066,6 +2066,19 @@ export class DemoChatService {
       );
     }
     if (directIntent === "price_request") {
+      const effectTopic = productEffectTopic(text, semanticSlots);
+      if (effectTopic) {
+        showPrice(session);
+        session.lastIntent = "product_effect";
+        session.activeSkill = "direct-answer";
+        session.skillReason =
+          "LLM không khả dụng; trả đủ câu hỏi hiệu quả và giá bằng Knowledge cùng catalog đã duyệt.";
+        recordKnowledge(session, [
+          "product-comparison-traditional-rollon",
+          "pricing-approved-options-2026-08",
+        ]);
+        return this.respond(session, multiActionAnswer(["effectiveness", "price"], raw, semanticSlots));
+      }
       const continuation = showPrice(session);
       return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
     }

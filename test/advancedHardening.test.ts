@@ -15,6 +15,20 @@ test("LLM hết quota vẫn trả đủ giá và mồ hôi từ Knowledge đã d
   assert.ok(fallback.knowledgeIds.includes("product-comparison-traditional-rollon"));
 });
 
+test("LLM bị tắt vẫn trả đủ giá và mồ hôi thay vì làm mất một vế", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat(
+    "disabled-llm-price-sweat",
+    "Báo giá giúp mình, mình ra mồ hôi nách nhiều thì dùng có đỡ không?",
+  );
+
+  assert.match(result.reply, /kiểm soát.*mồ hôi.*1 lọ.*285\.000đ/isu);
+  assert.equal(result.state.lastIntent, "product_effect");
+  assert.ok(
+    result.state.decisionTrace?.knowledgeEntityIds.includes("pricing-approved-options-2026-08"),
+  );
+});
+
 test("LLM hết quota vẫn xử lý băn khoăn giá bằng dữ kiện chuẩn", () => {
   const chat = new DemoChatService();
   const fallback = chat.approvedKnowledgeFallback(

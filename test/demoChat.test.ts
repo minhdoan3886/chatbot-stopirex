@@ -2598,6 +2598,37 @@ test("chê giá cao dùng skill pricing-objection, nêu giá trị thật và kh
   assert.doesNotMatch(result.reply, /dược mỹ phẩm chuẩn châu Âu|giá tốt nhất|tranh thủ|bên khác.*không/iu);
 });
 
+test("so giá với Etiaxil vẫn xử lý phản đối giá dù LLM gắn nhầm product comparison", () => {
+  const chat = new DemoChatService();
+  const raw = "Hơi mắc nhể. Trc m mua cái Etiaxil hơn 100k mà dùng được 2 tháng.";
+  const result = chat.chat("competitor-price-objection", raw, {
+    slots: { priorProduct: "specialized" },
+    skill: "direct-answer",
+    intent: "product_comparison",
+    topic: "comparison",
+    subject: "product",
+    confidence: 0.99,
+    needsClarification: false,
+    asksDirectAnswer: true,
+    unsupportedQuestions: [raw],
+    actions: [
+      {
+        type: "answer_question",
+        topic: "comparison",
+        confidence: 0.99,
+        evidence: ["Etiaxil hơn 100k", "hơi mắc"],
+        source: "llm",
+      },
+    ],
+  });
+
+  assert.equal(result.state.lastIntent, "price_objection");
+  assert.equal(result.state.activeSkill, "pricing-objection");
+  assert.match(result.reply, /em hiểu.*(?:băn khoăn|cân nhắc)/iu);
+  assert.match(result.reply, /1 lọ.*285\.000đ.*combo 2 lọ.*510\.000đ/isu);
+  assert.doesNotMatch(result.reply, /chưa có đủ thông tin.*chuyển bộ phận/isu);
+});
+
 test("đang chọn combo thì xử lý giá cao theo đúng ưu đãi của combo", () => {
   const chat = new DemoChatService();
   const sessionId = "selected-combo-price-objection";

@@ -233,6 +233,19 @@ function assessQuestionCoverage(input: EvaluateConversationQualityInput, _reply:
   }
 
   const requirements: boolean[] = [];
+  const asksMorningApplication =
+    /\b(?:sang|buoi sang|sang day|sang ngu day)\b/.test(customer) &&
+    /\b(?:boi|lan|quet|dung)\b/.test(customer) &&
+    !/\b(?:nuoc hoa|lan khu mui|romano)\b/.test(customer);
+  if (asksMorningApplication) {
+    requirements.push(
+      /\bbuoi toi\b/.test(response) &&
+        (/\bkhong\b.{0,80}\b(?:buoi )?sang\b/.test(response) ||
+          /\b(?:boi|lan|quet|dung) (?:vao )?(?:buoi )?sang\b.{0,45}\b(?:kem hieu qua|khong dung huong dan)\b/.test(
+            response,
+          )),
+    );
+  }
   if (/\b(?:gia|gia ro|bao nhieu tien)\b/.test(customer)) {
     requirements.push(/285.?000|510.?000|gia/.test(response));
   }

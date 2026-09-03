@@ -336,6 +336,33 @@ test("quality gate bắt đủ nhổ lông, buổi tối và ố áo", () => {
   assert.equal(complete.questionCoverageComplete, true);
 });
 
+test("quality gate không cho xác nhận bôi Stopirex buổi sáng", () => {
+  const customerMessage =
+    "Thế sáng dậy đánh răng rửa mặt xong thì bôi cái này trước khi mặc áo đi làm đúng không?";
+  const wrong = evaluateConversationQuality({
+    customerMessage,
+    baseReply: "Dạ mình dùng Stopirex vào buổi tối trên da sạch, khô ạ.",
+    replies: ["Dạ đúng rồi, sáng mình bôi một lớp mỏng trước khi mặc áo ạ."],
+    skill: "solution-guidance",
+    intent: "usage_guidance",
+    asksDirectAnswer: true,
+  });
+  assert.equal(wrong.questionCoverageComplete, false);
+  assert.ok(wrong.hardFailReasons.includes("question_coverage_incomplete"));
+
+  const correctReply =
+    "Dạ mình không nên bôi Stopirex vào buổi sáng; sản phẩm dùng buổi tối trên da sạch, khô hoàn toàn ạ.";
+  const correct = evaluateConversationQuality({
+    customerMessage,
+    baseReply: correctReply,
+    replies: [correctReply],
+    skill: "solution-guidance",
+    intent: "usage_guidance",
+    asksDirectAnswer: true,
+  });
+  assert.equal(correct.questionCoverageComplete, true);
+});
+
 test("quality gate bắt câu sỉ trả đúng từng nghiệp vụ khách hỏi", () => {
   const customerMessage =
     "Mình nhập 20 lọ cho tiệm thì chiết khấu bao nhiêu? Shop xuất hóa đơn VAT công ty không?";

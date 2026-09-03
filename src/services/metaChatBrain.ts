@@ -771,7 +771,7 @@ export class MetaChatBrain {
         Boolean(base.state.selectedQuantity) ||
         Boolean(base.state.orderId) ||
         requiredAnswerTopics(input.text).length >= 2 ||
-        semanticAnswerTopics(interpreted, input.text).length >= 3,
+        semanticAnswerTopics(interpreted, input.text).length >= 2,
     });
     const governedCoverage = assessQuestionCoverage({
       customerMessage: input.text,

@@ -445,7 +445,9 @@ export class DemoChatService {
     const protectedKnownAnswerConcern =
       citationProtectedConcern ||
       protectedApplicationConcern ||
+      isNamedCompetitorPriceObjection(text) ||
       isPriceAndShippingPolicyQuestion(text) ||
+      isDeliveryInspectionQuestion(text) ||
       isDomesticDeliveryInspectionQuestion(text) ||
       isReturnsPolicyQuestion(text) ||
       isOrderRecapRequest(text) ||
@@ -485,6 +487,7 @@ export class DemoChatService {
       exactIntent &&
       semantic.intent &&
       exactIntent !== semantic.intent &&
+      !isNamedCompetitorPriceObjection(text) &&
       !isInternalSystemProbe(text) &&
       !isOutOfScopeAssistantProbe(text)
         ? undefined
@@ -546,6 +549,7 @@ export class DemoChatService {
       reconcilerExactIntent &&
       (isInternalSystemProbe(text) ||
         isOutOfScopeAssistantProbe(text) ||
+        isNamedCompetitorPriceObjection(text) ||
         (!semanticAuthorityReady && protectedKnownAnswerConcern)),
     );
     const effectiveExactIntent = multiActionEnabled
@@ -3894,6 +3898,8 @@ function detectDirectIntent(text: string): CustomerIntent | undefined {
   if (isPriorOtherProductAdverseExperience(text)) return "product_comparison";
   if (isPriorSweatProcedureEffectQuestion(text)) return "product_comparison";
   if (isPriceAndShippingPolicyQuestion(text)) return "price_request";
+  if (isNamedCompetitorPriceObjection(text)) return "price_objection";
+  if (isDeliveryInspectionQuestion(text)) return "order_support";
   if (isDomesticDeliveryInspectionQuestion(text)) return "order_support";
   if (isAlcoholAndScentPremiseQuestion(text)) return "product_comparison";
   if (isProductNatureAndScentQuestion(text)) return "product_comparison";
@@ -4017,9 +4023,19 @@ export function isQuantityShippingPolicyQuestion(value: string): boolean {
 export function isDomesticDeliveryInspectionQuestion(value: string): boolean {
   const text = normalize(value);
   const asksEta = /\b(?:may ngay|bao lau|khi nao|bao gio)\b.*\b(?:nhan|giao|toi)\b/.test(text);
-  const asksInspection =
-    /\b(?:boc|mo|kiem|kiem tra|kiem hang|dong kiem)\b.*\b(?:hang|hop|san pham|seal|tem)\b/.test(text);
-  return asksEta && asksInspection && !isInternationalShippingQuestion(value);
+  return asksEta && isDeliveryInspectionQuestion(value) && !isInternationalShippingQuestion(value);
+}
+
+export function isDeliveryInspectionQuestion(value: string): boolean {
+  const text = normalize(value);
+  return (
+    /\b(?:boc|mo|kiem|kjem|kiem tra|kjem tra|kiem hang|kjem hang|dong kiem)\b.{0,35}\b(?:hang|hag|hop|san pham|seal|tem)\b/.test(
+      text,
+    ) ||
+    /\b(?:nhan|nhan hang|nhan hag)\b.{0,35}\b(?:kiem|kjem|kiem tra|kjem tra|kiem hang|kjem hang)\b/.test(
+      text,
+    )
+  );
 }
 
 export function isDomesticDeliveryEtaQuestion(value: string): boolean {
@@ -5182,6 +5198,7 @@ function isEffectivenessJourneyQuestion(value: string): boolean {
 
 function isKnowledgeFullyCoveredQuestion(text: string, semantic: SemanticUnderstanding): boolean {
   if (isUsedIneffectiveRefundQuestion(text)) return true;
+  if (isNamedCompetitorPriceObjection(text) || isDeliveryInspectionQuestion(text)) return true;
   if (isPermanentControlQuestion(text) && /tai phat|sau 1 nam|bao nhieu phan tram|ty le|ti le/.test(text)) {
     return true;
   }
@@ -5250,9 +5267,20 @@ function salesBreakpoint(session: DemoSession): string {
 }
 
 export function isPriceConcern(text: string): boolean {
-  return /dat qua|gia (?:hoi |qua )?cao|phi ship cao|tong tien cao|khong du tien|(?:ben|cho|shop) khac.*(?:re hon|gia re)|(?:re hon|gia re).*(?:ben|cho|shop) khac/.test(
+  return /dat qua|(?:hoi )?mac(?: (?:the|nhe|nhi|qua))?|gia (?:hoi |qua )?cao|phi ship cao|tong tien cao|khong du tien|(?:ben|cho|shop) khac.*(?:re hon|gia re)|(?:re hon|gia re).*(?:ben|cho|shop) khac/.test(
     text,
   );
+}
+
+function isNamedCompetitorPriceObjection(value: string): boolean {
+  const text = normalize(value);
+  const namesKnownCompetitor = /\b(?:etiaxil|perspirex)\b/.test(text);
+  const comparesPrice =
+    isPriceConcern(text) ||
+    /\b(?:gia|tien)\b.{0,30}\b(?:etiaxil|perspirex)\b|\b(?:etiaxil|perspirex)\b.{0,45}\b(?:gia|tien|\d+\s*k)\b/.test(
+      text,
+    );
+  return namesKnownCompetitor && comparesPrice;
 }
 
 /**
@@ -5832,6 +5860,14 @@ function llmFailureKnowledgeAnswer(
   let topics: SemanticTopic[] | undefined;
   let intent: CustomerIntent = "product_effect";
   const directIntent = detectDirectIntent(text);
+  if (isDeliveryInspectionQuestion(text)) {
+    return {
+      reply:
+        "Dạ khi nhận hàng, mình được kiểm tra bao bì ngoài, tem và đúng lọ Stopirex; mình không mở seal sản phẩm trước khi xác nhận nhận hàng nhé ạ.",
+      knowledgeIds: ["domestic-delivery-inspection-policy"],
+      intent: "order_support",
+    };
+  }
   if (directIntent === "price_request") {
     const effectTopic = productEffectTopic(text, semanticSlots);
     const answerTopics: SemanticTopic[] = effectTopic ? ["price", "effectiveness"] : ["price"];
@@ -7087,7 +7123,10 @@ function observeGlobalEntities(
   if (shouldObserveOrder) {
     const mayCaptureAddress = collectingOrderBeforeTurn || isOrderCaptureMessage(raw);
     const actions: OrderMutationAction[] = [];
-    const phone = extractPhoneNumber(raw);
+    const normalizedPhone = normalizeVietnamesePhone(raw);
+    const phone = normalizedPhone.valid && normalizedPhone.normalized
+      ? normalizedPhone.normalized
+      : extractPhoneNumber(raw);
     if (phone) {
       actions.push({ type: "set_phone", phone, evidence: raw });
     }
@@ -7137,7 +7176,10 @@ function observeGlobalEntities(
         });
       }
     }
-    const observedDeliveryNote = extractDeliveryNote(raw);
+    const normalizedDeliveryNotes = normalizeDeliveryNotes(raw);
+    const observedDeliveryNote = normalizedDeliveryNotes.valid && normalizedDeliveryNotes.normalized
+      ? mergeDeliveryNotes(session.order.deliveryNote, normalizedDeliveryNotes.normalized)
+      : extractDeliveryNote(raw);
     if (observedDeliveryNote) {
       actions.push({ type: "set_delivery_note", deliveryNote: observedDeliveryNote, evidence: raw });
     }
@@ -7152,6 +7194,10 @@ function observeGlobalEntities(
         ? cleanAddressCandidate(raw)
         : undefined;
     const destination = explicitDestination ?? standaloneOrderAddress;
+    const normalizedAddress = normalizeVietnameseAddress(raw, session.locationMemory.addressContext);
+    const deterministicAddress = normalizedAddress.valid && normalizedAddress.normalized?.street
+      ? formatVietnameseAddress(normalizedAddress.normalized)
+      : undefined;
     const administrativeAddress = extractExplicitAdministrativeAddress(raw);
     const singleMissingAdministrativeAddress = collectingOrderBeforeTurn
       ? extractSingleMissingAdministrativeAddress(raw, session.order)
@@ -7164,6 +7210,15 @@ function observeGlobalEntities(
         type: "set_address",
         address: canonicalizeLegacyAddress(destination),
         operation: "replace",
+        evidence: raw,
+      });
+    }
+    if (mayCaptureAddress && deterministicAddress && !destination) {
+      actions.push({
+        type: "set_address",
+        address: deterministicAddress,
+        ...(normalizedAddress.normalized ? { structured: normalizedAddress.normalized } : {}),
+        operation: session.order.legacyAddress ? "append" : "replace",
         evidence: raw,
       });
     }
@@ -7202,6 +7257,7 @@ function observeGlobalEntities(
         (destination ||
           administrativeAddress ||
           singleMissingAdministrativeAddress ||
+          deterministicAddress ||
           actions.some((action) => action.type === "set_address")) &&
         session.order.legacyAddress
       ) {
@@ -7209,6 +7265,7 @@ function observeGlobalEntities(
           session,
           session.order.legacyAddress,
           destination ??
+            deterministicAddress ??
             administrativeAddress ??
             singleMissingAdministrativeAddress ??
             session.order.legacyAddress,

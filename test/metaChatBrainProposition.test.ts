@@ -33,6 +33,48 @@ test("Meta brain dùng Knowledge chuẩn cho các câu P0 khi OpenAI hết quota
   assert.doesNotMatch(pregnancy.reply, /chưa có đủ thông tin.*chuyển bộ phận/isu);
 });
 
+test("OpenAI lỗi giữa lúc thu đơn vẫn giữ phone chữ, địa chỉ nối tiếp và delivery note", async () => {
+  const llm = new CodexLlmBridge({
+    enabled: true,
+    provider: "openai",
+    apiKey: "sk-test-not-a-real-key",
+    runner: async () => {
+      throw new Error("temporary_openai_failure");
+    },
+  });
+  const brain = new MetaChatBrain(new DemoChatService(), llm);
+  const common = {
+    sessionId: "fallback-teencode-order",
+    identity: { customerDisplayName: "Nguyễn Minh" },
+    orderConfirmationMode: "inbox" as const,
+    orderEditable: true,
+  };
+
+  await brain.reply({
+    ...common,
+    text: "thui chot m 1 lọ. ship dc q1 sg khum shop? free shp k b?",
+  });
+  const details = await brain.reply({
+    ...common,
+    text: "dc m la 12/4 nguyen thj minh khai, f dakao. sdt ko 9 tam bay 6 nam 4 ba 2 mot. giao trong gio hchjnh nha.",
+  });
+
+  assert.equal(details.state.orderDraft?.phone, "0987654321");
+  assert.equal(
+    details.state.orderDraft?.legacyAddress,
+    "12/4 Nguyễn Thị Minh Khai, Phường Đa Kao, Quận 1, TP. Hồ Chí Minh",
+  );
+  assert.match(details.state.orderDraft?.deliveryNote ?? "", /Giao trong giờ hành chính/u);
+
+  const inspection = await brain.reply({
+    ...common,
+    text: "a qen nua, dc do chi nhan dc t2 den t6 thui nhe. thu 7 m ngi lam. ma nhan hag dc kjem tra k b?",
+  });
+  assert.match(inspection.state.orderDraft?.deliveryNote ?? "", /Thứ 2 đến Thứ 6/u);
+  assert.match(inspection.state.orderDraft?.deliveryNote ?? "", /Không nhận hàng Thứ 7/u);
+  assert.match(inspection.reply, /kiểm tra bao bì|kiểm hàng|seal|tem/iu);
+});
+
 test("proposition mutation buộc composer chạy sau reducer commit", async () => {
   const calls: Array<{ purpose?: string; prompt: string }> = [];
   const llm = new CodexLlmBridge({

@@ -522,7 +522,15 @@ export class DemoChatService {
       raw,
       semanticOwnedFields: actionPlan.accepted.flatMap((action) =>
         action.type === "update_order"
-          ? Object.keys(action.fields).filter(isOrderObservationField)
+          ? Object.keys(action.fields)
+              .filter(isOrderObservationField)
+              // A valid deterministic phone is already canonical and safe to
+              // commit before semantic mutations. Keeping it out of the
+              // ownership filter prevents a malformed/partial LLM phone
+              // proposition from suppressing the verified number entirely.
+              .filter(
+                (field) => field !== "phone" || !normalizeVietnamesePhone(raw).valid,
+              )
           : [],
       ),
       acceptOrderChanges:

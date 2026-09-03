@@ -132,7 +132,10 @@ test("product path: teencode turn 4–6 commits each proposition before composin
               speechAct: "provide_data",
               action: "provide_order_field",
               field: "phone",
-              value: "ko 9 tam bay 6 nam 4 ba 2 mot",
+              // Reproduce the live case where the model semantically owns the
+              // phone field but emits an unusable partial value. The raw input
+              // remains canonicalizable and must win deterministically.
+              value: "0987",
               rawEvidence: "sdt ko 9 tam bay 6 nam 4 ba 2 mot",
               confidence: 0.99,
             },

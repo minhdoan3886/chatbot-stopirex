@@ -6842,7 +6842,10 @@ function applySemanticOrderUpdates(
 function isAmbiguousAddressIntroductionName(value: string, evidence: string): boolean {
   const candidate = normalize(value);
   const raw = normalize(evidence);
-  return /\b(?:dc|dia chi)\s+(?:m|minh)\s+la\b/u.test(raw) && /^(?:m|minh)\s+la$/u.test(candidate);
+  return (
+    /\b(?:dc|dia chi)\s+(?:m|minh)\s+la\b/u.test(raw) &&
+    /^(?:(?:dc|dia chi)\s+)?(?:m|minh)\s+la$/u.test(candidate)
+  );
 }
 
 function rememberMentionedDeliveryContext(session: DemoSession, raw: string): void {

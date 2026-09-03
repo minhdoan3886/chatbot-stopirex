@@ -122,6 +122,15 @@ test("product path: teencode turn 4–6 commits each proposition before composin
           draft: "Dạ mình đã ghi nhận địa chỉ, SĐT và ghi chú giao giờ hành chính ạ.",
           propositions: [
             {
+              id: "t5-false-name",
+              speechAct: "provide_data",
+              action: "provide_order_field",
+              field: "recipientName",
+              value: "dc m la",
+              rawEvidence: "dc m la",
+              confidence: 0.99,
+            },
+            {
               id: "t5-address",
               speechAct: "provide_data",
               action: "provide_order_field",

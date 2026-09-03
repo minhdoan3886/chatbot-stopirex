@@ -401,6 +401,29 @@ export class MetaChatBrain {
         }),
       );
     }
+    if (
+      isDeliveryInspectionQuestion(input.text) &&
+      base.state.orderTransactionTrace?.changedFields.includes("deliveryNote")
+    ) {
+      // This compound turn has already committed a normalized delivery note
+      // and rendered the approved inspection policy. Lock the workflow reply
+      // so an LLM paraphrase cannot turn the customer's receiving constraint
+      // into the shop's own business hours.
+      this.logger?.log("debug", "llm_composition", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        status: "skipped",
+        reason: "delivery_note_inspection_route_locked",
+        selectedRoute: base.state.decisionTrace?.selectedRoute,
+      });
+      return deliver(
+        base,
+        responseGuardVerdict({
+          accepted: true,
+          reason: "delivery_note_inspection_route_locked",
+          source: "workflow_safe_fallback",
+        }),
+      );
+    }
     let compositionSource: ResponseSource = "llm_draft";
     let composed = this.llm.adoptInterpretedDraft({
       customerMessage: input.text,

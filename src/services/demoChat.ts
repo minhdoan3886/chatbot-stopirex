@@ -506,6 +506,11 @@ export class DemoChatService {
       optOut: isOptOut(text),
       collectingOrder: orderMutationAllowed && Boolean(session.selectedQuantity),
     });
+    const deterministicDeliveryNoteReady = Boolean(
+      session.selectedQuantity &&
+        normalizeDeliveryNotes(raw).valid &&
+        normalizeDeliveryNotes(raw).normalized?.length,
+    );
     session.dialogueState = reduceDialogueState(session.dialogueState, {
       type: "user_acts_observed",
       acts: actionPlan.accepted,
@@ -531,12 +536,14 @@ export class DemoChatService {
               .filter(
                 (field) => field !== "phone" || !normalizeVietnamesePhone(raw).valid,
               )
+              .filter((field) => field !== "deliveryNote" || !deterministicDeliveryNoteReady)
           : [],
       ),
       acceptOrderChanges:
         orderMutationAllowed &&
         Boolean(
           actionPlan.accepted.some((action) => action.type === "update_order") ||
+            deterministicDeliveryNoteReady ||
             (!semanticAuthorityReady && (session.selectedQuantity || isOrderCaptureMessage(raw))),
         ),
     });

@@ -159,15 +159,6 @@ test("product path: teencode turn 4–6 commits each proposition before composin
         knowledgeIds: ["domestic-delivery-inspection-policy"],
         propositions: [
           {
-            id: "t6-note",
-            speechAct: "update",
-            action: "append_delivery_note",
-            field: "deliveryNote",
-            value: "chỉ nhận T2 đến T6, không nhận T7",
-            rawEvidence: "dc do chi nhan dc t2 den t6 thui nhe. thu 7 m ngi lam",
-            confidence: 0.99,
-          },
-          {
             id: "t6-inspection",
             speechAct: "question",
             action: "answer_question",
@@ -236,7 +227,7 @@ test("product path: teencode turn 4–6 commits each proposition before composin
     turn6.state.decisionTrace?.actionPlan?.accepted
       .filter((action) => action.propositionId?.startsWith("t6-"))
       .map((action) => action.propositionId),
-    ["t6-inspection", "t6-note"],
+    ["t6-inspection"],
   );
   assert.equal(calls.filter((purpose) => purpose === "interpret").length, 3);
   assert.ok(calls.filter((purpose) => purpose === "post_commit").length >= 3);

@@ -1159,6 +1159,28 @@ export class DemoChatService {
     }
 
     if (
+      isDeliveryInspectionQuestion(text) &&
+      !(session.selectedQuantity && isCompoundOrderUpdateQuestion(raw))
+    ) {
+      session.lastIntent = "order_support";
+      session.activeSkill = "direct-answer";
+      session.skillReason =
+        "Câu hỏi kiểm hàng có chính sách đã duyệt; giữ mọi cập nhật đơn trong cùng lượt và trả lời trực tiếp.";
+      overrideDecisionClassification(
+        session,
+        "order_support",
+        "delivery",
+        [],
+        "Câu hỏi kiểm hàng phải dùng Knowledge nội địa thay vì fallback handoff.",
+      );
+      recordKnowledge(session, ["domestic-delivery-inspection-policy"]);
+      return this.respond(
+        session,
+        "Dạ khi nhận hàng, mình được kiểm tra bao bì ngoài, tem và đúng lọ Stopirex; mình không mở seal sản phẩm trước khi xác nhận nhận hàng nhé ạ.",
+      );
+    }
+
+    if (
       isDomesticDeliveryEtaQuestion(text) &&
       !(session.selectedQuantity && isCompoundOrderUpdateQuestion(raw))
     ) {
@@ -4038,9 +4060,10 @@ export function isDomesticDeliveryInspectionQuestion(value: string): boolean {
 export function isDeliveryInspectionQuestion(value: string): boolean {
   const text = normalize(value);
   return (
-    /\b(?:boc|mo|kiem|kjem|kiem tra|kjem tra|kiem hang|kjem hang|dong kiem)\b.{0,35}\b(?:hang|hag|hop|san pham|seal|tem)\b/.test(
+    /\b(?:boc|kiem|kjem|kiem tra|kjem tra|kiem hang|kjem hang|dong kiem)\b.{0,35}\b(?:hang|hag|hop|san pham|seal|tem)\b/.test(
       text,
     ) ||
+    /\bmo\b.{0,20}\b(?:hang|hag|hop|seal|tem)\b/.test(text) ||
     /\b(?:nhan|nhan hang|nhan hag)\b.{0,35}\b(?:kiem|kjem|kiem tra|kjem tra|kiem hang|kjem hang)\b/.test(
       text,
     )
@@ -5822,10 +5845,18 @@ function multiActionAnswer(
     const requested = detectQuantity(text);
     if (requested) {
       const selected = quote(requested);
+      const deliveryContext = resolveDeliveryContext(raw).normalized;
+      const destination = deliveryContext
+        ? [deliveryContext.district, deliveryContext.city].filter(Boolean).join(", ")
+        : undefined;
+      const destinationReply =
+        uniqueTopics.includes("shipping") && destination
+          ? `Dạ bên em giao được đến ${destination}. `
+          : "";
       answers.push(
         requested === 1
-          ? "Dạ 1 lọ giá 285.000đ + 30.000đ phí giao ạ."
-          : `Dạ ${quantityLabel(requested)} giá ${formatVnd(selected.total.amount)}, miễn phí giao và tặng ${stopirexGiftForQuantity(requested)} ạ.`,
+          ? `${destinationReply || "Dạ "}1 lọ giá 285.000đ + 30.000đ phí giao ạ.`
+          : `${destinationReply || "Dạ "}${quantityLabel(requested)} giá ${formatVnd(selected.total.amount)}, miễn phí giao và tặng ${stopirexGiftForQuantity(requested)} ạ.`,
       );
     } else {
       // Multi-action turns use the same approved catalog renderer as the

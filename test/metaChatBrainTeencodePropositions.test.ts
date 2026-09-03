@@ -52,6 +52,9 @@ test("product path: teencode turn 4–6 commits each proposition before composin
       calls.push(purpose ?? "unknown");
       if (purpose === "post_commit") {
         const preCommitDraft = jsonLine<string>(prompt, "PRE_COMMIT_DRAFT");
+        if (preCommitDraft.includes("Thứ 2 đến Thứ 6")) {
+          throw new Error("simulated_post_commit_failure");
+        }
         const receipt = jsonLine<{ acceptedMutations?: Array<{ type: string }> }>(prompt, "COMMIT_RECEIPT");
         const state = jsonLine<{
           selectedQuantity?: number;

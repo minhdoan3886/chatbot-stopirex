@@ -48,6 +48,7 @@ import {
   DemoChatService,
   isCompoundOrderUpdateQuestion,
   isDomesticDeliveryEtaQuestion,
+  isDeliveryInspectionQuestion,
   isExpressDeliveryQuestion,
   isInternalSystemProbe,
   isInternationalShippingQuestion,
@@ -503,6 +504,19 @@ export class MetaChatBrain {
       selectedRoute: base.state.decisionTrace?.selectedRoute,
       selectedIntent: base.state.decisionTrace?.selectedIntent,
     });
+    if (composed.status !== "enhanced" && isDeliveryInspectionQuestion(input.text)) {
+      // DemoChat has already committed any order-note mutation and rendered the
+      // approved inspection policy. A post-commit wording failure must not
+      // replace that grounded answer with a generic handoff or pause the order.
+      return deliver(
+        base,
+        responseGuardVerdict({
+          accepted: true,
+          reason: composed.reason ?? "inspection_workflow_fallback",
+          source: "workflow_safe_fallback",
+        }),
+      );
+    }
     let coverage = assessQuestionCoverage({
       customerMessage: input.text,
       interpretationStatus,

@@ -105,6 +105,16 @@ import {
 import { InMemoryCareCaseRepository } from "./careCaseRepository.js";
 import { createDemoProductCatalog, demoCommerceEffectiveAt } from "../config/demoCommerce.js";
 import type { FollowupStage } from "../domain/followup.js";
+import {
+  currentConversationFact,
+  initialConversationFactLedger,
+  planConversationFactResponse,
+  reduceConversationFactLedger,
+  sanitizeConversationFactLedger,
+  type ConversationFactLedger,
+  type ConversationFactReceipt,
+  type ConversationTurnAttribution,
+} from "../domain/conversationFacts.js";
 
 const demoTenant = tenantId("local-demo");
 const demoCatalog = createDemoProductCatalog(demoTenant);
@@ -154,6 +164,7 @@ type DemoSession = {
   customerProfile: CustomerProfileMemory;
   locationMemory: LocationMemory;
   conversationMemory: ConversationMemory;
+  lastConversationFactReceipt?: ConversationFactReceipt;
   dialogueState: DialogueState;
   workflowState: WorkflowStateMeta;
 };
@@ -170,6 +181,7 @@ export type ConversationMemory = {
   nextStep?: SemanticNextStep;
   phoneHistory: ConversationPhoneMemory[];
   consultationFacts: ConversationConsultationFacts;
+  factLedger?: ConversationFactLedger;
   salesContext?: {
     objections: ConversationSalesObjection[];
   };
@@ -308,6 +320,7 @@ export type DemoChatState = {
   customerProfile?: CustomerProfileMemory;
   locationMemory?: LocationMemory;
   conversationMemory?: ConversationMemory;
+  conversationFactReceipt?: ConversationFactReceipt;
   dialogueState?: DialogueState;
   stateVersion?: number;
   orderRevision?: number;
@@ -392,7 +405,34 @@ export class DemoChatService {
     rememberMentionedDeliveryContext(session, raw);
     rememberTurn(session, { role: "user", text: raw });
     rememberSemanticPlan(session, semantic, raw);
-    rememberCustomerConsultationFacts(session, raw);
+    const factReduction = reduceConversationFactLedger({
+      ledger: session.conversationMemory.factLedger ?? initialConversationFactLedger(),
+      raw,
+      turn: session.messages + 1,
+      semanticFacts: (semantic.actions ?? []).flatMap((action) =>
+        action.type === "record_fact"
+          ? [
+              {
+                field: action.field,
+                value: action.value,
+                ...(action.target ? { target: action.target } : {}),
+                evidence: action.evidence,
+                confidence: action.confidence,
+              },
+            ]
+          : [],
+      ),
+    });
+    session.conversationMemory.factLedger = factReduction.ledger;
+    session.lastConversationFactReceipt = factReduction.receipt;
+    synchronizeLegacyConsultationFacts(session, raw, factReduction.receipt.attribution);
+    const factResponsePlan = planConversationFactResponse({
+      ledger: factReduction.ledger,
+      raw,
+      claims: factReduction.claims,
+      attribution: factReduction.receipt.attribution,
+      ...(semantic.intent ? { semanticIntent: semantic.intent } : {}),
+    });
     session.answeredTopics = [
       ...new Set([
         ...session.answeredTopics,
@@ -459,8 +499,16 @@ export class DemoChatService {
           isMorningFragranceLayeringQuestion(text) ||
           bottleLongevityConcern ||
           isBulkPurchaseBenefitQuestion(text)));
-    const detectedCareIssue = detectCareIssue(text);
-    const detectedCareScenario = detectCareScenario(text, detectedCareIssue);
+    const turnAttribution = factReduction.receipt.attribution;
+    const rawDetectedCareIssue = detectCareIssue(text);
+    const detectedCareIssue =
+      rawDetectedCareIssue === "irritation" && !turnAttribution.currentCustomerStopirexIrritation
+        ? undefined
+        : rawDetectedCareIssue;
+    const detectedCareScenario =
+      rawDetectedCareIssue === "irritation"
+        ? turnAttribution.scenario
+        : detectCareScenario(text, detectedCareIssue);
     const conditionalNoIrritationPurchase = isConditionalNoIrritationPurchase(text);
     if (session.care && priorOtherProductAdverseExperience) {
       dismissMisattributedCare(session);
@@ -498,6 +546,7 @@ export class DemoChatService {
       ...(detectedCareIssue ? { detectedCareIssue } : {}),
       ...(detectedCareScenario ? { careScenario: detectedCareScenario } : {}),
       priorOtherProductAdverseExperience,
+      currentCustomerIrritation: turnAttribution.currentCustomerStopirexIrritation,
       conditionalNoIrritationPurchase,
       optOut: isOptOut(text),
       collectingOrder: orderMutationAllowed && Boolean(session.selectedQuantity),
@@ -677,6 +726,34 @@ export class DemoChatService {
       session.activeSkill = "direct-answer";
       session.skillReason =
         "LLM đã xác định câu hỏi cần trả lời trực tiếp và Reconciler đã chấp nhận answer action.";
+    }
+
+    if (factResponsePlan) {
+      if (
+        session.care &&
+        (factResponsePlan.dismissCare ||
+          turnAttribution.thirdParty ||
+          turnAttribution.quotedReview ||
+          turnAttribution.product === "other_rollon")
+      ) {
+        dismissMisattributedCare(session);
+      }
+      decision.trace.selectedRoute = "direct_intent";
+      decision.trace.selectedIntent = factResponsePlan.intent;
+      decision.trace.reason = `Fact Ledger: ${factResponsePlan.reason}`;
+      decision.trace.semantic.intent = factResponsePlan.intent;
+      decision.trace.semantic.topic = factResponsePlan.topic;
+      decision.trace.semantic.selectedCtaId = "none";
+      decision.trace.semantic.ctaText = "";
+      session.lastDecision = decision.trace;
+      session.lastIntent = factResponsePlan.intent;
+      session.activeSkill = "direct-answer";
+      session.skillReason = `Fact Ledger đã kiểm chứng chủ thể và dữ kiện: ${factResponsePlan.reason}.`;
+      session.lastConversationFactReceipt = {
+        ...factReduction.receipt,
+        responseSource: "fact_ledger",
+      };
+      return this.respond(session, factResponsePlan.reply);
     }
 
     // A reconciled CSKH route must run before deterministic product/logistics
@@ -2827,6 +2904,7 @@ export class DemoChatService {
           ...(candidate.conversationMemory?.consultationFacts ?? {}),
           triggers: [...(candidate.conversationMemory?.consultationFacts?.triggers ?? [])].slice(-4),
         },
+        factLedger: sanitizeConversationFactLedger(candidate.conversationMemory?.factLedger),
         salesContext: {
           objections: [...(candidate.conversationMemory?.salesContext?.objections ?? [])].slice(-8),
         },
@@ -2922,11 +3000,16 @@ export class DemoChatService {
       optedOut: session.optedOut,
     });
     const semanticDecision = session.lastDecision?.semantic;
+    const factLedgerOwnsResponse = session.lastConversationFactReceipt?.responseSource === "fact_ledger";
     const llmOwnsCta =
       semanticDecision?.status === "interpreted" && semanticDecision.selectedCtaId !== undefined;
     const semanticCta =
       llmOwnsCta && semanticDecision.selectedCtaId !== "none" ? semanticDecision.ctaText?.trim() : undefined;
-    const promptToAppend = llmOwnsCta ? semanticCta : nextBestAction.prompt;
+    const promptToAppend = factLedgerOwnsResponse
+      ? undefined
+      : llmOwnsCta
+        ? semanticCta
+        : nextBestAction.prompt;
     const activeResponseBudget = session.lastIntent === "price_request" ? 650 : 280;
     const nextBestActionFits =
       !promptToAppend || rawReplies.join("\n\n").length + promptToAppend.length + 2 <= activeResponseBudget;
@@ -3102,10 +3185,14 @@ function stateOf(session: DemoSession): DemoChatState {
         ...session.conversationMemory.consultationFacts,
         triggers: [...session.conversationMemory.consultationFacts.triggers],
       },
+      factLedger: sanitizeConversationFactLedger(session.conversationMemory.factLedger),
       salesContext: {
         objections: (session.conversationMemory.salesContext?.objections ?? []).map((item) => ({ ...item })),
       },
     },
+    ...(session.lastConversationFactReceipt
+      ? { conversationFactReceipt: structuredClone(session.lastConversationFactReceipt) }
+      : {}),
     dialogueState: structuredClone(session.dialogueState),
     stateVersion: session.workflowState.version,
     orderRevision: session.workflowState.orderRevision,
@@ -3218,6 +3305,7 @@ function newSession(id: string, context: DemoChatContext = {}): DemoSession {
       openQuestions: [],
       phoneHistory: [],
       consultationFacts: { triggers: [] },
+      factLedger: initialConversationFactLedger(),
       salesContext: { objections: [] },
     },
     dialogueState: initialDialogueState(),
@@ -3550,23 +3638,48 @@ function extractMentionedCompetitor(raw: string): string | undefined {
   return undefined;
 }
 
-function rememberCustomerConsultationFacts(session: DemoSession, raw: string): void {
-  const text = normalize(raw);
+function synchronizeLegacyConsultationFacts(
+  session: DemoSession,
+  raw: string,
+  attribution: ConversationTurnAttribution,
+): void {
   const facts = session.conversationMemory.consultationFacts;
-  if (/mo hoi|tiet mo hoi|uot ao|o ao/.test(text)) facts.sweatConcern = true;
-  if (
-    /(?:khong|ko|k|chua)\s+(?:bi\s+)?mui\s+(?:nang|nhieu)|mui\s+(?:khong|ko|k)\s+(?:nang|nhieu)/.test(text)
-  ) {
-    facts.odorSeverity = "mild";
-  } else if (/mui\s+(?:nang|nhieu)|hoi nach\s+(?:nang|nhieu)/.test(text)) {
-    facts.odorSeverity = "strong";
+  const ledger = session.conversationMemory.factLedger ?? initialConversationFactLedger();
+  const sweat = currentConversationFact(ledger, "sweat_concern");
+  const odor = currentConversationFact(ledger, "odor_severity");
+  const skin = currentConversationFact(ledger, "skin_type");
+  const schedule = currentConversationFact(ledger, "exercise_schedule");
+  if (typeof sweat?.value === "boolean") facts.sweatConcern = sweat.value;
+  if (["none", "mild", "strong"].includes(String(odor?.value))) {
+    facts.odorSeverity = odor?.value as NonNullable<ConversationConsultationFacts["odorSeverity"]>;
   }
-  if (/da\s+(?:minh\s+)?(?:hoi\s+)?nhay cam|da nhay cam/.test(text)) facts.sensitiveSkin = true;
+  if (skin?.value === "sensitive") facts.sensitiveSkin = true;
+  else if (skin?.value === "normal") facts.sensitiveSkin = false;
+  if (sweat?.value === true) {
+    session.consultation.slots.primarySymptom =
+      odor?.value === "strong" || session.consultation.slots.primarySymptom === "odor" ? "both" : "sweat";
+    session.consultation.slots.sweatPresent = true;
+    if (odor?.value === "mild") session.consultation.slots.odorPresent = true;
+  } else if (odor) {
+    session.consultation.slots.primarySymptom = "odor";
+    session.consultation.slots.odorPresent = odor.value !== "none";
+  }
   const triggers = new Set(facts.triggers);
-  if (/cang thang/.test(text)) triggers.add("stress");
-  if (/\bhop\b|gap khach/.test(text)) triggers.add("meeting");
-  if (/van dong|the thao|gym|chay bo/.test(text)) triggers.add("exercise");
-  if (/ngoai troi|troi nong|nong buc/.test(text)) triggers.add("heat");
+  if (schedule) triggers.add("exercise");
+  // Preserve legacy trigger recall while the richer ledger remains the source
+  // of truth for subject-sensitive facts. Only project triggers from an
+  // actual self-report, never from a friend, review or hypothetical example.
+  if (
+    attribution.primarySubjectId === "self" &&
+    attribution.source === "self_report" &&
+    attribution.scenario === "actual"
+  ) {
+    const text = normalize(raw);
+    if (/cang thang/.test(text)) triggers.add("stress");
+    if (/\bhop\b|gap khach/.test(text)) triggers.add("meeting");
+    if (/van dong|the thao|gym|chay bo/.test(text)) triggers.add("exercise");
+    if (/ngoai troi|troi nong|nong buc/.test(text)) triggers.add("heat");
+  }
   facts.triggers = [...triggers].slice(-4);
 }
 

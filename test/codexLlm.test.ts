@@ -2031,6 +2031,31 @@ test("semantic parser nhận kế hoạch kiểm chứng ngắn, không phải c
   assert.equal(result.nextStep, "ask_discovery");
 });
 
+test("semantic parser giữ proposition fact tư vấn ngoài dữ liệu đơn hàng", () => {
+  const result = parseSemanticUnderstanding(
+    JSON.stringify({
+      propositions: [
+        {
+          id: "p-skin",
+          speechAct: "update",
+          action: "record_fact",
+          target: "self",
+          topic: "sensitive_skin",
+          field: "skin_type",
+          value: "normal",
+          quantity: null,
+          rawEvidence: "tui da bt thôi",
+          confidence: 0.99,
+        },
+      ],
+    }),
+  );
+
+  assert.equal(result.propositions?.[0]?.field, "skin_type");
+  assert.equal(result.actions?.[0]?.type, "record_fact");
+  assert.equal(result.actions?.[0]?.target, "self");
+});
+
 test("Codex composer fallback nếu làm mất mốc dùng giãn cách", async () => {
   const bridge = new CodexLlmBridge({
     enabled: true,

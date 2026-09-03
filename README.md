@@ -18,6 +18,8 @@ Backend B2C đa tenant triển khai theo tasklist MVP → production. Phần đ�
 - Pancake/Sapo/OmiCall contracts, order saga và CSKH pause/resume.
 - RBAC, PII/secret redaction, retention planner, CI/security scan và runbook.
 - 36 replay nghiệm thu, integration PostgreSQL/Redis và load smoke.
+- Fact Ledger tách dữ kiện theo chủ thể/sản phẩm/thời điểm, hỗ trợ correction và
+  ngăn review hoặc giả định mở nhầm ca CSKH.
 
 ## Chạy local
 
@@ -41,6 +43,8 @@ lấy kiến thức được duyệt và tạo bản nháp; state machine chỉ 
 dụng guardrail bắt buộc.
 
 Chi tiết logic Pipeline và các nhánh xử lý: [docs/CUSTOMER_JOURNEY.md](docs/CUSTOMER_JOURNEY.md).
+
+Mô hình bộ nhớ hội thoại có provenance: [docs/CONVERSATION_FACT_LEDGER.md](docs/CONVERSATION_FACT_LEDGER.md).
 
 Thiết lập Facebook Messenger từng bước: [docs/META_MESSENGER_SETUP.md](docs/META_MESSENGER_SETUP.md).
 

@@ -14,6 +14,16 @@ export type PropositionAction =
   | "record_fact";
 
 export type PropositionOrderField = "recipientName" | "phone" | "legacyAddress" | "deliveryNote";
+export type PropositionConsultationField =
+  | "sweat_concern"
+  | "odor_severity"
+  | "skin_type"
+  | "skin_sensitivity_context"
+  | "exercise_schedule"
+  | "hair_removal_time"
+  | "hair_removal_reaction"
+  | "product_reaction";
+export type PropositionField = PropositionOrderField | PropositionConsultationField;
 
 /**
  * One independently verifiable meaning unit from the customer's message.
@@ -26,7 +36,7 @@ export type ConversationProposition = {
   action: PropositionAction;
   target?: string;
   topic?: SemanticTopic;
-  field?: PropositionOrderField;
+  field?: PropositionField;
   value?: string | number | boolean;
   quantity?: 1 | 2 | 3 | 4 | 5;
   rawEvidence: string;

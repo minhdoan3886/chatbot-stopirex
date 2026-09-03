@@ -151,7 +151,21 @@
           },
           "field": {
             "type": ["string", "null"],
-            "enum": ["recipientName", "phone", "legacyAddress", "deliveryNote", null]
+            "enum": [
+              "recipientName",
+              "phone",
+              "legacyAddress",
+              "deliveryNote",
+              "sweat_concern",
+              "odor_severity",
+              "skin_type",
+              "skin_sensitivity_context",
+              "exercise_schedule",
+              "hair_removal_time",
+              "hair_removal_reaction",
+              "product_reaction",
+              null
+            ]
           },
           "value": { "type": ["string", "number", "boolean", "null"] },
           "quantity": { "type": ["integer", "null"], "enum": [1, 2, 3, 4, 5, null] },

@@ -370,6 +370,24 @@ export class MetaChatBrain {
         responseGuardVerdict({ accepted: true, reason: "llm_disabled", source: "llm_disabled" }),
       );
     }
+    if (base.state.conversationFactReceipt?.responseSource === "fact_ledger") {
+      this.logger?.log("debug", "llm_composition", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        status: "skipped",
+        reason: "conversation_fact_route_locked",
+        selectedRoute: base.state.decisionTrace?.selectedRoute,
+        acceptedFactCount: base.state.conversationFactReceipt.acceptedFactIds.length,
+        supersededFactCount: base.state.conversationFactReceipt.supersededFactIds.length,
+      });
+      return deliver(
+        base,
+        responseGuardVerdict({
+          accepted: true,
+          reason: "conversation_fact_route_locked",
+          source: "workflow_safe_fallback",
+        }),
+      );
+    }
     if (
       base.state.decisionTrace?.selectedRoute === "start_care" ||
       base.state.decisionTrace?.selectedRoute === "active_care"

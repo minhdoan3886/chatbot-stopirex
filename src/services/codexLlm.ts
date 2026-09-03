@@ -28,7 +28,7 @@ import type {
   ClaimedSavedField,
   ConversationProposition,
   PropositionAction,
-  PropositionOrderField,
+  PropositionField,
   PropositionSpeechAct,
 } from "../domain/propositions.js";
 import { assertKnowledgeAnswerGrounded, KnowledgeGroundingError } from "../domain/knowledge.js";
@@ -1915,6 +1915,8 @@ function buildCompactInterpretPrompt(input: {
     "TIN KHÔNG CÓ NỘI DUNG: nếu MESSAGE sau khi bỏ khoảng trắng/dấu câu không còn chữ, số hoặc emoji có nghĩa (như '.', '..', '...'), dùng intent other + topic other + skill need-discovery + nextStep ask_discovery; actions/knowledgeIds/knowledgeQueries/unsupportedQuestions đều rỗng. Chào tự nhiên và hỏi đúng một câu để khách chọn nhu cầu về mồ hôi, mùi cơ thể, cách dùng, giá hoặc đơn hàng. Không nói thiếu nội dung, không handoff và không coi đây là câu trả lời cho bot trước.",
     "NGỮ CẢNH: pendingAction gần nhất thắng selectedQuantity và state đơn cũ khi MESSAGE đang trả lời lời mời gần nhất. Nếu pendingAction=send_usage_guidance và khách nói gửi/ok thì dùng usage_guidance + replyTo offer_usage_guidance + affirmation=true + needsClarification=false; cấm order_support/continue_order_collection.",
     "ĐỐI TƯỢNG: cập nhật beneficiaryUpdates khi khách cho biết sản phẩm dành cho bản thân, vợ/chồng, con, mẹ, bố hoặc người khác. Giữ người dùng đã xác nhận ở câu nối tiếp, nhưng topic/intent/actions phải theo câu hỏi MỚI. Người sử dụng sản phẩm độc lập với người nhận hàng. Evidence phải là nguyên văn MESSAGE; không suy ra beneficiary từ tên nhận đơn.",
+    "FACT TƯ VẤN: dùng proposition record_fact cho các field sweat_concern, odor_severity, skin_type, skin_sensitivity_context, exercise_schedule, hair_removal_time, hair_removal_reaction, product_reaction. target phải là self hoặc id beneficiary/người khác phù hợp; value là giá trị chuẩn hóa ngắn. Không tạo fact của self từ giả định, câu hỏi xác nhận, lời kể về bạn/người thân hoặc review được copy. Khi khách sửa thông tin, tạo proposition update cho đúng target để reducer supersede fact cũ.",
+    "NGUỒN VÀ THỜI ĐIỂM: câu có 'giả sử/nếu/lỡ' là hypothetical; nội dung trong review/trích dẫn là copied review; 'bạn tôi/em tôi/người khác' không phải self; phản ứng với 'lăn khác/sản phẩm khác' không phải phản ứng Stopirex. Chỉ đề xuất start_customer_care khi chính self đang có phản ứng hiện tại sau khi dùng Stopirex.",
     "PHẢN BIỆN: đọc CONVERSATION_MEMORY. Không lặp luận điểm đã dùng hoặc vừa bị khách phản bác. pricing-objection phải ghi nhận → dùng một góc mới có trong KNOWLEDGE → hỏi tối đa một câu đào sâu; không ép chốt. Nếu chi phí/thời gian đã bị phản bác, chuyển sang cơ chế, cách dùng hoặc bằng chứng đã duyệt.",
     "PROPOSITION/ACTION: mỗi ý có nghĩa cần một proposition riêng với confidence và evidence nguyên văn trong rawEvidence. Một MESSAGE có thể đồng thời hỏi phí ship, chọn số lượng và cung cấp dữ liệu. answer_question không được chứa mutation. Ưu tiên an toàn/chuyển người → answer_question → record_fact → set_quantity/provide_order_field → continue_order_collection. Không tự tạo đơn, freeship, hoàn tiền hay nói đã thực hiện việc chưa có trong state.",
     "Bất biến số lượng: khi khách thật sự chốt/mua 1–5 chai/lọ, kể cả lỗi gõ, phải có select_quantity với số chuẩn và continue_order_collection; evidence giữ nguyên cả cụm khách viết. Câu hỏi giả định 'mua mà không đỡ có hoàn tiền không' không phải chốt mua.",
@@ -2089,6 +2091,17 @@ function promptArgumentMemory(state: DemoChatState): {
     sensitiveSkin: boolean | null;
     recommendedQuantity: number | null;
   };
+  conversationFacts: Array<{
+    subjectId: string;
+    predicate: string;
+    value: string | number | boolean;
+    product: string | null;
+    temporal: string;
+    scenario: string;
+    source: string;
+    evidence: string;
+    sourceTurn: number;
+  }>;
   salesContext: {
     objections: Array<{
       type: "price" | "effectiveness";
@@ -2189,6 +2202,20 @@ function promptArgumentMemory(state: DemoChatState): {
       sensitiveSkin: state.conversationMemory?.consultationFacts.sensitiveSkin ?? null,
       recommendedQuantity: state.conversationMemory?.consultationFacts.recommendedQuantity ?? null,
     },
+    conversationFacts: (state.conversationMemory?.factLedger?.facts ?? [])
+      .filter((fact) => fact.status === "current")
+      .slice(-24)
+      .map((fact) => ({
+        subjectId: fact.subjectId,
+        predicate: fact.predicate,
+        value: fact.value,
+        product: fact.product ?? null,
+        temporal: fact.temporal,
+        scenario: fact.scenario,
+        source: fact.source,
+        evidence: redactPromptPii(fact.evidence).slice(0, 180),
+        sourceTurn: fact.sourceTurn,
+      })),
     salesContext: {
       objections: (state.conversationMemory?.salesContext?.objections ?? []).map((item) => ({
         type: item.type,
@@ -2651,11 +2678,19 @@ function parseConversationPropositions(value: unknown): ConversationProposition[
     "handoff_to_human",
     "record_fact",
   ];
-  const fields: readonly PropositionOrderField[] = [
+  const fields: readonly PropositionField[] = [
     "recipientName",
     "phone",
     "legacyAddress",
     "deliveryNote",
+    "sweat_concern",
+    "odor_severity",
+    "skin_type",
+    "skin_sensitivity_context",
+    "exercise_schedule",
+    "hair_removal_time",
+    "hair_removal_reaction",
+    "product_reaction",
   ];
   const parsed: ConversationProposition[] = [];
   for (const [index, item] of value.slice(0, 12).entries()) {
@@ -2666,8 +2701,8 @@ function parseConversationPropositions(value: unknown): ConversationProposition[
     if (typeof input.rawEvidence !== "string" || !input.rawEvidence.trim()) continue;
     if (!validConfidence(input.confidence)) continue;
     const topic = parseSemanticTopic(input.topic);
-    const field = fields.includes(input.field as PropositionOrderField)
-      ? (input.field as PropositionOrderField)
+    const field = fields.includes(input.field as PropositionField)
+      ? (input.field as PropositionField)
       : undefined;
     const quantity =
       typeof input.quantity === "number" && [1, 2, 3, 4, 5].includes(input.quantity)

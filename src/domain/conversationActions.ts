@@ -60,6 +60,7 @@ export type RejectedConversationAction = {
     | "conflicting_purchase_decision"
     | "invalid_order_update"
     | "wrong_product_attribution"
+    | "wrong_subject_attribution"
     | "non_current_care_scenario"
     | "unverifiable_purchase_condition"
     | "inapplicable_return_logistics"
@@ -87,6 +88,7 @@ export function reconcileConversationActions(input: {
   detectedCareIssue?: IssueType;
   careScenario?: SemanticUnderstanding["scenario"];
   priorOtherProductAdverseExperience?: boolean;
+  currentCustomerIrritation?: boolean;
   conditionalNoIrritationPurchase?: boolean;
   optOut: boolean;
   collectingOrder: boolean;
@@ -143,7 +145,9 @@ export function reconcileConversationActions(input: {
   const reconciledCareIssue = input.detectedCareIssue ?? semanticHandoffCareIssue;
   const currentCareScope =
     reconciledCareIssue === "irritation"
-      ? input.careScenario === "actual" && input.semantic.subject !== "product"
+      ? input.careScenario === "actual" &&
+        input.semantic.subject !== "product" &&
+        input.currentCustomerIrritation !== false
       : input.careScenario !== "hypothetical" && input.careScenario !== "past";
   if (reconciledCareIssue && currentCareScope) {
     const llmHandoff = candidates.find(
@@ -315,6 +319,14 @@ export function reconcileConversationActions(input: {
       (input.careScenario === "hypothetical" || input.careScenario === "past")
     ) {
       rejected.push({ action: candidate, reason: "non_current_care_scenario" });
+      continue;
+    }
+    if (
+      candidate.type === "start_customer_care" &&
+      candidate.issue === "irritation" &&
+      input.currentCustomerIrritation === false
+    ) {
+      rejected.push({ action: candidate, reason: "wrong_subject_attribution" });
       continue;
     }
     if (
@@ -640,6 +652,14 @@ function validateAction(
       "priorProduct",
       "priorIrritation",
       "age",
+      "sweat_concern",
+      "odor_severity",
+      "skin_type",
+      "skin_sensitivity_context",
+      "exercise_schedule",
+      "hair_removal_time",
+      "hair_removal_reaction",
+      "product_reaction",
     ].includes(action.field)
   ) {
     return "invalid_fact";

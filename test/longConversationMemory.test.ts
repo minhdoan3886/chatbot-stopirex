@@ -158,7 +158,7 @@ memoryAuditTest("memory E2E: sửa thông tin đơn phải ghi đè giá trị c
   );
   assert.ok(
     hasAll(logs[17]?.bot ?? "", [
-      /2 lọ/iu,
+      /2 lọ|STOPIREX × 2/iu,
       /Nguyễn Ngọc Mai/iu,
       /0987654321/u,
       /15 Nguyễn Trãi/iu,

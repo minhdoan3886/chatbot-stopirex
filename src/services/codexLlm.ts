@@ -24,6 +24,13 @@ import type {
   SemanticBeneficiaryUpdate,
 } from "../domain/consultation.js";
 import type { ConversationAction, ConversationActionType } from "../domain/conversationActions.js";
+import type {
+  ClaimedSavedField,
+  ConversationProposition,
+  PropositionAction,
+  PropositionOrderField,
+  PropositionSpeechAct,
+} from "../domain/propositions.js";
 import { assertKnowledgeAnswerGrounded, KnowledgeGroundingError } from "../domain/knowledge.js";
 import { questionTopic } from "../domain/responseGovernor.js";
 import {
@@ -46,6 +53,7 @@ export type CodexLlmResult = {
   reason?: string;
   model: string;
   provider: LlmProviderMode;
+  claimedSavedFields?: ClaimedSavedField[];
 };
 
 export type ApprovedKnowledgeContext = {
@@ -103,7 +111,7 @@ export function repairMissingKnowledgeCitations(
   };
 }
 
-export type LlmPurpose = "interpret" | "enhance" | "opening" | "followup";
+export type LlmPurpose = "interpret" | "post_commit" | "enhance" | "opening" | "followup";
 
 export type FollowupComposeResult = {
   text: string;
@@ -732,6 +740,81 @@ export class CodexLlmBridge {
     }
   }
 
+  async composePostCommit(input: {
+    customerMessage: string;
+    preCommitDraft: string;
+    baseReply: string;
+    state: DemoChatState;
+    actions?: readonly ConversationAction[];
+    skillId?: ConversationSkillId;
+    knowledge?: readonly ApprovedKnowledgeContext[];
+    knowledgeIds?: readonly string[];
+    responseContract?: WorkflowResponseContract;
+  }): Promise<CodexLlmResult> {
+    const startedAt = Date.now();
+    if (!this.enabled) return this.result(input.baseReply, "unavailable", startedAt, "disabled");
+    const prompt = buildPostCommitPrompt(input);
+    const validate = (raw: string) => {
+      const parsed = parsePostCommitResponse(raw);
+      const reply = parsed.bubbles.join("\n\n");
+      this.claims.assertSafe(reply);
+      const citedKnowledge = (input.knowledge ?? [])
+        .filter((entity) => input.knowledgeIds?.includes(entity.id))
+        .map((entity) => entity.content)
+        .join("\n");
+      assertNoUnapprovedCommerceFacts([input.baseReply, citedKnowledge].filter(Boolean).join("\n"), reply);
+      assertActionClaimsGrounded(input.state, reply);
+      assertCurrentPriceStatusGrounded(input.customerMessage, reply);
+      if (input.responseContract) {
+        assertRequiredResponseFactsPresent(input.responseContract.factPolicy.mustIncludeFacts, reply);
+      }
+      assertCustomerAdvisorVoice(input.customerMessage, reply);
+      assertHelpfulContentFreeReply(input.customerMessage, reply);
+      if (input.skillId && !isApprovedPriceCatalogBase(input.baseReply)) {
+        assertSkillResponseShape(input.skillId, reply);
+      }
+      return { parsed, reply };
+    };
+    let raw: string;
+    try {
+      raw = (await this.run(prompt, "post_commit")).trim();
+    } catch (error) {
+      return this.result(
+        input.baseReply,
+        "fallback",
+        startedAt,
+        error instanceof Error ? `post_commit_provider_failed:${error.name}` : "post_commit_provider_failed",
+      );
+    }
+    try {
+      let validated: ReturnType<typeof validate>;
+      try {
+        validated = validate(raw);
+      } catch (validationError) {
+        const feedback = validationError instanceof Error
+          ? `${validationError.name}: ${validationError.message}`
+          : "post_commit_validation_failed";
+        raw = (await this.run(
+          `${prompt}\nLẦN TRƯỚC KHÔNG ĐẠT HẬU KIỂM: ${feedback}. Tạo lại JSON, chỉ sửa flexible text; giữ đủ REQUIRED_FACTS và chỉ khai field đã commit.`,
+          "post_commit",
+        )).trim();
+        validated = validate(raw);
+      }
+      const { parsed, reply } = validated;
+      return {
+        ...this.result(reply, "enhanced", startedAt, "post_commit_structured_response", parsed.bubbles),
+        claimedSavedFields: parsed.claimedSavedFields,
+      };
+    } catch (error) {
+      return this.result(
+        input.baseReply,
+        "fallback",
+        startedAt,
+        error instanceof Error ? `post_commit_failed:${error.name}` : "post_commit_failed",
+      );
+    }
+  }
+
   async enhanceOpening(input: {
     baseReply: string;
     variantId: string;
@@ -1174,6 +1257,18 @@ function createOpenAiRunner(input: {
                 schema: semanticOutputSchema(),
               },
             }
+          : purpose === "post_commit"
+            ? {
+                verbosity: "low",
+                format: {
+                  type: "json_schema",
+                  name: "stopirex_post_commit_response",
+                  description:
+                    "Câu trả lời sau reducer commit, gồm Messenger bubbles và các field được xác nhận đã lưu.",
+                  strict: true,
+                  schema: postCommitOutputSchema(),
+                },
+              }
           : { verbosity: "low" },
     });
     const output = response.output_text?.trim();
@@ -1201,12 +1296,21 @@ function createOpenAiRunner(input: {
 }
 
 let cachedSemanticOutputSchema: Record<string, unknown> | undefined;
+let cachedPostCommitOutputSchema: Record<string, unknown> | undefined;
 
 function semanticOutputSchema(): Record<string, unknown> {
   if (cachedSemanticOutputSchema) return cachedSemanticOutputSchema;
   const schemaPath = resolve(process.cwd(), "config/codex-semantic-output.schema.json");
   const parsed = JSON.parse(readFileSync(schemaPath, "utf8")) as Record<string, unknown>;
   cachedSemanticOutputSchema = parsed;
+  return parsed;
+}
+
+function postCommitOutputSchema(): Record<string, unknown> {
+  if (cachedPostCommitOutputSchema) return cachedPostCommitOutputSchema;
+  const schemaPath = resolve(process.cwd(), "config/post-commit-response.schema.json");
+  const parsed = JSON.parse(readFileSync(schemaPath, "utf8")) as Record<string, unknown>;
+  cachedPostCommitOutputSchema = parsed;
   return parsed;
 }
 
@@ -1471,6 +1575,7 @@ function buildRepairPrompt(input: {
     "Giữ đúng intent và ý khách ở MESSAGE mới nhất. Không quay lại pendingAction, CTA, số lượng hoặc luồng cũ nếu MESSAGE hiện tại không yêu cầu.",
     "Knowledge và chính sách dưới đây chỉ là căn cứ sự thật/điều cấm. Không chép responseGuidance, tên rule, workflow, validator hoặc lý do hậu kiểm cho khách.",
     "Chỉ tuyên bố hành động đã thực hiện nếu EXECUTED ACTIONS và CURRENT STATE xác nhận. Không tự thêm giá, ưu đãi, freeship, công dụng hoặc chính sách.",
+    "Nếu VALIDATION FEEDBACK có post_commit_composition_required: đây không phải lỗi văn phong. Hãy soạn câu trả lời mới hoàn toàn từ COMMIT RECEIPT và CURRENT STATE sau reducer; chỉ nói 'đã ghi nhận/đã lưu' cho mutation nằm trong acceptedMutations.",
     "Chỉ rút gọn và viết lại phần lời dẫn, cách chuyển ý và CTA. REQUIRED_FACTS là bất biến: phải giữ đủ, nguyên nghĩa và nguyên con số; nếu dài thì chia thành các tin/đoạn ngắn thay vì bỏ dữ kiện.",
     "Trả lời đủ từng ý khách hỏi, tự nhiên, ngắn gọn và không quá một câu hỏi thật sự cần thiết.",
     "Nếu MESSAGE chỉ gồm khoảng trắng/dấu câu: viết lời chào thân thiện kèm đúng một câu hỏi khai thác nhu cầu; không nói thiếu nội dung, không yêu cầu khách diễn đạt lại và không chuyển bộ phận.",
@@ -1483,7 +1588,9 @@ function buildRepairPrompt(input: {
     `EXECUTED ACTIONS: ${JSON.stringify(input.actions ?? [])}`,
     `CURRENT STATE: ${JSON.stringify({
       selectedQuantity: input.state.selectedQuantity ?? null,
+      orderDraft: input.state.orderDraft ?? null,
       orderMissing: input.state.orderMissing,
+      commitReceipt: input.state.orderTransactionTrace ?? null,
       pendingAction: input.state.pendingAction ?? null,
       pipeline: input.state.pipeline,
       skillId: input.skillId ?? null,
@@ -1492,6 +1599,67 @@ function buildRepairPrompt(input: {
     `SAFE EXECUTION SUMMARY: ${JSON.stringify(input.baseReply)}`,
     `REQUIRED_FACTS: ${JSON.stringify(requiredFacts)}`,
   ].join("\n");
+}
+
+function buildPostCommitPrompt(input: {
+  customerMessage: string;
+  preCommitDraft: string;
+  baseReply: string;
+  state: DemoChatState;
+  actions?: readonly ConversationAction[];
+  skillId?: ConversationSkillId;
+  knowledge?: readonly ApprovedKnowledgeContext[];
+  knowledgeIds?: readonly string[];
+  responseContract?: WorkflowResponseContract;
+}): string {
+  const citedKnowledge = (input.knowledge ?? []).filter((entity) => input.knowledgeIds?.includes(entity.id));
+  return [
+    "Bạn là LLM soạn phản hồi cuối sau khi reducer đã commit state cho chatbot Stopirex.",
+    "Chỉ xuất JSON đúng schema post-commit; không markdown, không giải thích và không lộ dữ liệu nội bộ.",
+    "COMMIT_RECEIPT và POST_COMMIT_STATE là nguồn sự thật duy nhất về thay đổi đơn hàng.",
+    "Chỉ nói đã ghi nhận/đã lưu/đã cập nhật một field khi mutation tương ứng nằm trong acceptedMutations. Mọi dữ liệu recap phải lấy nguyên giá trị từ POST_COMMIT_STATE.",
+    "Trả lời đủ từng câu hỏi độc lập trong MESSAGE bằng APPROVED KNOWLEDGE và REQUIRED_FACTS. Không để ý hỏi đáp bị mất chỉ vì cùng lượt có mutation.",
+    "claimedSavedFields phải liệt kê đúng field mà bubbles nói đã lưu trong lượt này; nếu không nói đã lưu field nào thì để [].",
+    "Dùng 1–2 bubble hoàn chỉnh, không cắt ngang câu và tối đa một câu hỏi CTA nằm ở cuối bubble cuối.",
+    `MESSAGE: ${JSON.stringify(input.customerMessage)}`,
+    `PRE_COMMIT_DRAFT: ${JSON.stringify(input.preCommitDraft)}`,
+    `EXECUTED_ACTIONS: ${JSON.stringify(input.actions ?? [])}`,
+    `COMMIT_RECEIPT: ${JSON.stringify(input.state.orderTransactionTrace ?? null)}`,
+    `POST_COMMIT_STATE: ${JSON.stringify({
+      selectedQuantity: input.state.selectedQuantity ?? null,
+      orderDraft: input.state.orderDraft ?? null,
+      orderMissing: input.state.orderMissing,
+      pendingAction: input.state.pendingAction ?? null,
+      pipeline: input.state.pipeline,
+      skillId: input.skillId ?? null,
+    })}`,
+    `APPROVED KNOWLEDGE: ${JSON.stringify(citedKnowledge)}`,
+    `REQUIRED_FACTS: ${JSON.stringify(input.responseContract?.factPolicy.mustIncludeFacts ?? [])}`,
+    `CTA_POLICY: ${JSON.stringify(input.responseContract?.ctaPolicy ?? null)}`,
+    `SAFE EXECUTION SUMMARY: ${JSON.stringify(input.baseReply)}`,
+  ].join("\n");
+}
+
+export function parsePostCommitResponse(raw: string): {
+  bubbles: string[];
+  claimedSavedFields: ClaimedSavedField[];
+} {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "");
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("post_commit_response_not_json");
+  const value = JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+  const bubbles = Array.isArray(value.bubbles)
+    ? value.bubbles
+        .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+        .map((item) => item.trim().slice(0, 650))
+        .slice(0, 2)
+    : [];
+  if (bubbles.length === 0) throw new Error("post_commit_response_empty_bubbles");
+  return {
+    bubbles,
+    claimedSavedFields: parseClaimedSavedFields(value.claimedSavedFields),
+  };
 }
 
 function buildSemanticContractRetryPrompt(originalPrompt: string, error: unknown): string {
@@ -1572,7 +1740,7 @@ function buildInterpretPrompt(input: {
     "Trả về duy nhất một JSON object hợp lệ, không markdown, không giải thích.",
     "Bạn là nguồn quyết định cao nhất cho intent, topic, action, cập nhật state hội thoại và draftReply của lượt hiện tại. Tin khách mới nhất thắng state/pipeline/pendingAction cũ khi có thay đổi hoặc chuyển chủ đề rõ ràng.",
     "KNOWLEDGE, policy và các điều cấm là dữ liệu để bạn đối chiếu trước khi quyết định. Code bên ngoài chỉ xác thực dữ kiện cứng và thực thi actions; không được tự đổi intent, tự thêm CTA, tự kéo khách về luồng cũ hoặc thay draftReply bằng văn mẫu workflow.",
-    "Trong cùng JSON, bóc tách TẤT CẢ ý có nghĩa thành actions[], đồng thời giữ intent là ý định chính để tương thích và viết draftReply. Đây là một lượt suy luận duy nhất.",
+    "Trong cùng JSON, bóc tách TẤT CẢ ý có nghĩa thành propositions[]; mỗi ý có rawEvidence nguyên văn riêng. Điền actions[] tương ứng để tương thích, giữ intent chỉ làm nhãn analytics và viết draftReply. Đây là một lượt suy luận duy nhất.",
     "Chỉ điền thông tin khách đã nói rõ; không suy đoán trường không liên quan.",
     "Kho tri thức được duyệt là nguồn sự thật duy nhất cho giá, ưu đãi, chính sách và công dụng. Trường content là dữ kiện được phép trả khách; responseGuidance là ràng buộc nội bộ phải tuân thủ nhưng không được chép hoặc giải thích cho khách. Nếu khách hỏi dữ kiện không có trong kho, dùng knowledge_unknown hoặc promotion_inquiry; tuyệt đối không tự xác nhận.",
     "Fact bắt buộc: Stopirex có Alcohol dùng làm dung môi trong ngưỡng an toàn của công thức. Sản phẩm có mùi dược tính đặc trưng nhẹ và bay hơi nhanh, không dùng hương thơm để che mùi. Cấm nói 'không cồn' hoặc 'hoàn toàn không mùi'.",
@@ -1745,7 +1913,7 @@ function buildCompactInterpretPrompt(input: {
     "NGỮ CẢNH: pendingAction gần nhất thắng selectedQuantity và state đơn cũ khi MESSAGE đang trả lời lời mời gần nhất. Nếu pendingAction=send_usage_guidance và khách nói gửi/ok thì dùng usage_guidance + replyTo offer_usage_guidance + affirmation=true + needsClarification=false; cấm order_support/continue_order_collection.",
     "ĐỐI TƯỢNG: cập nhật beneficiaryUpdates khi khách cho biết sản phẩm dành cho bản thân, vợ/chồng, con, mẹ, bố hoặc người khác. Giữ người dùng đã xác nhận ở câu nối tiếp, nhưng topic/intent/actions phải theo câu hỏi MỚI. Người sử dụng sản phẩm độc lập với người nhận hàng. Evidence phải là nguyên văn MESSAGE; không suy ra beneficiary từ tên nhận đơn.",
     "PHẢN BIỆN: đọc CONVERSATION_MEMORY. Không lặp luận điểm đã dùng hoặc vừa bị khách phản bác. pricing-objection phải ghi nhận → dùng một góc mới có trong KNOWLEDGE → hỏi tối đa một câu đào sâu; không ép chốt. Nếu chi phí/thời gian đã bị phản bác, chuyển sang cơ chế, cách dùng hoặc bằng chứng đã duyệt.",
-    "ACTION: mỗi ý có nghĩa cần action riêng, confidence và evidence nguyên văn. Ưu tiên an toàn/chuyển người → answer_question → record_fact → select_quantity/update_order → continue_order_collection. Không tự tạo đơn, freeship, hoàn tiền hay nói đã thực hiện việc chưa có trong state.",
+    "PROPOSITION/ACTION: mỗi ý có nghĩa cần một proposition riêng với confidence và evidence nguyên văn trong rawEvidence. Một MESSAGE có thể đồng thời hỏi phí ship, chọn số lượng và cung cấp dữ liệu. answer_question không được chứa mutation. Ưu tiên an toàn/chuyển người → answer_question → record_fact → set_quantity/provide_order_field → continue_order_collection. Không tự tạo đơn, freeship, hoàn tiền hay nói đã thực hiện việc chưa có trong state.",
     "Bất biến số lượng: khi khách thật sự chốt/mua 1–5 chai/lọ, kể cả lỗi gõ, phải có select_quantity với số chuẩn và continue_order_collection; evidence giữ nguyên cả cụm khách viết. Câu hỏi giả định 'mua mà không đỡ có hoàn tiền không' không phải chốt mua.",
     "Bất biến mâu thuẫn mua: nếu cùng MESSAGE vừa chốt số lượng vừa từ chối, xuất select_quantity, continue_order_collection và decline_purchase với evidence riêng, needsClarification=true và không tự chọn vế cuối.",
     "ĐƠN HÀNG: update_order.fields chỉ chứa recipientName, phone, legacyAddress, deliveryNote xuất hiện trong MESSAGE. Nhận từng phần, không hỏi lại trường đã có. Tên một từ hợp lệ. phone phải đúng 10 số bắt đầu 0; số sai chỉ xin lại phone và vẫn lưu các trường hợp lệ khác. Địa chỉ có điểm giao cụ thể và tỉnh/thành được tiếp nhận, không bắt khách viết đủ nhãn phường/quận. Khi đủ dữ liệu, hệ thống tiếp nhận đơn ngay và gửi recap để đối chiếu; không bắt khách gõ ĐỒNG Ý. Trước khi có mã vận đơn, khách được sửa và mỗi update_order phải giữ evidence của MESSAGE. Câu dùng/gửi về địa chỉ trên dùng state đã lưu, không chép PII từ HISTORY.",
@@ -1754,7 +1922,7 @@ function buildCompactInterpretPrompt(input: {
     "AN TOÀN/KHIẾU NẠI: đỏ-rát-ngứa thật phải start_customer_care + answer_question + pause_order và không chốt. Khiếu nại/sự cố đơn/dọa phản ánh phải start_customer_care(issue complaint) + handoff_to_human, không bán hàng. Xác định đúng sản phẩm gây sự cố; phản ứng với sản phẩm khác chỉ là băn khoăn trước mua.",
     "HẬU KIỂM CỨNG: không bịa giá/ưu đãi/chính sách/công dụng, không lộ PII hoặc dữ liệu nội bộ, không tạo hành động đơn hàng sai, không đưa hướng dẫn an toàn trái KNOWLEDGE. Mọi dữ kiện sản phẩm cụ thể chỉ lấy từ KNOWLEDGE của lượt hiện tại.",
     "Tin sai/chưa xác nhận: ghi nhận trung tính → nêu dữ kiện đúng đã duyệt → giải đáp nỗi lo. Không tranh cãi, không nói khách sai, không tự dùng 'tùy cơ địa' nếu khách không hỏi cam kết tuyệt đối.",
-    "OUTPUT đã được API ràng buộc bằng Structured Outputs. Điền đủ schema, không đổi tên trường. answeredQuestions/newAngle/rejectedArguments/nextStep là kế hoạch kiểm chứng ngắn, không phải chuỗi suy nghĩ. draftReply là toàn bộ lời khách sẽ thấy; draftBubbles là cùng nội dung đó được chia thành 1–2 tin Messenger hoàn chỉnh, không cắt giữa câu; mọi trường khác là dữ liệu nội bộ.",
+    "OUTPUT đã được API ràng buộc bằng Structured Outputs. Điền đủ schema, không đổi tên trường. propositions[] là nguồn diễn giải chính; actions[] là cầu nối tương thích. claimedSavedFields chỉ liệt kê trường mà draftReply nói đã lưu/ghi nhận; để [] nếu không có. answeredQuestions/newAngle/rejectedArguments/nextStep là kế hoạch kiểm chứng ngắn, không phải chuỗi suy nghĩ. draftReply là toàn bộ lời khách sẽ thấy; draftBubbles là cùng nội dung đó được chia thành 1–2 tin Messenger hoàn chỉnh, không cắt giữa câu; mọi trường khác là dữ liệu nội bộ.",
     "CTA: workflow cung cấp ALLOWED_CTAS. Chọn đúng một selectedCtaId trong danh sách và tự diễn đạt ctaText đúng purpose. Với none, ctaText phải rỗng và draftReply/draftBubbles không có CTA. Không tự phát minh CTA ngoài danh sách. CTA là phần cuối bubble cuối và chỉ có tối đa một câu hỏi.",
     "BÁO GIÁ CHUNG: nếu khách hỏi giá chung và không chỉ rõ một số lượng, draftReply phải giữ đầy đủ mọi phương án được responseGuidance cho phép, quà tặng và combo sản phẩm liên quan trong KNOWLEDGE. Trình bày từng phương án trên một dòng, chia tối đa hai khối dễ đọc và kết thúc bằng đúng một câu hỏi nối tiếp phù hợp ngữ cảnh. Không nén bảng giá thành một đoạn văn; riêng trường hợp này được vượt ngân sách direct-answer đến 650 ký tự.",
     "Ví dụ liên quan tới tin hiện tại:",
@@ -1918,6 +2086,15 @@ function promptArgumentMemory(state: DemoChatState): {
     sensitiveSkin: boolean | null;
     recommendedQuantity: number | null;
   };
+  salesContext: {
+    objections: Array<{
+      type: "price" | "effectiveness";
+      comparedWith: string | null;
+      status: "open" | "resolved";
+      evidence: string;
+      sourceTurn: number;
+    }>;
+  };
   latestAssistantTurn: string | null;
 } {
   const recent = state.recentTurns.slice(-36);
@@ -2009,6 +2186,15 @@ function promptArgumentMemory(state: DemoChatState): {
       sensitiveSkin: state.conversationMemory?.consultationFacts.sensitiveSkin ?? null,
       recommendedQuantity:
         state.conversationMemory?.consultationFacts.recommendedQuantity ?? null,
+    },
+    salesContext: {
+      objections: (state.conversationMemory?.salesContext?.objections ?? []).map((item) => ({
+        type: item.type,
+        comparedWith: item.comparedWith ?? null,
+        status: item.status,
+        evidence: redactPromptPii(item.evidence).slice(0, 180),
+        sourceTurn: item.sourceTurn,
+      })),
     },
     latestAssistantTurn: latestAssistantTurn ? redactPromptPii(latestAssistantTurn).slice(0, 300) : null,
   };
@@ -2157,8 +2343,14 @@ export function parseSemanticUnderstanding(
   if (typeof parsed.summary === "string" && parsed.summary.trim()) {
     result.summary = parsed.summary.trim().slice(0, 300);
   }
-  const actions = parseConversationActions(parsed.actions);
+  const propositions = parseConversationPropositions(parsed.propositions);
+  if (propositions.length > 0) result.propositions = propositions;
+  const legacyActions = parseConversationActions(parsed.actions);
+  const propositionActions = conversationActionsFromPropositions(propositions);
+  const actions = mergeConversationActions(propositionActions, legacyActions);
   if (actions.length > 0) result.actions = actions;
+  const claimedSavedFields = parseClaimedSavedFields(parsed.claimedSavedFields);
+  if (claimedSavedFields.length > 0) result.claimedSavedFields = claimedSavedFields;
   if (Array.isArray(parsed.uncertainties)) {
     const uncertainties = parsed.uncertainties
       .filter((item): item is string => typeof item === "string")
@@ -2377,6 +2569,7 @@ export function parseSemanticUnderstanding(
   const hasSemanticPayload = Boolean(
     result.intent ||
       result.actions?.length ||
+      result.propositions?.length ||
       result.draftReply ||
       Object.keys(result.slots).length > 0 ||
       result.answeredQuestions?.length ||
@@ -2433,6 +2626,162 @@ function parseBeneficiaryUpdates(value: unknown): SemanticBeneficiaryUpdate[] {
     });
   }
   return updates;
+}
+
+function parseConversationPropositions(value: unknown): ConversationProposition[] {
+  if (!Array.isArray(value)) return [];
+  const speechActs: readonly PropositionSpeechAct[] = [
+    "question",
+    "provide_data",
+    "update",
+    "confirm",
+    "reject",
+    "request",
+  ];
+  const actions: readonly PropositionAction[] = [
+    "answer_question",
+    "set_quantity",
+    "provide_order_field",
+    "append_delivery_note",
+    "continue_order_collection",
+    "pause_order",
+    "decline_purchase",
+    "handoff_to_human",
+    "record_fact",
+  ];
+  const fields: readonly PropositionOrderField[] = [
+    "recipientName",
+    "phone",
+    "legacyAddress",
+    "deliveryNote",
+  ];
+  const parsed: ConversationProposition[] = [];
+  for (const [index, item] of value.slice(0, 12).entries()) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const input = item as Record<string, unknown>;
+    if (!speechActs.includes(input.speechAct as PropositionSpeechAct)) continue;
+    if (!actions.includes(input.action as PropositionAction)) continue;
+    if (typeof input.rawEvidence !== "string" || !input.rawEvidence.trim()) continue;
+    if (!validConfidence(input.confidence)) continue;
+    const topic = parseSemanticTopic(input.topic);
+    const field = fields.includes(input.field as PropositionOrderField)
+      ? (input.field as PropositionOrderField)
+      : undefined;
+    const quantity =
+      typeof input.quantity === "number" && [1, 2, 3, 4, 5].includes(input.quantity)
+        ? (input.quantity as 1 | 2 | 3 | 4 | 5)
+        : undefined;
+    const scalarValue = ["string", "number", "boolean"].includes(typeof input.value)
+      ? (input.value as string | number | boolean)
+      : undefined;
+    parsed.push({
+      id:
+        typeof input.id === "string" && input.id.trim()
+          ? input.id.trim().slice(0, 32)
+          : `p${index + 1}`,
+      speechAct: input.speechAct as PropositionSpeechAct,
+      action: input.action as PropositionAction,
+      ...(typeof input.target === "string" && input.target.trim()
+        ? { target: input.target.trim().slice(0, 80) }
+        : {}),
+      ...(topic ? { topic } : {}),
+      ...(field ? { field } : {}),
+      ...(scalarValue !== undefined ? { value: scalarValue } : {}),
+      ...(quantity ? { quantity } : {}),
+      rawEvidence: input.rawEvidence.trim().slice(0, 240),
+      confidence: input.confidence,
+    });
+  }
+  return parsed;
+}
+
+function parseClaimedSavedFields(value: unknown): ClaimedSavedField[] {
+  if (!Array.isArray(value)) return [];
+  const fields = ["recipientName", "phone", "legacyAddress", "deliveryNote", "quantity"] as const;
+  return value
+    .slice(0, 6)
+    .flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const input = item as Record<string, unknown>;
+      if (!fields.includes(input.field as (typeof fields)[number])) return [];
+      if (typeof input.value !== "string" || !input.value.trim()) return [];
+      return [{
+        field: input.field as ClaimedSavedField["field"],
+        value: input.value.trim().slice(0, 200),
+      }];
+    });
+}
+
+function conversationActionsFromPropositions(
+  propositions: readonly ConversationProposition[],
+): ConversationAction[] {
+  const output: ConversationAction[] = [];
+  for (const proposition of propositions) {
+    const base = {
+      confidence: proposition.confidence,
+      evidence: [proposition.rawEvidence],
+      source: "llm" as const,
+      propositionId: proposition.id,
+      speechAct: proposition.speechAct,
+      rawEvidence: proposition.rawEvidence,
+      ...(proposition.target ? { target: proposition.target } : {}),
+    };
+    switch (proposition.action) {
+      case "answer_question":
+        if (proposition.topic) output.push({ ...base, type: "answer_question", topic: proposition.topic });
+        break;
+      case "set_quantity":
+        if (proposition.quantity) output.push({ ...base, type: "select_quantity", quantity: proposition.quantity });
+        break;
+      case "provide_order_field":
+      case "append_delivery_note": {
+        const field = proposition.action === "append_delivery_note" ? "deliveryNote" : proposition.field;
+        if (field && typeof proposition.value === "string" && proposition.value.trim()) {
+          output.push({ ...base, type: "update_order", fields: { [field]: proposition.value.trim() } });
+        }
+        break;
+      }
+      case "continue_order_collection":
+        output.push({ ...base, type: "continue_order_collection" });
+        break;
+      case "pause_order":
+        output.push({ ...base, type: "pause_order", ...(proposition.target ? { reason: proposition.target } : {}) });
+        break;
+      case "decline_purchase":
+        output.push({ ...base, type: "decline_purchase" });
+        break;
+      case "handoff_to_human":
+        output.push({ ...base, type: "handoff_to_human", ...(proposition.target ? { reason: proposition.target } : {}) });
+        break;
+      case "record_fact":
+        if (proposition.field && proposition.value !== undefined) {
+          output.push({ ...base, type: "record_fact", field: proposition.field, value: proposition.value });
+        }
+        break;
+    }
+  }
+  return output;
+}
+
+function mergeConversationActions(
+  primary: readonly ConversationAction[],
+  compatibility: readonly ConversationAction[],
+): ConversationAction[] {
+  const merged: ConversationAction[] = [];
+  const seen = new Set<string>();
+  for (const action of [...primary, ...compatibility]) {
+    const key = JSON.stringify([
+      action.type,
+      action.type === "answer_question" ? action.topic : null,
+      action.type === "select_quantity" ? action.quantity : null,
+      action.type === "update_order" ? action.fields : null,
+      action.evidence,
+    ]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(action);
+  }
+  return merged.slice(0, 12);
 }
 
 function parseConversationActions(value: unknown): ConversationAction[] {

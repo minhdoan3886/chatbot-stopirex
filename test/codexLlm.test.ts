@@ -1974,6 +1974,59 @@ test("semantic parser nhận intent so sánh sản phẩm", () => {
   assert.equal(result.asksDirectAnswer, true);
 });
 
+test("semantic parser giữ nhiều proposition độc lập và bridge sang actions", () => {
+  const result = parseSemanticUnderstanding(
+    JSON.stringify({
+      intent: "buying",
+      propositions: [
+        {
+          id: "p1",
+          speechAct: "request",
+          action: "set_quantity",
+          target: "order.quantity",
+          topic: null,
+          field: null,
+          value: null,
+          quantity: 1,
+          rawEvidence: "chot m 1 lọ",
+          confidence: 0.99,
+        },
+        {
+          id: "p2",
+          speechAct: "question",
+          action: "answer_question",
+          target: "delivery.availability",
+          topic: "shipping",
+          field: null,
+          value: null,
+          quantity: null,
+          rawEvidence: "ship dc q1 sg khum shop?",
+          confidence: 0.98,
+        },
+        {
+          id: "p3",
+          speechAct: "question",
+          action: "answer_question",
+          target: "delivery.fee",
+          topic: "shipping",
+          field: null,
+          value: null,
+          quantity: null,
+          rawEvidence: "free shp k b?",
+          confidence: 0.98,
+        },
+      ],
+    }),
+  );
+  assert.equal(result.propositions?.length, 3);
+  assert.deepEqual(result.actions?.map((action) => action.type), [
+    "select_quantity",
+    "answer_question",
+    "answer_question",
+  ]);
+  assert.equal(result.actions?.[0]?.propositionId, "p1");
+});
+
 test("semantic parser nhận kế hoạch kiểm chứng ngắn, không phải chain-of-thought", () => {
   const result = parseSemanticUnderstanding(
     JSON.stringify({

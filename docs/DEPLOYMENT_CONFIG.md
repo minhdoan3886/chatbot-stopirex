@@ -58,6 +58,18 @@ callback của Meta App đang phục vụ Page primary.
 
 ## Product
 
+Endpoint product chuẩn hiện tại là Tailscale Funnel cố định:
+
+```text
+https://ubuntu-latitude-e5450.tail0d12f7.ts.net
+```
+
+Callback Meta phải là
+`https://ubuntu-latitude-e5450.tail0d12f7.ts.net/webhooks/meta`. Không dùng URL
+`trycloudflare.com` cho product vì Quick Tunnel có thể đổi địa chỉ hoặc mất kết
+nối. Trên host hiện tại, Funnel HTTPS mặc định chuyển vào gateway loopback; cổng
+Funnel `10000` được dành cho staging cô lập.
+
 Trên máy product, tạo file env được bảo vệ quyền đọc (hoặc dùng secret manager)
 từ mẫu:
 
@@ -70,7 +82,7 @@ Các giá trị bắt buộc phải dùng đúng bộ product gồm:
 
 - `META_ACTIVE_PAGE=primary`
 - `META_PAGE_ID`, `META_PAGE_ACCESS_TOKEN`
-- `META_PUBLIC_WEBHOOK_URL` dùng domain HTTPS cố định của product
+- `META_PUBLIC_WEBHOOK_URL=https://ubuntu-latitude-e5450.tail0d12f7.ts.net/webhooks/meta`
 - `DATABASE_URL`, `REDIS_URL`, `ADMIN_API_KEY`, `ENCRYPTION_KEY`
 
 `META_APP_ID`, `META_APP_SECRET` và `META_VERIFY_TOKEN` có thể dùng chung nếu test

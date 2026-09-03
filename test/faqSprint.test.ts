@@ -134,7 +134,8 @@ test("phản hồi khách không làm lộ thuật ngữ Knowledge nội bộ", 
   );
 
   assert.match(result.reply, /không gây ố vàng/iu);
-  assert.match(result.reply, /không gây thâm nách/iu);
+  assert.match(result.reply, /không phải sản phẩm trị thâm/iu);
+  assert.match(result.reply, /ma sát.*cạo nhổ.*kích ứng/isu);
   assert.match(result.reply, /da sạch, khô hoàn toàn/iu);
   assert.equal(result.state.handoffReason, undefined);
   assert.doesNotMatch(result.reply, /Knowledge|intent|pipeline|guardrail/iu);

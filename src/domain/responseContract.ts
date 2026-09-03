@@ -103,7 +103,9 @@ export function selectCanonicalRequiredFacts(input: {
   const asksShipping = /\b(?:ship|giao|van chuyen|freeship|free ship|mien phi giao)\b/u.test(query);
   const asksDuration = /\b(?:bao lau|may ngay|khi nao|bao gio|tan suat|may lan|thang|gio)\b/u.test(query);
   const safetyTurn = /\b(?:rat|ngua|do da|kich ung|kho tho|sung moi|sung mat|choang|cap cuu)\b/u.test(query);
-  const requestedQuantity = query.match(/(?:combo|lay|mua|gia)\s*(\d)\s*(?:lo|chai)?/u)?.[1];
+  const requestedQuantity = query.match(
+    /(?:combo|lay|mua|gia|chot|cho|dat|gui)\s*(?:m|minh|anh|chi|em)?\s*(\d)\s*(?:lo|chai)?/u,
+  )?.[1];
   const asksGift =
     /\b(?:qua|tang|uu dai|khuyen mai)\b/u.test(query) || (asksPrice && !requestedQuantity);
   const specificBundle = /body wash|sua tam/u.test(query);
@@ -127,9 +129,14 @@ export function selectCanonicalRequiredFacts(input: {
       }
     } else if (fact.kind === "shipping" && (asksShipping || asksPrice)) {
       if (/pricing-approved-options-2026-08:10/u.test(fact.key) && !/mac ca|thuong luong|followup/u.test(query)) continue;
-      if (/bodywash_bundle/u.test(fact.key) && requestedQuantity && !specificBundle) continue;
+      if (/bodywash_bundle/u.test(fact.key) && !specificBundle) continue;
+      if (specificBundle && !/bodywash_bundle/u.test(fact.key)) continue;
+      if (requestedQuantity === "1" && /\.2_5_units$/u.test(fact.key)) continue;
+      if (requestedQuantity && requestedQuantity !== "1" && /\.standard_fee$/u.test(fact.key)) continue;
       if (fact.value === true) add({ id: fact.id, kind: "shipping", text: "free_shipping" });
-      else add({ id: fact.id, kind: "shipping", text: fact.text });
+      else if (typeof fact.value === "number") {
+        add({ id: fact.id, kind: "money", text: `${fact.value.toLocaleString("vi-VN")}đ` });
+      } else add({ id: fact.id, kind: "shipping", text: fact.text });
     } else if (fact.kind === "gift" && asksGift) {
       add({ id: fact.id, kind: "gift", text: fact.text });
     } else if (fact.kind === "duration" && (asksDuration || asksShipping)) {

@@ -65,3 +65,42 @@ test("xung đột quantity dùng last-write-wins nhưng phải phát trace", () 
   assert.equal(transaction.after.selectedQuantity, 3);
   assert.deepEqual(transaction.conflicts, ["multiple_quantity_values_last_write_wins"]);
 });
+
+test("low-confidence và phone sai không được reducer commit", () => {
+  const transaction = reduceOrderTransaction(
+    { order: {} },
+    [
+      {
+        type: "set_phone",
+        phone: "0916420064",
+        evidence: "sdt ko 9 tam bay",
+        confidence: 0.4,
+        propositionId: "p-phone",
+      },
+      { type: "set_phone", phone: "0123456789", evidence: "0123456789", propositionId: "p-bad" },
+    ],
+    options,
+  );
+  assert.equal(transaction.after.order.phone, undefined);
+  assert.deepEqual(transaction.rejected.map((item) => item.reason), ["low_confidence", "invalid_phone"]);
+  assert.deepEqual(transaction.missingFields, [
+    "recipientName",
+    "phone",
+    "legacyAddress",
+    "sku",
+    "quantity",
+    "totalVnd",
+    "paymentMethod",
+  ]);
+});
+
+test("receipt phân biệt mutation accepted nhưng không làm thay đổi state", () => {
+  const transaction = reduceOrderTransaction(
+    { order: { phone: "0988111222" } },
+    [{ type: "set_phone", phone: "0988111222", evidence: "0988111222", propositionId: "p1" }],
+    options,
+  );
+  assert.equal(transaction.accepted.length, 1);
+  assert.equal(transaction.unchanged.length, 1);
+  assert.deepEqual(transaction.changedFields, []);
+});

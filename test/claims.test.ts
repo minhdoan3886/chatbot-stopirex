@@ -70,3 +70,14 @@ test("chặn tuyên bố không cồn và không có mùi trái hồ sơ", () =>
     ),
   );
 });
+
+test("chặn claim tuyệt đối về thâm, ố áo và kết quả", () => {
+  const registry = new ClaimRegistry(defaultBlockedClaims);
+  assert.throws(
+    () => registry.assertSafe("Nếu dùng đúng hướng dẫn thì sản phẩm không gây thâm nách."),
+    UnsafeClaimError,
+  );
+  assert.throws(() => registry.assertSafe("Sản phẩm không bao giờ ố vàng áo."), UnsafeClaimError);
+  assert.throws(() => registry.assertSafe("Dùng đúng là chắc chắn sẽ hết mùi."), UnsafeClaimError);
+  assert.throws(() => registry.assertSafe("Shop cam kết sẽ hết mồ hôi."), UnsafeClaimError);
+});

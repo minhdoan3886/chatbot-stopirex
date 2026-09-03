@@ -60,3 +60,59 @@ test("response consistency chặn cách nói em ghi 1 lọ khi state chưa lưu"
     /reply_claims_uncommitted_quantity_1/u,
   );
 });
+
+test("không được khai báo đã lưu field nếu reducer chưa accept mutation", () => {
+  assert.throws(
+    () =>
+      assertReplyMatchesConversationState({
+        reply: "Dạ em đã ghi nhận SĐT 0987654321 ạ.",
+        botPaused: false,
+        freeShippingApproved: false,
+        orderDraft: { phone: "0987654321" },
+        claimedSavedFields: [{ field: "phone", value: "0987654321" }],
+        acceptedOrderMutations: [],
+      }),
+    /reply_claims_uncommitted_field_phone/u,
+  );
+});
+
+test("recap không được chứa SĐT khác post-commit state", () => {
+  assert.throws(
+    () =>
+      assertReplyMatchesConversationState({
+        reply: "SĐT: 0916420064",
+        botPaused: false,
+        freeShippingApproved: false,
+        orderDraft: { phone: "0987654321" },
+      }),
+    /reply_contains_phone_not_in_committed_state/u,
+  );
+});
+
+test("field đã được reducer accept và có trong state được phép xác nhận", () => {
+  assert.doesNotThrow(() =>
+    assertReplyMatchesConversationState({
+      reply: "Dạ em đã ghi nhận SĐT 0987654321 ạ.",
+      botPaused: false,
+      freeShippingApproved: false,
+      orderDraft: { phone: "0987654321" },
+      claimedSavedFields: [{ field: "phone", value: "0987654321" }],
+      acceptedOrderMutations: [{ type: "set_phone" }],
+    }),
+  );
+});
+
+test("claimedSavedFields không được khai giá trị khác post-commit state", () => {
+  assert.throws(
+    () =>
+      assertReplyMatchesConversationState({
+        reply: "Dạ em đã cập nhật SĐT 0916420064 ạ.",
+        botPaused: false,
+        freeShippingApproved: false,
+        orderDraft: { phone: "0987654321" },
+        claimedSavedFields: [{ field: "phone", value: "0916420064" }],
+        acceptedOrderMutations: [{ type: "set_phone" }],
+      }),
+    /reply_claimed_value_mismatch_phone/u,
+  );
+});

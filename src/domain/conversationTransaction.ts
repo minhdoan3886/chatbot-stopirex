@@ -1,13 +1,27 @@
 import type { SupportedOrderQuantity } from "./conversationActions.js";
-import type { OrderDraft } from "./orders.js";
+import { missingOrderFields, type OrderDraft } from "./orders.js";
+import type { VietnameseAddress } from "./orderNormalization.js";
+import { isVietnameseMobilePhone } from "./orderNormalization.js";
 
-export type OrderMutationAction =
+type OrderMutationMetadata = {
+  propositionId?: string;
+  source?: "llm_extraction" | "deterministic_parser" | "facebook_profile" | "state";
+  confidence?: number;
+};
+
+export type OrderMutationAction = (
   | { type: "set_quantity"; quantity: SupportedOrderQuantity; evidence: string }
   | { type: "set_phone"; phone: string; evidence: string }
   | { type: "set_recipient_name"; recipientName: string; evidence: string }
-  | { type: "set_address"; address: string; operation: "replace" | "append"; evidence: string }
+  | { type: "set_address"; address: string; structured?: VietnameseAddress; operation: "replace" | "append"; evidence: string }
   | { type: "set_delivery_note"; deliveryNote: string; evidence: string }
-  | { type: "confirm_order"; confirmedAt: Date; evidence: string };
+  | { type: "confirm_order"; confirmedAt: Date; evidence: string }
+) & OrderMutationMetadata;
+
+export type OrderMutationRejection = {
+  action: OrderMutationAction;
+  reason: "low_confidence" | "missing_evidence" | "invalid_phone" | "invalid_name" | "invalid_address" | "invalid_delivery_note";
+};
 
 export type OrderTransactionState = {
   selectedQuantity?: SupportedOrderQuantity;
@@ -18,6 +32,9 @@ export type ExecutedOrderTransaction = {
   before: OrderTransactionState;
   after: OrderTransactionState;
   accepted: OrderMutationAction[];
+  rejected: OrderMutationRejection[];
+  unchanged: OrderMutationAction[];
+  missingFields: Array<ReturnType<typeof missingOrderFields>[number]>;
   conflicts: string[];
   changedFields: Array<keyof OrderDraft | "selectedQuantity">;
 };
@@ -41,8 +58,9 @@ export function reduceOrderTransaction(
     ...(current.selectedQuantity ? { selectedQuantity: current.selectedQuantity } : {}),
     order: { ...current.order },
   };
-  const accepted = reconcileOrderMutations(proposed);
-  const conflicts = collectMutationConflicts(proposed);
+  const validation = validateOrderMutations(proposed);
+  const accepted = reconcileOrderMutations(validation.accepted);
+  const conflicts = collectMutationConflicts(validation.accepted);
   const after: OrderTransactionState = {
     ...(current.selectedQuantity ? { selectedQuantity: current.selectedQuantity } : {}),
     order: { ...current.order },
@@ -96,13 +114,77 @@ export function reduceOrderTransaction(
   }
 
   assertOrderTransactionInvariant(after, accepted, options);
+  const unchanged = accepted.filter((action) => !mutationChanged(action, before, after));
   return {
     before,
     after,
     accepted,
+    rejected: validation.rejected,
+    unchanged,
+    missingFields: missingOrderFields(after.order),
     conflicts,
     changedFields: [...changedFields],
   };
+}
+
+function validateOrderMutations(actions: readonly OrderMutationAction[]): {
+  accepted: OrderMutationAction[];
+  rejected: OrderMutationRejection[];
+} {
+  const accepted: OrderMutationAction[] = [];
+  const rejected: OrderMutationRejection[] = [];
+  for (const action of actions) {
+    if (!action.evidence.trim()) {
+      rejected.push({ action, reason: "missing_evidence" });
+      continue;
+    }
+    if (action.confidence !== undefined && action.confidence < 0.75) {
+      rejected.push({ action, reason: "low_confidence" });
+      continue;
+    }
+    if (action.type === "set_phone" && !isVietnameseMobilePhone(action.phone)) {
+      rejected.push({ action, reason: "invalid_phone" });
+      continue;
+    }
+    if (
+      action.type === "set_recipient_name" &&
+      (!action.recipientName.trim() || action.recipientName.length > 80 || /\d/u.test(action.recipientName))
+    ) {
+      rejected.push({ action, reason: "invalid_name" });
+      continue;
+    }
+    if (action.type === "set_address" && !action.address.trim()) {
+      rejected.push({ action, reason: "invalid_address" });
+      continue;
+    }
+    if (action.type === "set_delivery_note" && !action.deliveryNote.trim()) {
+      rejected.push({ action, reason: "invalid_delivery_note" });
+      continue;
+    }
+    accepted.push(action);
+  }
+  return { accepted, rejected };
+}
+
+function mutationChanged(
+  action: OrderMutationAction,
+  before: OrderTransactionState,
+  after: OrderTransactionState,
+): boolean {
+  switch (action.type) {
+    case "set_quantity":
+      return before.selectedQuantity !== after.selectedQuantity;
+    case "set_phone":
+      return before.order.phone !== after.order.phone;
+    case "set_recipient_name":
+      return before.order.recipientName !== after.order.recipientName;
+    case "set_address":
+      return before.order.legacyAddress !== after.order.legacyAddress;
+    case "set_delivery_note":
+      return before.order.deliveryNote !== after.order.deliveryNote;
+    case "confirm_order":
+      return before.order.customerConfirmedAt?.getTime() !== after.order.customerConfirmedAt?.getTime();
+  }
 }
 
 function reconcileOrderMutations(actions: readonly OrderMutationAction[]): OrderMutationAction[] {

@@ -618,6 +618,9 @@ test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge th
     enabled: true,
     runner: async (prompt) => {
       prompts.push(prompt);
+      if (prompts.length > 1) {
+        return "Dạ Stopirex tập trung hỗ trợ kiểm soát mồ hôi và mùi, không phải sản phẩm trị thâm ạ. Dùng đúng cách, sản phẩm khô nhanh, không bết và không gây ố vàng áo. Combo 2 lọ giá 510.000đ, miễn phí giao về TP.HCM ạ.";
+      }
       return JSON.stringify({
         summary: "Khách hỏi hiệu quả, thâm, ố áo, giá combo 2 và giao TP.HCM",
         skill: "pricing-objection",
@@ -670,13 +673,13 @@ test("Meta brain trả đủ câu địa phương nhiều ý bằng Knowledge th
     text: "shop uii cho dỏi xí, cái lăn ni xài êm khum dạ? nách tui cơ địa mồ hôi vs thâm lém lun chẩy ướt cả áo ớ. xài cái bôi bôi này áo trắng có bị ố dính dính khôm? giá s zậy mua 2 chây có đc fs zìa sg khum sốp",
   });
 
-  assert.equal(prompts.length, 1);
+  assert.equal(prompts.length, 2);
   assert.match(prompts[0] ?? "", /510\.000đ/u);
   assert.match(prompts[0] ?? "", /không gây ố vàng/iu);
   assert.equal(response.state.decisionTrace?.selectedIntent, "price_request");
   assert.match(response.reply, /510\.000đ/u);
   assert.match(response.reply, /miễn phí giao.*TP\.HCM/iu);
-  assert.match(response.reply, /không gây thâm/iu);
+  assert.match(response.reply, /không phải sản phẩm trị thâm/iu);
   assert.doesNotMatch(response.reply, /chuyển bộ phận|chưa có đủ thông tin/iu);
 });
 

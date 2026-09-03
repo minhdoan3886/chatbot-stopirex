@@ -28,6 +28,15 @@ import {
   type SupportedOrderQuantity,
 } from "../domain/conversationActions.js";
 import { reduceOrderTransaction, type OrderMutationAction } from "../domain/conversationTransaction.js";
+import {
+  formatVietnameseAddress,
+  mergeDeliveryNotes,
+  normalizeDeliveryNotes,
+  normalizeVietnameseAddress,
+  normalizeVietnamesePhone,
+  resolveDeliveryContext,
+  type VietnameseAddress,
+} from "../domain/orderNormalization.js";
 import { planNextBestAction, type PlannedNextBestAction } from "../domain/nextBestAction.js";
 import type { ActionExecutionMode } from "../domain/actionRollout.js";
 import { assertReplyMatchesConversationState } from "../domain/responseConsistency.js";
@@ -161,6 +170,17 @@ export type ConversationMemory = {
   nextStep?: SemanticNextStep;
   phoneHistory: ConversationPhoneMemory[];
   consultationFacts: ConversationConsultationFacts;
+  salesContext?: {
+    objections: ConversationSalesObjection[];
+  };
+};
+
+export type ConversationSalesObjection = {
+  type: "price" | "effectiveness";
+  comparedWith?: string;
+  status: "open" | "resolved";
+  evidence: string;
+  sourceTurn: number;
 };
 
 export type ConversationPhoneMemory = {
@@ -196,6 +216,7 @@ export type CustomerProfileMemory = {
 
 export type LocationMemory = {
   legacyAddress?: string;
+  addressContext?: VietnameseAddress;
   evidence?: string;
   sourceTurn?: number;
   history?: Array<{
@@ -222,12 +243,22 @@ export type OrderTransactionTrace = {
   acceptedActions: Array<{ type: OrderMutationAction["type"]; evidence: string }>;
   acceptedMutations?: Array<{
     type: OrderMutationAction["type"];
+    propositionId?: string;
     evidenceRef: string;
-    source: "reconciled_order_reducer";
+    source: NonNullable<OrderMutationAction["source"]>;
+    confidence: number;
     from?: unknown;
     toMasked?: unknown;
   }>;
   changedFields: string[];
+  rejectedMutations?: Array<{
+    type: OrderMutationAction["type"];
+    propositionId?: string;
+    evidenceRef: string;
+    reason: string;
+  }>;
+  unchangedFields?: string[];
+  missingFields?: string[];
   conflicts: string[];
 };
 
@@ -362,8 +393,9 @@ export class DemoChatService {
       isBottleLongevityQuestion(text) || semantic.knowledgeIds?.includes("usage-bottle-duration") === true;
 
     if (isReset(text)) return this.reset(session.id);
+    rememberMentionedDeliveryContext(session, raw);
     rememberTurn(session, { role: "user", text: raw });
-    rememberSemanticPlan(session, semantic);
+    rememberSemanticPlan(session, semantic, raw);
     rememberCustomerConsultationFacts(session, raw);
     session.answeredTopics = [
       ...new Set([
@@ -485,12 +517,15 @@ export class DemoChatService {
       projection: observationProjection,
       candidates: observedEntityCandidates,
       raw,
+      semanticOwnedFields: actionPlan.accepted.flatMap((action) =>
+        action.type === "update_order"
+          ? Object.keys(action.fields).filter(isOrderObservationField)
+          : [],
+      ),
       acceptOrderChanges:
         orderMutationAllowed &&
         Boolean(
           actionPlan.accepted.some((action) => action.type === "update_order") ||
-            semantic.intent === "buying" ||
-            semantic.intent === "order_support" ||
             (!semanticAuthorityReady && (session.selectedQuantity || isOrderCaptureMessage(raw))),
         ),
     });
@@ -820,7 +855,11 @@ export class DemoChatService {
       // “thôi lấy 1 lọ ... đọc lại đơn”). Commit the trusted LLM action first,
       // then render the recap from the updated OrderDraft.
       if (actionPlan.quantity && actionPlan.quantity !== session.selectedQuantity) {
-        selectQuantity(session, actionPlan.quantity);
+        selectQuantity(
+          session,
+          actionPlan.quantity,
+          actionPlan.accepted.find((action) => action.type === "select_quantity"),
+        );
       }
       mergeOrderData(session, raw);
       session.lastIntent = "order_support";
@@ -1261,7 +1300,7 @@ export class DemoChatService {
         : "";
       return this.respond(
         session,
-        `Dạ dùng đúng hướng dẫn, Stopirex không gây thâm nách ạ. Mình lăn mỏng vào buổi tối khi da sạch, khô hoàn toàn; không bôi khi da còn ướt, trầy, đỏ, rát hoặc ngay sau cạo, nhổ hay wax.${clothing}`,
+        `Dạ Stopirex tập trung hỗ trợ kiểm soát mồ hôi và mùi, không phải sản phẩm trị thâm ạ. Thâm nách còn có thể liên quan đến ma sát, cạo nhổ hoặc kích ứng; mình nên lăn mỏng vào buổi tối khi da sạch, khô hoàn toàn và không dùng trên vùng đang trầy, đỏ, rát hoặc ngay sau cạo, nhổ hay wax.${clothing}`,
       );
     }
 
@@ -1482,7 +1521,11 @@ export class DemoChatService {
     ) {
       const answer = multiActionAnswer(actionPlan.answerTopics, raw, semanticSlots);
       if (actionPlan.quantity) {
-        selectQuantity(session, actionPlan.quantity);
+        selectQuantity(
+          session,
+          actionPlan.quantity,
+          actionPlan.accepted.find((action) => action.type === "select_quantity"),
+        );
         this.move(session, "agreed_to_buy");
       }
       pauseForHumanReview(session, humanHandoff?.reason ?? "Có phần câu hỏi chưa có dữ liệu được duyệt");
@@ -1573,7 +1616,11 @@ export class DemoChatService {
         approveSingleShipping(session);
       }
       const answer = multiActionAnswer(actionPlan.answerTopics, raw, semanticSlots);
-      selectQuantity(session, quantity);
+      selectQuantity(
+        session,
+        quantity,
+        actionPlan.accepted.find((action) => action.type === "select_quantity"),
+      );
       if (!canEditCreatedInboxOrder) this.move(session, "agreed_to_buy");
       session.lastIntent = "buying";
       session.activeSkill = "order-closing";
@@ -1603,7 +1650,11 @@ export class DemoChatService {
       delete session.pendingAction;
       delete session.lastDecision.pendingActionAfter;
       const quantity = actionPlan.quantity;
-      selectQuantity(session, quantity);
+      selectQuantity(
+        session,
+        quantity,
+        actionPlan.accepted.find((action) => action.type === "select_quantity"),
+      );
       if (!canEditCreatedInboxOrder) this.move(session, "agreed_to_buy");
       session.orderCollectionPaused = false;
       session.lastIntent = "buying";
@@ -2723,6 +2774,9 @@ export class DemoChatService {
           ...(candidate.conversationMemory?.consultationFacts ?? {}),
           triggers: [...(candidate.conversationMemory?.consultationFacts?.triggers ?? [])].slice(-4),
         },
+        salesContext: {
+          objections: [...(candidate.conversationMemory?.salesContext?.objections ?? [])].slice(-8),
+        },
       },
       dialogueState: {
         ...base.dialogueState,
@@ -2886,6 +2940,10 @@ export class DemoChatService {
       orderReceived: Boolean(session.pipeline === "6.Đã tạo đơn" && session.order.customerConfirmedAt),
       botPaused: session.care?.case.botPaused ?? false,
       freeShippingApproved: session.freeShippingApproved,
+      orderDraft: session.order,
+      ...(session.orderTransactionTrace?.acceptedMutations
+        ? { acceptedOrderMutations: session.orderTransactionTrace.acceptedMutations }
+        : {}),
     });
     for (const message of logicalReplies) {
       this.claims.assertSafe(message);
@@ -3000,6 +3058,9 @@ function stateOf(session: DemoSession): DemoChatState {
         ...session.conversationMemory.consultationFacts,
         triggers: [...session.conversationMemory.consultationFacts.triggers],
       },
+      salesContext: {
+        objections: (session.conversationMemory.salesContext?.objections ?? []).map((item) => ({ ...item })),
+      },
     },
     dialogueState: structuredClone(session.dialogueState),
     stateVersion: session.workflowState.version,
@@ -3113,6 +3174,7 @@ function newSession(id: string, context: DemoChatContext = {}): DemoSession {
       openQuestions: [],
       phoneHistory: [],
       consultationFacts: { triggers: [] },
+      salesContext: { objections: [] },
     },
     dialogueState: initialDialogueState(),
     workflowState: initialWorkflowStateMeta(),
@@ -3378,7 +3440,11 @@ function rememberTurn(session: DemoSession, turn: { role: "user" | "assistant"; 
   if (session.history.length > 40) session.history.splice(0, session.history.length - 40);
 }
 
-function rememberSemanticPlan(session: DemoSession, semantic: SemanticUnderstanding): void {
+function rememberSemanticPlan(
+  session: DemoSession,
+  semantic: SemanticUnderstanding,
+  raw: string,
+): void {
   if (semantic.intent) session.conversationMemory.currentGoal = semantic.intent;
   if (semantic.subject) session.conversationMemory.activeSubject = semantic.subject;
   if (semantic.nextStep) session.conversationMemory.nextStep = semantic.nextStep;
@@ -3414,7 +3480,34 @@ function rememberSemanticPlan(session: DemoSession, semantic: SemanticUnderstand
       (item) => !answered.has(normalize(item)),
     );
   }
+  if (semantic.intent === "price_objection" || semantic.intent === "efficacy_objection") {
+    const comparedWith = extractMentionedCompetitor(raw);
+    const objection: ConversationSalesObjection = {
+      type: semantic.intent === "price_objection" ? "price" : "effectiveness",
+      ...(comparedWith ? { comparedWith } : {}),
+      status: "open",
+      evidence: raw.slice(0, 180),
+      sourceTurn: session.messages + 1,
+    };
+    const salesContext = session.conversationMemory.salesContext ?? { objections: [] };
+    salesContext.objections = [
+      ...salesContext.objections.filter(
+        (item) => item.type !== objection.type || item.comparedWith !== objection.comparedWith,
+      ),
+      objection,
+    ].slice(-8);
+    session.conversationMemory.salesContext = salesContext;
+  }
   applyBeneficiaryUpdates(session, semantic.beneficiaryUpdates ?? []);
+}
+
+function extractMentionedCompetitor(raw: string): string | undefined {
+  const text = normalize(raw);
+  if (/\betiaxil\b/u.test(text)) return "Etiaxil";
+  if (/\bperspirex\b/u.test(text)) return "Perspirex";
+  if (/\bnivea\b/u.test(text)) return "Nivea";
+  if (/\bromano\b/u.test(text)) return "Romano";
+  return undefined;
 }
 
 function rememberCustomerConsultationFacts(session: DemoSession, raw: string): void {
@@ -5725,6 +5818,43 @@ function llmFailureKnowledgeAnswer(
   const text = normalize(raw);
   let topics: SemanticTopic[] | undefined;
   let intent: CustomerIntent = "product_effect";
+  const directIntent = detectDirectIntent(text);
+  if (directIntent === "price_request") {
+    const effectTopic = productEffectTopic(text, semanticSlots);
+    const answerTopics: SemanticTopic[] = effectTopic ? ["price", "effectiveness"] : ["price"];
+    return {
+      reply: multiActionAnswer(answerTopics, raw, semanticSlots),
+      knowledgeIds: [
+        "pricing-approved-options-2026-08",
+        ...(effectTopic ? ["product-comparison-traditional-rollon"] : []),
+      ],
+      intent: effectTopic ? "product_effect" : "price_request",
+    };
+  }
+  if (directIntent === "price_objection") {
+    return {
+      reply: [
+        "Dạ em hiểu mình đang cân nhắc về giá ạ. Stopirex là dòng ngăn tiết mồ hôi chuyên sâu, dùng buổi tối và sau giai đoạn làm quen thường dùng giãn cách 2–3 ngày/lần tùy tình trạng.",
+        "1 lọ hiện là 285.000đ + 30.000đ phí giao; combo 2 lọ 510.000đ, miễn phí giao. Mình muốn cân nhắc 1 lọ hay combo 2 lọ ạ?",
+      ].join("\n\n"),
+      knowledgeIds: [
+        "pricing-approved-options-2026-08",
+        "product-comparison-traditional-rollon",
+        "usage-general",
+      ],
+      intent: "price_objection",
+    };
+  }
+  if (directIntent === "safety") {
+    const answer = audienceSafetyReply(text, { slots: semanticSlots });
+    if (answer.knowledgeEntityIds.length > 0) {
+      return {
+        reply: answer.reply,
+        knowledgeIds: answer.knowledgeEntityIds,
+        intent: "safety",
+      };
+    }
+  }
   if (isBottleLongevityQuestion(text) && asksAboutProductScent(text)) {
     return {
       reply: [
@@ -6270,8 +6400,19 @@ function quote(quantity: SupportedOrderQuantity) {
   });
 }
 
-function selectQuantity(session: DemoSession, quantity: SupportedOrderQuantity): void {
-  commitOrderMutations(session, [{ type: "set_quantity", quantity, evidence: "resolved_quantity_action" }]);
+function selectQuantity(
+  session: DemoSession,
+  quantity: SupportedOrderQuantity,
+  sourceAction?: ConversationAction,
+): void {
+  commitOrderMutations(session, [{
+    type: "set_quantity",
+    quantity,
+    evidence: sourceAction?.rawEvidence ?? sourceAction?.evidence[0] ?? "resolved_quantity_action",
+    ...(sourceAction?.propositionId ? { propositionId: sourceAction.propositionId } : {}),
+    source: sourceAction?.source === "llm" ? "llm_extraction" : "deterministic_parser",
+    confidence: sourceAction?.confidence ?? 1,
+  }]);
   session.orderCollectionPaused = false;
   session.consultation = { ...session.consultation, stage: "S8.order" };
 }
@@ -6336,12 +6477,30 @@ function commitOrderMutations(
       ...(priorTrace?.acceptedMutations ?? []),
       ...transaction.accepted.map((action) => ({
         type: action.type,
+        ...(action.propositionId ? { propositionId: action.propositionId } : {}),
         evidenceRef: workflowEvidenceRef(action.evidence),
-        source: "reconciled_order_reducer" as const,
+        source: action.source ?? "deterministic_parser",
+        confidence: action.confidence ?? 1,
         from: maskedOrderMutationValue(action, transaction.before),
         toMasked: maskedOrderMutationValue(action, transaction.after),
       })),
     ],
+    rejectedMutations: [
+      ...(priorTrace?.rejectedMutations ?? []),
+      ...transaction.rejected.map((item) => ({
+        type: item.action.type,
+        ...(item.action.propositionId ? { propositionId: item.action.propositionId } : {}),
+        evidenceRef: workflowEvidenceRef(item.action.evidence),
+        reason: item.reason,
+      })),
+    ],
+    unchangedFields: [
+      ...new Set([
+        ...(priorTrace?.unchangedFields ?? []),
+        ...transaction.unchanged.map(orderMutationField),
+      ]),
+    ],
+    missingFields: [...transaction.missingFields],
     changedFields: [
       ...new Set([...(priorTrace?.changedFields ?? []), ...transaction.changedFields.map(String)]),
     ],
@@ -6386,6 +6545,17 @@ function commitOrderMutations(
     }
   }
   return transaction;
+}
+
+function orderMutationField(action: OrderMutationAction): string {
+  switch (action.type) {
+    case "set_quantity": return "quantity";
+    case "set_phone": return "phone";
+    case "set_recipient_name": return "recipientName";
+    case "set_address": return "legacyAddress";
+    case "set_delivery_note": return "deliveryNote";
+    case "confirm_order": return "customerConfirmedAt";
+  }
 }
 
 function maskedOrderMutationValue(
@@ -6466,35 +6636,101 @@ function applySemanticOrderUpdates(
   for (const action of actions) {
     if (action.type !== "update_order") continue;
     const { recipientName, phone, legacyAddress, deliveryNote } = action.fields;
-    if (phone && extractPhoneNumber(phone) === phone && raw.includes(phone)) {
-      mutations.push({ type: "set_phone", phone, evidence: raw });
+    const metadata = {
+      ...(action.propositionId ? { propositionId: action.propositionId } : {}),
+      source: "llm_extraction" as const,
+      confidence: action.confidence,
+    };
+    if (phone) {
+      const normalizedPhone = normalizeVietnamesePhone(raw);
+      if (normalizedPhone.valid && normalizedPhone.normalized) {
+        mutations.push({
+          type: "set_phone",
+          phone: normalizedPhone.normalized,
+          evidence: action.rawEvidence ?? raw,
+          ...metadata,
+        });
+      }
     }
-    if (recipientName && looksLikeOrderRecipientCandidate(recipientName)) {
+    if (
+      recipientName &&
+      looksLikeOrderRecipientCandidate(recipientName) &&
+      !isAmbiguousAddressIntroductionName(recipientName, action.rawEvidence ?? raw)
+    ) {
       mutations.push({
         type: "set_recipient_name",
         recipientName: formatRecipientName(recipientName),
-        evidence: raw,
+        evidence: action.rawEvidence ?? raw,
+        ...metadata,
       });
     }
     if (legacyAddress && looksLikeAddress(legacyAddress)) {
-      const canonical = canonicalizeLegacyAddress(legacyAddress);
+      const normalizedAddress = normalizeVietnameseAddress(
+        action.rawEvidence ?? raw,
+        session.locationMemory.addressContext,
+      );
+      if (normalizedAddress.valid && normalizedAddress.normalized) {
+        session.locationMemory.addressContext = normalizedAddress.normalized;
+      }
+      const canonical = normalizedAddress.normalized?.street
+        ? formatVietnameseAddress(normalizedAddress.normalized)
+        : canonicalizeLegacyAddress(legacyAddress);
       const replacesExisting =
         !session.order.legacyAddress ||
         /(?:đổi|doi|thay|chuyển|chuyen).{0,24}(?:địa chỉ|dia chi|giao|ship)/iu.test(raw);
-      mutations.push({
-        type: "set_address",
-        address: canonical,
-        operation: replacesExisting ? "replace" : "append",
-        evidence: raw,
-      });
+      // A region mention such as "q1 sg" is useful context, but it is not yet
+      // a confirmed shipping address and must not be committed as one.
+      if (normalizedAddress.normalized?.street || looksLikeAddress(legacyAddress) && /\d/u.test(legacyAddress)) {
+        mutations.push({
+          type: "set_address",
+          address: canonical,
+          ...(normalizedAddress.normalized ? { structured: normalizedAddress.normalized } : {}),
+          operation: replacesExisting ? "replace" : "append",
+          evidence: action.rawEvidence ?? raw,
+          ...metadata,
+        });
+      }
     }
     if (deliveryNote) {
-      mutations.push({ type: "set_delivery_note", deliveryNote, evidence: raw });
+      const notes = normalizeDeliveryNotes(action.rawEvidence ?? raw);
+      mutations.push({
+        type: "set_delivery_note",
+        deliveryNote: notes.valid && notes.normalized
+          ? mergeDeliveryNotes(session.order.deliveryNote, notes.normalized)
+          : deliveryNote,
+        evidence: action.rawEvidence ?? raw,
+        ...metadata,
+      });
     }
   }
   if (mutations.length === 0) return false;
   const transaction = commitOrderMutations(session, mutations);
   return transaction.changedFields.length > 0;
+}
+
+function isAmbiguousAddressIntroductionName(value: string, evidence: string): boolean {
+  const candidate = normalize(value);
+  const raw = normalize(evidence);
+  return /\b(?:dc|dia chi)\s+(?:m|minh)\s+la\b/u.test(raw) && /^(?:m|minh)\s+la$/u.test(candidate);
+}
+
+function rememberMentionedDeliveryContext(session: DemoSession, raw: string): void {
+  const resolved = resolveDeliveryContext(raw);
+  if (!resolved.valid || !resolved.normalized) return;
+  const current = session.locationMemory.addressContext;
+  const district = resolved.normalized.district ?? current?.district;
+  const city = resolved.normalized.city ?? current?.city;
+  session.locationMemory.addressContext = {
+    ...(current?.street ? { street: current.street } : {}),
+    ...(current?.ward ? { ward: current.ward } : {}),
+    ...(district ? { district } : {}),
+    ...(city ? { city } : {}),
+    rawParts: [
+      ...(current?.rawParts ?? []),
+      ...resolved.normalized.rawParts,
+    ].filter((value, index, all) => all.indexOf(value) === index),
+    status: "mentioned",
+  };
 }
 
 function mergeOrderData(session: DemoSession, raw: string): boolean {
@@ -6703,6 +6939,7 @@ function commitReconciledObservations(input: {
   candidates: ObservedEntityChanges;
   raw: string;
   acceptOrderChanges: boolean;
+  semanticOwnedFields?: readonly OrderObservationField[];
 }): ObservedEntityChanges {
   const { session, projection, candidates, raw } = input;
   session.customerProfile = { ...projection.customerProfile };
@@ -6746,9 +6983,19 @@ function commitReconciledObservations(input: {
     });
   }
 
+  // A field extracted by an accepted proposition is normalized and committed
+  // later by applySemanticOrderUpdates. The legacy observation parser remains
+  // useful as a cross-check, but must not write that same field first; doing so
+  // creates a double mutation and can corrupt incremental values such as an
+  // address assembled from an earlier Q1/SG mention.
+  const semanticOwnedFields = new Set(input.semanticOwnedFields ?? []);
+  const eligibleProposed = proposed.filter(
+    (action) => !semanticOwnedFields.has(orderObservationField(action)),
+  );
+
   const acceptedChanges: ObservedEntityChanges = {};
-  if (input.acceptOrderChanges && proposed.length > 0) {
-    const transaction = commitOrderMutations(session, proposed);
+  if (input.acceptOrderChanges && eligibleProposed.length > 0) {
+    const transaction = commitOrderMutations(session, eligibleProposed);
     if (transaction.changedFields.includes("phone") && session.order.phone) {
       acceptedChanges.phone = session.order.phone;
     }
@@ -6762,13 +7009,13 @@ function commitReconciledObservations(input: {
       rememberLocation(session, session.order.legacyAddress, raw);
       acceptedChanges.address = session.order.legacyAddress;
     }
-  } else if (proposed.length > 0) {
+  } else if (eligibleProposed.length > 0) {
     session.orderTransactionTrace = {
       acceptedActions: [],
       acceptedMutations: [],
       changedFields: [],
       conflicts: [
-        `observation_rejected_by_semantic_plan:${[...new Set(proposed.map((action) => action.type))].join(",")}`,
+          `observation_rejected_by_semantic_plan:${[...new Set(eligibleProposed.map((action) => action.type))].join(",")}`,
       ],
     };
   }
@@ -6777,6 +7024,24 @@ function commitReconciledObservations(input: {
     acceptedChanges.location = candidates.location;
   }
   return acceptedChanges;
+}
+
+type OrderObservationField = "recipientName" | "phone" | "legacyAddress" | "deliveryNote";
+
+function isOrderObservationField(value: string): value is OrderObservationField {
+  return ["recipientName", "phone", "legacyAddress", "deliveryNote"].includes(value);
+}
+
+function orderObservationField(action: OrderMutationAction): OrderObservationField {
+  switch (action.type) {
+    case "set_recipient_name": return "recipientName";
+    case "set_phone": return "phone";
+    case "set_address": return "legacyAddress";
+    case "set_delivery_note": return "deliveryNote";
+    case "set_quantity":
+    case "confirm_order":
+      throw new Error(`not_an_observation_field:${action.type}`);
+  }
 }
 
 function observeGlobalEntities(
@@ -7518,7 +7783,7 @@ function canonicalizeLegacyAddress(value: string): string {
   const expanded = value
     .replace(/(?:^|,\s*)HN\.?\s*$/iu, ", Hà Nội")
     .replace(
-      /([^,])\s+(Hà Nội|TP\.?\s*HCM|TP\.?\s*Hồ Chí Minh|Hồ Chí Minh|Hải Phòng|Đà Nẵng|Cần Thơ|Huế|Tỉnh\s+[\p{L}\s]+)$/iu,
+      /([\p{L}\d])\s+(Hà Nội|TP\.?\s*HCM|TP\.?\s*Hồ Chí Minh|Hồ Chí Minh|Hải Phòng|Đà Nẵng|Cần Thơ|Huế|Tỉnh\s+[\p{L}\s]+)$/iu,
       "$1, $2",
     )
     .replace(
@@ -7742,6 +8007,8 @@ function applyProfileRecipientFallback(session: DemoSession, evidence: string): 
       type: "set_recipient_name",
       recipientName: formatRecipientName(profileName),
       evidence: evidence || "Tên hồ sơ Facebook của khách đang nhắn",
+      source: "facebook_profile",
+      confidence: 1,
     },
   ]);
 }

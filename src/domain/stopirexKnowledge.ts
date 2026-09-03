@@ -240,9 +240,9 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       id: "usage-underarm-darkening-prevention",
       tenantId,
       type: "script",
-      title: "Dùng đúng hướng dẫn để không gây thâm vùng nách",
+      title: "Giải đáp thâm vùng nách và cách hạn chế kích ứng",
       content:
-        "Khi sử dụng đúng hướng dẫn, Stopirex không gây thâm nách. Khách cần lăn một lớp mỏng vào buổi tối khi vùng da sạch và khô hoàn toàn; không dùng khi da còn ướt, đang trầy, đỏ, rát hoặc ngay sau cạo, nhổ, wax hay triệt lông. Dùng sai trên vùng da đang ẩm hoặc tổn thương có thể gây khó chịu, vì vậy cần chờ da ổn rồi mới dùng.",
+        "Stopirex tập trung hỗ trợ kiểm soát mồ hôi và mùi, không phải sản phẩm trị thâm. Thâm nách có thể liên quan đến nhiều yếu tố như ma sát, cạo nhổ hoặc kích ứng. Khách cần lăn một lớp mỏng vào buổi tối khi vùng da sạch và khô hoàn toàn; không dùng khi da còn ướt, đang trầy, đỏ, rát hoặc ngay sau cạo, nhổ, wax hay triệt lông. Dùng trên vùng da đang ẩm hoặc tổn thương có thể gây khó chịu, vì vậy cần chờ da ổn rồi mới dùng.",
       sourceRow: 51,
     },
     {

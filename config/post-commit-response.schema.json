@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StopirexPostCommitResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bubbles", "claimedSavedFields"],
+  "properties": {
+    "bubbles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "items": { "type": "string", "minLength": 1, "maxLength": 650 }
+    },
+    "claimedSavedFields": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "value"],
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": ["recipientName", "phone", "legacyAddress", "deliveryNote", "quantity"]
+          },
+          "value": { "type": "string", "maxLength": 200 }
+        }
+      }
+    }
+  }
+}

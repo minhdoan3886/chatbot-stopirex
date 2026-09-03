@@ -51,6 +51,70 @@ test("hợp nhất nhiều hành động theo thứ tự trả lời rồi chọ
   assert.equal(plan.hasMultipleActions, true);
 });
 
+test("hai proposition FAQ cùng topic vẫn được giữ độc lập theo propositionId", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "ship dc q1 sg khum shop? free shp k b?",
+    semantic: semantic({
+      intent: "buying",
+      topic: "shipping",
+      asksDirectAnswer: true,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "shipping",
+          confidence: 0.99,
+          evidence: ["ship dc q1 sg khum shop?"],
+          source: "llm",
+          propositionId: "p-delivery",
+          target: "delivery.availability",
+        },
+        {
+          type: "answer_question",
+          topic: "shipping",
+          confidence: 0.99,
+          evidence: ["free shp k b?"],
+          source: "llm",
+          propositionId: "p-fee",
+          target: "delivery.fee",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: true,
+  });
+  assert.equal(plan.accepted.filter((action) => action.type === "answer_question").length, 2);
+  assert.deepEqual(
+    plan.accepted
+      .filter((action) => action.type === "answer_question")
+      .map((action) => action.propositionId),
+    ["p-delivery", "p-fee"],
+  );
+});
+
+test("FAQ proposition không tự tạo mutation đơn hàng", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "nhan hag dc kjem tra k b?",
+    semantic: semantic({
+      intent: "order_support",
+      topic: "order",
+      asksDirectAnswer: true,
+      actions: [
+        {
+          type: "answer_question",
+          topic: "order",
+          confidence: 0.99,
+          evidence: ["nhan hag dc kjem tra k b?"],
+          source: "llm",
+          propositionId: "p-inspection",
+        },
+      ],
+    }),
+    optOut: false,
+    collectingOrder: true,
+  });
+  assert.equal(plan.accepted.some((action) => action.type === "update_order"), false);
+});
+
 test("LLM được sửa số lượng đơn dù cùng câu còn hỏi tổng tiền và địa chỉ giao", () => {
   const message =
     "Thôi lấy cho anh 1 lọ thôi. Sđt anh là 0988777666. Em đọc lại xem chốt mấy lọ, tiền bao nhiêu, ship về đâu.";
@@ -88,6 +152,38 @@ test("LLM được sửa số lượng đơn dù cùng câu còn hỏi tổng ti
     ),
     false,
   );
+});
+
+test("fallback vẫn hiểu lệnh sửa tự nhiên 'lấy cho anh 1 lọ' trong câu recap", () => {
+  const message =
+    "Thôi lấy cho anh 1 lọ thôi. Sđt anh là 0988777666. Em đọc lại xem chốt mấy lọ, tiền bao nhiêu, ship về đâu.";
+  const plan = reconcileConversationActions({
+    customerMessage: message,
+    semantic: { slots: {}, status: "fallback" },
+    optOut: false,
+    collectingOrder: true,
+  });
+
+  assert.equal(plan.quantity, 1);
+  assert.ok(plan.accepted.some((action) => action.type === "select_quantity"));
+  assert.equal(
+    plan.rejected.some(
+      ({ action, reason }) => action.type === "select_quantity" && reason === "policy_verification_required",
+    ),
+    false,
+  );
+});
+
+test("fallback không biến câu hỏi giả định một lọ thành lệnh sửa đơn", () => {
+  const plan = reconcileConversationActions({
+    customerMessage: "Nếu lấy 1 lọ thì tổng tiền và phí ship bao nhiêu?",
+    semantic: { slots: {}, status: "fallback" },
+    optOut: false,
+    collectingOrder: true,
+  });
+
+  assert.equal(plan.quantity, undefined);
+  assert.equal(plan.accepted.some((action) => action.type === "select_quantity"), false);
 });
 
 test("bổ sung chủ đề chính bị thiếu khi LLM mới tạo answer action cho ý còn lại", () => {

@@ -152,7 +152,8 @@ test("E2E FAQ thực chiến: đối tượng đặc biệt, thâm nách, routin
     "Nhiều người bảo dùng ba cái lăn đặc trị này nách bị thâm đen sì, bên mình có cam kết không thâm không?",
   );
   assert.equal(t2.state.lastIntent, "product_effect");
-  assert.match(t2.reply, /dùng đúng hướng dẫn.*không gây thâm nách/isu);
+  assert.match(t2.reply, /không phải sản phẩm trị thâm/isu);
+  assert.match(t2.reply, /ma sát.*cạo nhổ.*kích ứng/isu);
   assert.match(t2.reply, /da sạch, khô hoàn toàn/isu);
   assert.equal(t2.state.handoffReason, undefined);
   assert.ok(t2.state.decisionTrace?.knowledgeEntityIds.includes("usage-underarm-darkening-prevention"));

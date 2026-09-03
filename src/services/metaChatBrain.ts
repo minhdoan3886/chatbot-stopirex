@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { retrieveKnowledgeMatches, type KnowledgeMatch } from "../domain/knowledge.js";
 import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
 import {
@@ -259,6 +260,15 @@ export class MetaChatBrain {
         topic: llmResult.topic,
         confidence: llmResult.confidence,
         actionCount: llmResult.actions?.length ?? 0,
+        propositionCount: llmResult.propositions?.length ?? 0,
+        propositions: llmResult.propositions?.map((proposition) => ({
+          id: proposition.id,
+          speechAct: proposition.speechAct,
+          action: proposition.action,
+          target: proposition.target,
+          confidence: proposition.confidence,
+          evidenceRef: evidenceRef(proposition.rawEvidence),
+        })) ?? [],
         actions: llmResult.actions?.map((action) => action.type) ?? [],
         actionTopics:
           llmResult.actions
@@ -276,6 +286,7 @@ export class MetaChatBrain {
         allowedCtaIds: allowedConversationCtas(before).map((cta) => cta.id),
         beneficiaryUpdateCount: llmResult.beneficiaryUpdates?.length ?? 0,
         groundingConfidence: llmResult.groundingConfidence,
+        claimedSavedFields: llmResult.claimedSavedFields?.map((claim) => claim.field) ?? [],
         knowledgeRetry,
         semanticKnowledgeQueryCount: semanticQueries.length,
       });
@@ -311,7 +322,14 @@ export class MetaChatBrain {
     const deliver = (
       response: DemoChatResponse,
       verdict: ResponseGuardVerdict,
-    ): DemoChatResponse => this.deliverTurn(input, before, response, verdict);
+      responseClaimedSavedFields: readonly string[] = [],
+    ): DemoChatResponse => this.deliverTurn(
+      input,
+      before,
+      response,
+      verdict,
+      responseClaimedSavedFields,
+    );
     if (this.rollout.mode !== "enabled") {
       const alternateVariant = liveVariant === "multi_action" ? "legacy" : "multi_action";
       const alternateChat = new DemoChatService();
@@ -408,7 +426,41 @@ export class MetaChatBrain {
       softStylePolicy: "warn",
       responseContract,
     });
-    if (composed.status !== "enhanced" && interpreted.draftReply?.trim()) {
+    const postReducerValidatedDraft = interpreted.claimedSavedFields
+      ? { ...composed, claimedSavedFields: interpreted.claimedSavedFields }
+      : composed;
+    const requiresPostCommitComposition = Boolean(
+      interpreted.propositions?.length &&
+      base.state.orderTransactionTrace?.acceptedMutations?.length,
+    );
+    if (requiresPostCommitComposition) {
+      const postCommitComposition = await this.llm.composePostCommit({
+        customerMessage: input.text,
+        preCommitDraft: interpreted.draftReply?.trim() || base.reply,
+        baseReply: base.reply,
+        state: base.state,
+        actions: base.state.decisionTrace?.actionPlan?.accepted ?? [],
+        ...(base.state.activeSkill ? { skillId: base.state.activeSkill } : {}),
+        knowledge,
+        ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
+        responseContract,
+      });
+      if (postCommitComposition.status === "enhanced") {
+        composed = postCommitComposition;
+        compositionSource = "llm_repair";
+      } else if (postReducerValidatedDraft.status === "enhanced") {
+        // The draft was already validated against the post-reducer state above.
+        // Keep that LLM answer (including every FAQ proposition) when the
+        // dedicated structured composer is temporarily unavailable; do not
+        // replace it with a workflow sentence that can lose part of the turn.
+        composed = {
+          ...postReducerValidatedDraft,
+          reason: `post_commit_unavailable_used_validated_draft:${postCommitComposition.reason ?? "unknown"}`,
+        };
+      } else {
+        composed = postCommitComposition;
+      }
+    } else if (composed.status !== "enhanced" && interpreted.draftReply?.trim()) {
       composed = await this.llm.repairInterpretedDraft({
         customerMessage: input.text,
         rejectedDraft: interpreted.draftReply,
@@ -765,6 +817,15 @@ export class MetaChatBrain {
         ...(base.state.orderId ? { orderId: base.state.orderId } : {}),
         botPaused: base.state.botPaused,
         freeShippingApproved: base.state.freeShippingApproved,
+        ...(base.state.orderDraft ? { orderDraft: base.state.orderDraft } : {}),
+        ...(composed.claimedSavedFields
+          ? { claimedSavedFields: composed.claimedSavedFields }
+          : !requiresPostCommitComposition && interpreted.claimedSavedFields
+            ? { claimedSavedFields: interpreted.claimedSavedFields }
+            : {}),
+        ...(base.state.orderTransactionTrace?.acceptedMutations
+          ? { acceptedOrderMutations: base.state.orderTransactionTrace.acceptedMutations }
+          : {}),
       });
     } catch (error) {
       this.logger?.log("warn", "llm_reply_state_mismatch", {
@@ -797,6 +858,7 @@ export class MetaChatBrain {
         reason: composed.reason ?? "validated",
         source: compositionSource,
       }),
+      composed.claimedSavedFields?.map((claim) => claim.field) ?? [],
     );
   }
 
@@ -805,6 +867,7 @@ export class MetaChatBrain {
     before: DemoChatState,
     response: DemoChatResponse,
     verdict: ResponseGuardVerdict,
+    responseClaimedSavedFields: readonly string[] = [],
   ): DemoChatResponse {
     const actionPlan = response.state.decisionTrace?.actionPlan;
     const trace = response.state.orderTransactionTrace;
@@ -836,22 +899,37 @@ export class MetaChatBrain {
         type: action.type,
         source: action.source,
         confidence: action.confidence,
+        propositionId: action.propositionId ?? null,
+        speechAct: action.speechAct ?? null,
+        target: action.target ?? null,
+        evidenceRefs: action.evidence.map(evidenceRef),
       })) ?? [],
       rejectedActions: actionPlan?.rejected.map((item) => ({
         type: item.action.type,
         source: item.action.source,
         reason: item.reason,
+        propositionId: item.action.propositionId ?? null,
+        evidenceRefs: item.action.evidence.map(evidenceRef),
       })) ?? [],
       acceptedOrderMutations,
+      rejectedOrderMutations: trace?.rejectedMutations ?? [],
+      unchangedOrderFields: trace?.unchangedFields ?? [],
+      missingOrderFields: trace?.missingFields ?? response.state.orderMissing,
       orderChangedFields: response.state.orderTransactionTrace?.changedFields ?? [],
       orderConflicts: response.state.orderTransactionTrace?.conflicts ?? [],
       responseOutcome: verdict.outcome,
       responseReason: verdict.reason,
       finalResponseSource: verdict.source,
       responseBubbleCount: response.replies.length,
+      responseClaimedSavedFields,
+      responseStateInvariant: verdict.outcome === "block" ? "blocked" : "passed",
     });
     return delivered;
   }
+}
+
+function evidenceRef(value: string): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`;
 }
 
 function canonicalFactIdsMentioned(

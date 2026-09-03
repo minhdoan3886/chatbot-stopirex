@@ -1,5 +1,11 @@
 import type { CustomerIntent, SemanticTopic, SemanticUnderstanding } from "./consultation.js";
 import type { IssueType } from "./customerCare.js";
+import type { PropositionSpeechAct } from "./propositions.js";
+import {
+  normalizeDeliveryNotes,
+  normalizeVietnameseAddress,
+  normalizeVietnamesePhone,
+} from "./orderNormalization.js";
 
 export type SupportedOrderQuantity = 1 | 2 | 3 | 4 | 5;
 
@@ -20,6 +26,10 @@ type ActionBase = {
   confidence: number;
   evidence: string[];
   source: "llm" | "guardrail" | "state";
+  propositionId?: string;
+  speechAct?: PropositionSpeechAct;
+  rawEvidence?: string;
+  target?: string;
 };
 
 export type ConversationAction =
@@ -90,11 +100,9 @@ export function reconcileConversationActions(input: {
       const orderField = canonicalOrderUpdateField(candidate.field);
       if (orderField) {
         return {
+          ...candidate,
           type: "update_order",
           fields: groundedOrderUpdateFields({ [orderField]: candidate.value }, raw),
-          confidence: candidate.confidence,
-          evidence: candidate.evidence,
-          source: candidate.source,
         };
       }
     }
@@ -418,8 +426,20 @@ export function reconcileConversationActions(input: {
   // A price/ship mention is not allowed to erase a high-confidence quantity
   // correction that the LLM grounded verbatim in an active order. Without
   // that trusted linguistic decision, the old policy guard remains intact.
+  const explicitPurchaseMatch = /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+cho)?(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:combo\s*)?(?:[1-5]|mot|hai|ba|bon|nam)\s+lo\b/.exec(
+    text,
+  );
+  const explicitUnconditionalPurchase =
+    explicitQuantity !== undefined &&
+    explicitPurchaseMatch?.index !== undefined &&
+    !/(?:^|\b)(?:neu|gia su|truong hop)\b/.test(text.slice(0, explicitPurchaseMatch.index));
+  const explicitCorrectionWithRecap =
+    input.collectingOrder &&
+    explicitUnconditionalPurchase &&
+    /\b(?:doc lai|nhac lai|xem lai|check lai|kiem tra lai|tom tat|tong ket)\b/.test(text);
   const quantityPolicyQuestion =
     isQuantityPolicyQuestion(text) &&
+    !explicitCorrectionWithRecap &&
     !(input.collectingOrder && trustedLlmQuantity !== undefined) &&
     !groundedLlmPurchaseProposition;
   if (quantityPolicyQuestion) {
@@ -713,29 +733,52 @@ function groundedOrderUpdateFields(
 ): Record<string, string> {
   const allowed = new Set(["recipientName", "phone", "legacyAddress", "deliveryNote"]);
   const normalizedMessage = normalize(customerMessage);
-  const digitGroups: string[] = [...(customerMessage.match(/\d+/gu) ?? [])];
-  return Object.fromEntries(
-    Object.entries(fields).filter(([field, rawValue]) => {
-      if (!allowed.has(field)) return false;
-      const value = rawValue.trim();
-      if (!value) return false;
-      if (field === "phone") {
-        return /^0\d{9}$/u.test(value) && digitGroups.includes(value);
-      }
+  const result: Record<string, string> = {};
+  for (const [field, rawValue] of Object.entries(fields)) {
+    if (!allowed.has(field)) continue;
+    const value = rawValue.trim();
+    if (!value) continue;
+    if (field === "phone") {
+      const phone = normalizeVietnamesePhone(customerMessage);
+      if (phone.valid && phone.normalized) result.phone = phone.normalized;
+      continue;
+    }
+    if (field === "recipientName") {
       const normalizedValue = normalize(value);
-      if (!normalizedValue || !normalizedMessage.includes(normalizedValue)) return false;
-      if (field === "recipientName") {
-        return value.length <= 50 && /^[\p{L}\s]+$/u.test(value) && value.trim().split(/\s+/u).length <= 6;
+      const ambiguousAddressLead =
+        /\b(?:dc|dia chi)\s+(?:m|minh)\s+la\b/u.test(normalizedMessage) &&
+        /^(?:m|minh)\s+la$/u.test(normalizedValue);
+      if (
+        !ambiguousAddressLead &&
+        normalizedValue &&
+        normalizedMessage.includes(normalizedValue) &&
+        value.length <= 50 &&
+        /^[\p{L}\s]+$/u.test(value) &&
+        value.trim().split(/\s+/u).length <= 6
+      ) {
+        result.recipientName = value;
       }
-      if (field === "legacyAddress") {
-        return (
-          value.length <= 160 &&
-          /\d|\b(?:duong|pho|ngo|thon|phuong|xa|quan|huyen|tinh|ha noi)\b/u.test(normalizedValue)
-        );
+      continue;
+    }
+    if (field === "legacyAddress") {
+      const address = normalizeVietnameseAddress(customerMessage);
+      const normalizedValue = normalize(value);
+      if (
+        address.valid ||
+        (normalizedMessage.includes(normalizedValue) &&
+          /\d|\b(?:duong|pho|ngo|thon|phuong|xa|quan|huyen|tinh|ha noi)\b/u.test(normalizedValue))
+      ) {
+        result.legacyAddress = value.slice(0, 200);
       }
-      return value.length <= 160;
-    }),
-  );
+      continue;
+    }
+    if (field === "deliveryNote") {
+      const notes = normalizeDeliveryNotes(customerMessage);
+      if (notes.valid && notes.normalized) result.deliveryNote = notes.normalized.join("; ");
+      else if (normalizedMessage.includes(normalize(value))) result.deliveryNote = value.slice(0, 160);
+    }
+  }
+  return result;
 }
 
 function inferredAnswerTopic(
@@ -839,7 +882,7 @@ function semanticAuthorityReady(semantic: SemanticUnderstanding): boolean {
 
 function extractExplicitPurchaseQuantity(text: string): SupportedOrderQuantity | undefined {
   const numeric = text.match(
-    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:combo\s*)?([1-5])\s+lo\b/,
+    /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+cho)?(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:combo\s*)?([1-5])\s+lo\b/,
   )?.[1];
   if (numeric) return Number(numeric) as SupportedOrderQuantity;
   const words: ReadonlyArray<[RegExp, SupportedOrderQuantity]> = [
@@ -848,17 +891,17 @@ function extractExplicitPurchaseQuantity(text: string): SupportedOrderQuantity |
     [/\bba\s+lo\b/, 3],
   ];
   for (const [pattern, quantity] of words) {
-    if (pattern.test(text) && /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)\b/.test(text)) return quantity;
+    if (pattern.test(text) && /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)\b/.test(text)) return quantity;
   }
   if (
-    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:2|hai)\s+lo\b|\b(?:lay|chon|chot|mua)\s+combo\b/.test(
+    /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+cho)?(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:2|hai)\s+lo\b|\b(?:lay|chon|chot|mua)\s+combo\b/.test(
       text,
     )
   ) {
     return 2;
   }
   if (
-    /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:1|mot)\s+lo\b/.test(text)
+    /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+cho)?(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:1|mot)\s+lo\b/.test(text)
   ) {
     return 1;
   }
@@ -899,7 +942,7 @@ function latestPurchaseDecision(text: string): "select" | "decline" | undefined 
     {
       kind: "select",
       pattern:
-        /(?:^|\b)(?:cho|gui|lay|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:(?:[1-5]|mot|hai|ba|bon|nam)\s+lo|combo)\b/gu,
+        /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+cho)?(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\s*(?:(?:[1-5]|mot|hai|ba|bon|nam)\s+lo|combo)\b/gu,
     },
     {
       kind: "decline",
@@ -951,7 +994,9 @@ function rejectAccepted(
 function deduplicate(actions: readonly ConversationAction[]): ConversationAction[] {
   const seen = new Set<string>();
   return actions.filter((action) => {
-    const key = `${action.type}:${
+    const key = action.propositionId
+      ? `proposition:${action.propositionId}`
+      : `${action.type}:${
       action.type === "select_quantity"
         ? action.quantity
         : action.type === "answer_question"

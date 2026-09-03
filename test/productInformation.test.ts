@@ -73,7 +73,7 @@ test("tab sản phẩm dùng cùng knowledge và catalog mà chatbot đang sử 
   assert.equal(
     snapshot.knowledge
       .find((item) => item.id === "usage-underarm-darkening-prevention")
-      ?.content.includes("không gây thâm nách"),
+      ?.content.includes("không phải sản phẩm trị thâm"),
     true,
   );
   assert.equal(

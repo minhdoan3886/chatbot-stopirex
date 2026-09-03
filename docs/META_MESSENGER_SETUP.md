@@ -81,6 +81,12 @@ Sao chép URL `https://....trycloudflare.com` mà lệnh trả về rồi nối 
 API demo và các endpoint nội bộ trên cổng 8080 không được đưa ra Internet. URL
 Quick Tunnel thay đổi mỗi lần khởi động; production cần domain/tunnel cố định.
 
+Product hiện dùng Tailscale Funnel cố định, không dùng Quick Tunnel:
+
+```text
+https://ubuntu-latitude-e5450.tail0d12f7.ts.net/webhooks/meta
+```
+
 ## 4. Điền trên màn hình Meta trong ảnh
 
 Tại **1. Đặt cấu hình webhook**:

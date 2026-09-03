@@ -2,6 +2,66 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DemoChatService } from "../src/services/demoChat.js";
 
+test("LLM hết quota vẫn trả đủ giá và mồ hôi từ Knowledge đã duyệt", () => {
+  const chat = new DemoChatService();
+  const fallback = chat.approvedKnowledgeFallback(
+    "Báo giá giúp mình, mình ra mồ hôi nách nhiều thì dùng có đỡ không?",
+  );
+
+  assert.ok(fallback);
+  assert.match(fallback.reply, /1 lọ.*285\.000đ/isu);
+  assert.match(fallback.reply, /kiểm soát.*mồ hôi/isu);
+  assert.ok(fallback.knowledgeIds.includes("pricing-approved-options-2026-08"));
+  assert.ok(fallback.knowledgeIds.includes("product-comparison-traditional-rollon"));
+});
+
+test("LLM hết quota vẫn xử lý băn khoăn giá bằng dữ kiện chuẩn", () => {
+  const chat = new DemoChatService();
+  const fallback = chat.approvedKnowledgeFallback(
+    "Giá cao quá, chỗ khác rẻ hơn nhiều mà cũng là lăn nách.",
+  );
+
+  assert.ok(fallback);
+  assert.equal(fallback.intent, "price_objection");
+  assert.match(fallback.reply, /285\.000đ.*30\.000đ.*510\.000đ/isu);
+  assert.doesNotMatch(fallback.reply, /chuyển bộ phận liên quan/iu);
+});
+
+test("LLM hết quota vẫn trả đúng cảnh báo dành cho phụ nữ mang thai", () => {
+  const chat = new DemoChatService();
+  const fallback = chat.approvedKnowledgeFallback("Vợ mình đang mang thai thì dùng được không?");
+
+  assert.ok(fallback);
+  assert.equal(fallback.intent, "safety");
+  assert.match(fallback.reply, /mang thai.*tham khảo ý kiến bác sĩ/isu);
+  assert.ok(fallback.knowledgeIds.includes("audience-pregnancy"));
+});
+
+test("LLM hết quota vẫn sửa combo 2 xuống 1 lọ và recap từ state đã commit", () => {
+  const chat = new DemoChatService();
+  const sessionId = "quota-order-correction";
+  chat.chat(
+    sessionId,
+    "Mình lấy combo 2 lọ. Tên Nguyễn Văn Anh, SĐT 0911222333, giao 12 Nguyễn Trãi, Phường Bến Thành, Quận 1, TP.HCM",
+    { slots: {}, status: "fallback" },
+  );
+
+  const corrected = chat.chat(
+    sessionId,
+    "Thôi lấy cho anh 1 lọ thôi. Sđt anh là 0988777666. Em đọc lại xem chốt mấy lọ, tiền bao nhiêu, ship về đâu.",
+    { slots: {}, status: "fallback" },
+  );
+
+  assert.equal(corrected.state.selectedQuantity, 1);
+  assert.equal(corrected.state.orderDraft?.quantity, 1);
+  assert.equal(corrected.state.orderDraft?.totalVnd, 315_000);
+  assert.equal(corrected.state.orderDraft?.phone, "0988777666");
+  assert.equal(corrected.state.orderDraft?.recipientName, "Nguyễn Văn Anh");
+  assert.match(corrected.state.orderDraft?.legacyAddress ?? "", /12 Nguyễn Trãi/iu);
+  assert.match(corrected.reply, /1 lọ.*315\.000đ.*0988777666.*12 Nguyễn Trãi/isu);
+  assert.doesNotMatch(corrected.reply, /combo 2|510\.000đ/iu);
+});
+
 test("hoàn tiền không hiệu quả: hủy sản phẩm nên không yêu cầu vỏ hộp hoặc gửi trả", () => {
   const chat = new DemoChatService();
   const result = chat.chat(

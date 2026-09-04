@@ -1155,6 +1155,25 @@ test("hỏi chương trình khi đang thu đơn không bị ghi nhầm 75k thàn
   assert.doesNotMatch(result.reply, /đã ghi nhận thông tin vừa gửi/i);
 });
 
+test("LLM gọi combo tiết kiệm là promotion vẫn dùng bảng giá và không handoff", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat("combo-saving-semantic", "có combo nào tiết kiệm hơn không", {
+    intent: "promotion_inquiry",
+    topic: "promotion",
+    confidence: 0.99,
+    asksDirectAnswer: true,
+    evidence: ["combo nào tiết kiệm hơn"],
+    slots: {},
+  });
+
+  assert.equal(result.state.lastIntent, "price_request");
+  assert.equal(result.state.pipeline, "3.Đã báo giá");
+  assert.notEqual(result.state.consultationStage, "H.handoff");
+  assert.equal(result.state.handoffReason, undefined);
+  assert.match(result.reply, /285\.000đ/u);
+  assert.match(result.reply, /510\.000đ/u);
+});
+
 test("câu hỏi trực tiếp từ LLM được ưu tiên hơn rule thu đơn theo chữ số", () => {
   const chat = new DemoChatService();
   const sessionId = "semantic-before-order-data";
@@ -2976,7 +2995,7 @@ test("phần phường quận chưa rõ được hỏi lại đúng dữ liệu 
   assert.equal(unclear.state.decisionTrace?.selectedRoute, "clarification");
   assert.equal(unclear.state.orderFlowStatus, "paused");
   assert.match(unclear.reply, /“thanh xuan trung thanh xuan”/i);
-  assert.match(unclear.reply, /Phường\/xã: …; Quận\/huyện: …/i);
+  assert.match(unclear.reply, /Phường\/xã: …\. Quận\/huyện: …/i);
   assert.doesNotMatch(unclear.reply, /hỏi về sản phẩm|tiếp tục đơn/i);
 
   const clarified = chat.chat(

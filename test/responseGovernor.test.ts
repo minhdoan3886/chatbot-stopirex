@@ -44,6 +44,7 @@ test("governor không cắt mất giá combo và CTA trong giới hạn 500 ký 
   const reply = result.replies.join("\n\n");
   assert.match(reply, /510\.000đ/u);
   assert.match(reply, /muốn chọn 1 lọ/u);
+  assert.match(reply, /Dạ giá hiện tại:\n• 1 lọ:/u);
   assert.equal(result.truncated, false);
 });
 
@@ -57,4 +58,18 @@ test("câu hỏi mới không bị coi là câu trả lời cho chủ đề đan
 
 test("cách nói cả 2 được nhận diện là câu trả lời cho chủ đề triệu chứng", () => {
   assert.deepEqual(inferAnsweredTopicFromMessage("cả 2", "symptom"), ["symptom"]);
+});
+
+test("governor đổi dấu chấm phẩy trước khi gửi khách", () => {
+  const result = governCustomerResponse({
+    replies: [
+      "Dạ mình lăn một lớp mỏng vào buổi tối trên da sạch và khô hoàn toàn; nếu vừa cạo nách thì đợi da hết rát rồi mới dùng để da dễ chịu hơn nhé.",
+    ],
+    maxCharacters: 200,
+  });
+  const reply = result.replies.join("\n\n");
+
+  assert.doesNotMatch(reply, /;/u);
+  assert.match(reply, /hoàn toàn\. nếu vừa cạo nách/u);
+  assert.equal(result.truncated, false);
 });

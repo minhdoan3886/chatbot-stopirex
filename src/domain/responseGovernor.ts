@@ -59,7 +59,7 @@ export function governCustomerResponse(input: ResponseGovernorInput): GovernedRe
     truncated = compacted.truncated;
   }
   const maxBubbles = input.maxBubbles ?? DEFAULT_MAX_BUBBLES;
-  replies = mergeToBubbleLimit(replies, maxBubbles);
+  replies = mergeToBubbleLimit(replies, maxBubbles).map(normalizeCustomerPunctuation);
 
   const askedTopics = replies
     .map(questionTopic)
@@ -180,6 +180,16 @@ function splitBlocks(value: string): string[] {
   return value.split(/\n\s*\n+/u);
 }
 
+function normalizeCustomerPunctuation(value: string): string {
+  return value
+    .replace(/[^\S\r\n]*;[^\S\r\n]*/gu, ". ")
+    .replace(/\.{2,}/gu, ".")
+    .split("\n")
+    .map((line) => line.replace(/[^\S\r\n]+/gu, " ").trim())
+    .join("\n")
+    .trim();
+}
+
 function keepOnlyLastQuestion(blocks: string[]): string[] {
   const questionIndexes = blocks
     .map((block, index) => (/[?？]/u.test(block) ? index : -1))
@@ -277,7 +287,11 @@ function compactSentences(value: string, budget: number, keepQuestion = false): 
   }
   if (result) return result;
   const suffix = keepQuestion ? "?" : "…";
-  return `${value.slice(0, Math.max(1, budget - suffix.length)).trimEnd()}${suffix}`;
+  const available = Math.max(1, budget - suffix.length);
+  const candidate = value.slice(0, available);
+  const wordBoundary = candidate.lastIndexOf(" ");
+  const safeSlice = wordBoundary >= Math.floor(budget * 0.5) ? candidate.slice(0, wordBoundary) : candidate;
+  return `${safeSlice.trimEnd()}${suffix}`;
 }
 
 function totalCharacters(replies: readonly string[]): number {

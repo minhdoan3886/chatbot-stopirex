@@ -798,7 +798,10 @@ export class MetaChatBrain {
       ];
     }
     const activeSkill = base.state.activeSkill ? conversationSkills[base.state.activeSkill] : undefined;
-    const responseCharacterBudget = activeSkill?.maxCharacters ?? 360;
+    // The model already writes to the tighter skill budget. Keep a small
+    // outbound safety margin so natural, grounded wording is not mechanically
+    // cut mid-thought after composition.
+    const responseCharacterBudget = Math.max(360, activeSkill?.maxCharacters ?? 0);
     const responseBubbleBudget = activeSkill?.maxBubbles ?? 2;
     let governed = governCustomerResponse({
       replies: composed.replies ?? [composed.reply],

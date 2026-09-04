@@ -2139,6 +2139,21 @@ export class DemoChatService {
         "Dạ em là trợ lý tư vấn tự động của Stopirex ạ.\n\nEm có thể hỗ trợ mình về sản phẩm, cách dùng, giá và đơn hàng. Nội dung nào cần kiểm tra thêm, em sẽ chuyển bộ phận liên quan xác minh giúp mình.",
       );
     }
+    if (directIntent === "promotion_inquiry" && isComboSavingsQuestion(text)) {
+      // “Combo nào tiết kiệm hơn” asks for the approved catalog options, not
+      // for verification of an unknown campaign. Keep the LLM-owned wording,
+      // but normalize this decision-critical route so a valid price question
+      // cannot open an unnecessary human-review case.
+      overrideDecisionClassification(
+        session,
+        "price_request",
+        "price",
+        [],
+        "Câu hỏi combo tiết kiệm được đối chiếu với bảng giá đã duyệt, không phải ưu đãi chưa xác minh.",
+      );
+      const continuation = showPrice(session);
+      return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
+    }
     if (directIntent === "promotion_inquiry") {
       session.lastIntent = "promotion_inquiry";
       if (isUnverifiedGiftClaim(text)) {

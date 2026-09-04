@@ -7,13 +7,14 @@ COPY package*.json ./
 RUN npm ci --include=dev
 COPY . .
 RUN npm run build
+RUN npm prune --omit=dev
 
 FROM node:20-alpine
 RUN apk add --no-cache curl procps
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
-RUN npm ci --omit=dev
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/config ./config
 COPY --from=build /app/migrations ./migrations

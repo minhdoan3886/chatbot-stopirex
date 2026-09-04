@@ -13,6 +13,7 @@ import {
   type LlmUsageTelemetry,
 } from "../src/services/codexLlm.js";
 import type { DemoChatState } from "../src/services/demoChat.js";
+import { buildWorkflowResponseContract } from "../src/domain/responseContract.js";
 
 const state: DemoChatState = {
   mode: "sales",
@@ -1234,6 +1235,60 @@ test("bảng giá chung đầy đủ, chia hai khối và có câu hỏi nối t
   assert.equal(result.reply, reply);
 });
 
+test("bảng giá chung không được tự mở thêm combo 4–5 lọ", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const baseReply = [
+    "Dạ giá hiện tại:",
+    "• 1 lọ: 285.000đ + 30.000đ phí giao.",
+    "• Combo 2 lọ: 510.000đ, miễn phí giao.",
+    "• Combo 3 lọ: 750.000đ, miễn phí giao.",
+    "• Quà tặng: đơn từ 2 lọ trở lên được tặng 1 túi đa năng vải dệt Stopirex.",
+    "",
+    "Combo chăm sóc mùi cơ thể:",
+    "• 1 lăn Stopirex + 1 chai Herbal Body Wash 500ml: 525.000đ, miễn phí giao.",
+    "• Herbal Body Wash hiện chưa bán lẻ.",
+    "Anh/chị muốn chọn phương án mấy lọ ạ?",
+  ].join("\n");
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "giá bao nhiêu vậy",
+    draftReply: `${baseReply}\n• Combo 4 lọ: 1.000.000đ.\n• Combo 5 lọ: 1.250.000đ.`,
+    baseReply,
+    state: { ...state, pendingQuestionTopic: "quantity" },
+    knowledge: [
+      {
+        id: "pricing-approved-options-2026-08",
+        title: "Bảng giá đầy đủ",
+        content: `${baseReply}\nCombo 4 lọ: 1.000.000đ. Combo 5 lọ: 1.250.000đ.`,
+      },
+    ],
+    knowledgeIds: ["pricing-approved-options-2026-08"],
+  });
+
+  assert.equal(composed.status, "fallback");
+  assert.equal(composed.reason, "critical_direction_guard");
+  assert.doesNotMatch(composed.reply, /Combo [45] lọ/iu);
+});
+
+test("response contract không cho LLM đổi CTA chọn số lượng thành hỏi lại triệu chứng", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const baseReply = "Combo 2 lọ: 510.000đ. Anh/chị muốn chọn phương án mấy lọ ạ?";
+  const responseContract = buildWorkflowResponseContract({
+    state: { mode: "sales", botPaused: false, orderMissing: [] },
+    authoritativeReply: baseReply,
+  });
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "có combo nào tiết kiệm hơn không",
+    draftReply: "Combo 2 lọ: 510.000đ. Mình khó chịu chủ yếu vì mồ hôi làm ướt áo hay mùi cơ thể ạ?",
+    baseReply,
+    state: { ...state, pendingQuestionTopic: "quantity" },
+    responseContract,
+  });
+
+  assert.equal(composed.status, "fallback");
+  assert.equal(composed.reason, "direction_guard");
+  assert.match(composed.reply, /muốn chọn phương án mấy lọ/iu);
+});
+
 test("LLM-first giữ câu grounded đúng dù base regex đang trả sai chủ đề", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const result = bridge.adoptInterpretedDraft({
@@ -1574,7 +1629,7 @@ test("single-pass chặn câu xưng hô lặp khó hiểu", () => {
   });
 
   assert.equal(composed.status, "fallback");
-  assert.equal(composed.reason, "advisor_voice_guard");
+  assert.equal(composed.reason, "critical_direction_guard");
 });
 
 test("single-pass chặn CTA lặp mình ở câu xác nhận đơn", () => {
@@ -1605,7 +1660,7 @@ test("single-pass chặn CTA lặp mình ở câu xác nhận đơn", () => {
   });
 
   assert.equal(composed.status, "fallback");
-  assert.equal(composed.reason, "advisor_voice_guard");
+  assert.equal(composed.reason, "critical_direction_guard");
 });
 
 test("single-pass chặn câu xin dữ liệu có xưng hô lặp", () => {
@@ -1619,7 +1674,7 @@ test("single-pass chặn câu xin dữ liệu có xưng hô lặp", () => {
   });
 
   assert.equal(composed.status, "fallback");
-  assert.equal(composed.reason, "advisor_voice_guard");
+  assert.equal(composed.reason, "critical_direction_guard");
 });
 
 test("single-pass phải đọc đúng tổng tiền đã có trong state", () => {

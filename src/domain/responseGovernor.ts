@@ -182,7 +182,11 @@ function splitBlocks(value: string): string[] {
 
 function normalizeCustomerPunctuation(value: string): string {
   return value
-    .replace(/[^\S\r\n]*;[^\S\r\n]*/gu, ". ")
+    .replace(
+      /[^\S\r\n]*;[^\S\r\n]*(\p{L})/gu,
+      (_, letter: string) => `. ${letter.toLocaleUpperCase("vi-VN")}`,
+    )
+    .replace(/[^\S\r\n]*;/gu, ".")
     .replace(/\.{2,}/gu, ".")
     .split("\n")
     .map((line) => line.replace(/[^\S\r\n]+/gu, " ").trim())

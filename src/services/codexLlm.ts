@@ -650,6 +650,9 @@ export class CodexLlmBridge {
       assertCriticalDirectionsPreserved(input.customerMessage, input.baseReply, reply, input.state);
       if (input.responseContract) {
         assertRequiredResponseFactsPresent(input.responseContract.factPolicy.mustIncludeFacts, reply);
+        if (questionTopic(input.baseReply) === "quantity") {
+          assertConversationDirectionPreserved(input.baseReply, reply, input.state);
+        }
       } else {
         assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply, input.state);
       }
@@ -767,6 +770,9 @@ export class CodexLlmBridge {
       assertCurrentPriceStatusGrounded(input.customerMessage, reply);
       if (input.responseContract) {
         assertRequiredResponseFactsPresent(input.responseContract.factPolicy.mustIncludeFacts, reply);
+        if (questionTopic(input.baseReply) === "quantity") {
+          assertConversationDirectionPreserved(input.baseReply, reply, input.state);
+        }
       }
       assertCustomerAdvisorVoice(input.customerMessage, reply);
       assertHelpfulContentFreeReply(input.customerMessage, reply);
@@ -3261,6 +3267,16 @@ function assertCriticalDirectionsPreserved(
     error.name = "CriticalDirectionError";
     throw error;
   }
+  const asksExtendedCombo = /\b(?:4|5|bon|nam)\s*(?:lo|hop)\b/u.test(normalizedMessage);
+  if (
+    isApprovedPriceCatalogBase(baseReply) &&
+    !asksExtendedCombo &&
+    /\bcombo\s*[45]\s*lọ(?=\s|[.,:;!?]|$)/iu.test(generatedReply)
+  ) {
+    const error = new Error("LLM tự mở rộng bảng giá chung sang combo 4–5 lọ");
+    error.name = "CriticalDirectionError";
+    throw error;
+  }
   const requiredPatterns = [
     {
       pattern: /chuyển (?:nhân viên|bộ phận liên quan)/iu,
@@ -3378,7 +3394,7 @@ function assertCustomerAdvisorVoice(customerMessage: string, generatedReply: str
     /\b(mình|em|anh|chị)\s+(?:gửi|cho|nhắn|kiểm tra|xem)\b[^.?!\n]{0,30}\b\1\b/iu.test(generatedReply)
   ) {
     const error = new Error("LLM tạo câu xưng hô lặp và khó hiểu");
-    error.name = "AdvisorVoiceError";
+    error.name = "CriticalDirectionError";
     throw error;
   }
   if (

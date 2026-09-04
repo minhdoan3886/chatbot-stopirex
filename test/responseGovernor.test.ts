@@ -70,6 +70,6 @@ test("governor đổi dấu chấm phẩy trước khi gửi khách", () => {
   const reply = result.replies.join("\n\n");
 
   assert.doesNotMatch(reply, /;/u);
-  assert.match(reply, /hoàn toàn\. nếu vừa cạo nách/u);
+  assert.match(reply, /hoàn toàn\. Nếu vừa cạo nách/u);
   assert.equal(result.truncated, false);
 });

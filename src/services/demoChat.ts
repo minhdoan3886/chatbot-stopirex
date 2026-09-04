@@ -86,6 +86,7 @@ import {
   questionTopic,
   type ConversationTopic,
 } from "../domain/responseGovernor.js";
+import { assertStopirexResponseStyle } from "../domain/responseStylePolicy.js";
 import { extractRequiredResponseFacts } from "../domain/responseContract.js";
 import {
   dialogueModeFor,
@@ -729,6 +730,11 @@ export class DemoChatService {
     }
 
     if (factResponsePlan) {
+      assertStopirexResponseStyle({
+        customerMessage: raw,
+        response: factResponsePlan.reply,
+        strictFactResponse: true,
+      });
       if (
         session.care &&
         (factResponsePlan.dismissCare ||
@@ -5227,7 +5233,7 @@ function audienceSafetyReply(
     answers.push({
       reply: asksDarkening
         ? "Dạ Stopirex có công thức dịu nhẹ, phù hợp với da nhạy cảm khi dùng đúng hướng dẫn nên mình có thể yên tâm hơn ạ. Mình lăn một lớp mỏng vào buổi tối khi da sạch, khô; không dùng trên da đang trầy, rát hoặc ngứa và chờ ít nhất 24 giờ sau cạo hoặc wax. Nếu da khó chịu hay đổi màu, mình tạm ngưng và nhắn bên em kiểm tra nhé ạ."
-        : "Dạ nếu sau khi lăn mà vùng da xuất hiện rát, ngứa hoặc đỏ, mình nên tạm ngưng sử dụng và không lăn lại khi da còn khó chịu. Mình nhắn lại bên em để kiểm tra tình trạng cụ thể trước khi dùng tiếp nhé ạ.",
+        : "À, nếu sau khi lăn mà da bị rát, ngứa hoặc đỏ thì mình nên tạm ngưng sử dụng nha. Đợi da hết khó chịu rồi nhắn bên em kiểm tra trước khi dùng lại.",
       knowledgeEntityIds: ["safety-irritation-hypothetical"],
     });
   }

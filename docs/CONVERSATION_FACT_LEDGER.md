@@ -40,6 +40,22 @@ cũ nhưng bản cũ vẫn còn trong lịch sử với liên kết `supersededB
 6. Khi Fact Ledger đã tạo câu trả lời kiểm chứng chủ thể, lớp compose không được
    viết lại thành một chủ thể/sản phẩm khác.
 
+## Internal truth và lời khách nhìn thấy
+
+Fact Ledger giữ đầy đủ `current`, `superseded`, subject, source và evidence để
+kiểm toán. Response Style Policy chỉ nhận sự thật hiện hành cần cho lượt trả lời;
+không được mô tả cách hệ thống ghi nhớ hoặc thay thế fact.
+
+Ví dụ, internal truth có thể giữ cả lịch gym cũ và mới. Khách chỉ thấy:
+“Oke, giờ mình gym sáng 3, 5, 7 nha.” Các cụm như “lịch cũ không còn hiệu lực”,
+“em cập nhật state”, “tách hai trường hợp” hoặc “điều này không xóa thông tin”
+không được phép xuất hiện trong câu Fact Ledger.
+
+Lượt thông thường ưu tiên 1–3 câu ngắn, không dùng dấu chấm phẩy và không recap
+toàn bộ case. Chỉ câu hỏi recap/tổng kết/so sánh rõ ràng mới được lấy nhiều vùng
+dữ kiện cùng lúc. Prompt LLM và deterministic response cùng dùng một policy;
+runtime guard chặn câu làm lộ thao tác memory.
+
 ## Kiểm thử
 
 ```bash
@@ -52,3 +68,10 @@ Scenario 5 kiểm tra tiếng miền Nam, viết tắt, correction lịch gym v�
 ứng của bạn. Scenario 6 kiểm tra tiếng vùng miền, sản phẩm khác, review copy và
 sửa thời điểm cạo/wax. Smoke test chỉ chạy hội thoại trong process; nó không gửi
 tin ra Meta.
+
+Hai suite được tách riêng:
+
+- `contextMemoryRegression.test.ts`: kiểm correctness của state, subject,
+  correction và care routing.
+- `contextNaturalness.test.ts`: kiểm không lộ meta-memory, không recap thừa,
+  không dùng dấu chấm phẩy, độ dài lượt thường và phản ứng hội thoại tự nhiên.

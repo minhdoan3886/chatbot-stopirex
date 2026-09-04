@@ -433,18 +433,27 @@ export function planConversationFactResponse(input: {
   );
 
   if (/\b(?:recap|chot lai|tong ket|nhac lai)\b/.test(text) && !orderSupportQuestion) {
-    const parts = [mainConcern, skin];
-    if (schedule) parts.push(`Lịch gym hiện tại là ${formatSchedule(String(schedule))}`);
-    if (hairTime) parts.push(`Bạn đã sửa lại là cạo/wax ${formatHairTime(String(hairTime))}`);
-    parts.push(
-      selfStopirexReaction
-        ? "Bạn đã xác nhận từng có phản ứng với Stopirex"
-        : "Bạn chưa từng nói mình bị ngứa, đỏ da hay dị ứng do Stopirex",
+    const currentContext = [
+      skin,
+      schedule ? `lịch gym là ${formatSchedule(String(schedule))}` : undefined,
+      hairTime ? `lần cạo/wax gần nhất là ${formatHairTime(String(hairTime))}` : undefined,
+    ];
+    const selfReaction = selfStopirexReaction
+      ? "mình từng có phản ứng với Stopirex"
+      : "mình chưa bị ngứa, đỏ da hay dị ứng do Stopirex";
+    const otherReactions = [
+      friendReaction ? "người từng bị ngứa là bạn của mình" : undefined,
+      reviewReaction ? "phần ngứa đỏ là review của người khác" : undefined,
+      otherProductReaction ? "lần bị rát là với một loại lăn khác sau khi cạo" : undefined,
+    ];
+    const reactionContext = `${selfReaction}${otherReactions.some(Boolean) ? `, còn ${joinNaturalList(otherReactions)}` : ""}`;
+    return plan(
+      `Chốt lại nha: ${lowerFirst(mainConcern)}. ${capitalize(joinNaturalList(currentContext))}. ${capitalize(reactionContext)}.`,
+      "consultation",
+      "other",
+      "memory_recap",
+      true,
     );
-    if (friendReaction) parts.push("người từng bị ngứa là bạn của bạn");
-    if (reviewReaction) parts.push("đoạn ngứa/đỏ da là review của người khác mà bạn gửi");
-    if (otherProductReaction) parts.push("lần bị rát trước là với một loại lăn khác sau khi cạo");
-    return plan(`${joinSentences(parts)}.`, "consultation", "other", "memory_recap", true);
   }
 
   if (
@@ -452,10 +461,16 @@ export function planConversationFactResponse(input: {
     /\btruoc .*(?:co )?noi.*da .*(?:nhay cam)|da .*(?:nhay cam).*(?:chua ta|chua)\b/.test(text)
   ) {
     const sensitive = has("skin_type")?.value === "sensitive";
+    const recentHairRemoval = Boolean(hairTime);
+    const sensitivityContext = Boolean(has("skin_sensitivity_context"));
     return plan(
       sensitive
-        ? "Có, trước đó bạn đã nói da mình nhạy cảm."
-        : "Bạn chưa nói da mình nhạy cảm. Trước đó bạn chỉ nói mình vừa cạo/wax hoặc da có thể dễ xót sau khi wax.",
+        ? "Có nha, mình từng nói da nhạy cảm."
+        : sensitivityContext
+          ? "Chưa nha, mình chỉ nói da dễ xót sau wax thôi, chưa nói là da nhạy cảm."
+          : recentHairRemoval
+            ? "Chưa nha, mình chỉ mới nói vừa cạo/wax thôi."
+            : "Chưa nha, mình chưa nói da nhạy cảm.",
       "other",
       "sensitive_skin",
       "memory_verification",
@@ -465,10 +480,10 @@ export function planConversationFactResponse(input: {
 
   if (/\bcase .*(?:ban|nguoi khac).*khac nhau|(?:ban|nguoi khac).*khac nhau.*cho nao\b/.test(text)) {
     const friendText = friendReaction
-      ? "Bạn của bạn đã dùng sản phẩm và theo lời bạn thì từng bị ngứa vài ngày."
-      : "Mình chưa có đủ thông tin xác nhận về trường hợp của bạn bạn.";
+      ? "Còn bạn của mình từng bị ngứa vài ngày sau khi dùng Stopirex."
+      : "Còn trường hợp của bạn mình thì chưa có đủ thông tin.";
     return plan(
-      `Trường hợp của bạn: ${lowerFirst(mainConcern)}, ${lowerFirst(skin)} và chưa xác nhận từng bị ngứa/rát do Stopirex. ${friendText}`,
+      `Mình thì ${lowerFirst(mainConcern).replace(/^mình\s+/u, "")}, ${lowerFirst(skin)} và chưa gặp ngứa rát do Stopirex. ${friendText}`,
       "product_comparison",
       "comparison",
       "subject_comparison",
@@ -481,12 +496,12 @@ export function planConversationFactResponse(input: {
       text,
     )
   ) {
-    const detail = otherProductReaction ? " Bạn chỉ nói từng bị rát với một loại lăn khác ngay sau cạo." : "";
-    const review = reviewReaction ? " Đoạn ngứa/đỏ da là review của người khác mà bạn gửi." : "";
+    const detail = otherProductReaction ? " Mình chỉ từng bị rát với một loại lăn khác ngay sau cạo." : "";
+    const review = reviewReaction ? " Phần ngứa đỏ là trong review của người khác." : "";
     return plan(
       selfStopirexReaction
-        ? "Đúng, trước đó bạn đã xác nhận phản ứng này là của mình sau khi dùng Stopirex."
-        : `Chưa. Bạn chưa từng nói mình bị đỏ da hay dị ứng vì Stopirex.${detail}${review}`,
+        ? "Đúng rồi, mình từng gặp phản ứng này sau khi dùng Stopirex."
+        : `Chưa nha.${detail}${review}`,
       "safety",
       "irritation",
       "reaction_owner_verification",
@@ -500,7 +515,7 @@ export function planConversationFactResponse(input: {
 
   if (input.attribution.quotedReview && !orderSupportQuestion) {
     return plan(
-      "Em hiểu, đây là review của người khác mà mình gửi để tham khảo, không phải trải nghiệm của mình. Em sẽ không ghi nhận ngứa/đỏ da này vào tình trạng của bạn.",
+      "À, đây là review của người khác nha. Mình chưa gặp tình trạng ngứa đỏ đó.",
       "safety",
       "irritation",
       "quoted_review_attribution",
@@ -514,7 +529,7 @@ export function planConversationFactResponse(input: {
     !orderSupportQuestion
   ) {
     return plan(
-      "Em hiểu, người từng dùng rồi bị ngứa vài ngày là bạn của mình, không phải mình. Hai trường hợp sẽ được tách riêng để không ghi nhầm triệu chứng.",
+      "À, người bị ngứa là bạn của mình nha. Còn mình chưa gặp tình trạng đó.",
       "safety",
       "irritation",
       "third_party_reaction_attribution",
@@ -531,7 +546,7 @@ export function planConversationFactResponse(input: {
   );
   if (selfNormal && siblingSensitive) {
     return plan(
-      "Em nhớ đúng rồi nha: da mình bình thường, chỉ đôi khi dễ xót sau wax; người có da nhạy cảm là em của mình. Em sẽ tư vấn hai trường hợp riêng.",
+      "À hiểu rồi, da mình bình thường, chỉ dễ xót sau wax thôi. Da nhạy cảm là em của mình nha.",
       "safety",
       "sensitive_skin",
       "subject_skin_correction",
@@ -541,7 +556,7 @@ export function planConversationFactResponse(input: {
 
   if (selfNormal && otherProductReaction) {
     return plan(
-      "Em ghi nhận lại: da mình bình thường; lần bị rát trước là khi dùng một loại lăn khác ngay sau cạo, không phải do Stopirex và cũng không phải tình trạng đang xảy ra.",
+      "Oke, da mình bình thường nha. Lần bị rát là do dùng loại lăn khác ngay sau cạo, không liên quan Stopirex.",
       "safety",
       "irritation",
       "product_and_time_correction",
@@ -552,7 +567,7 @@ export function planConversationFactResponse(input: {
   const scheduleClaim = input.claims.find((claim) => claim.predicate === "exercise_schedule");
   if (scheduleClaim && /\b(?:xai|dung|boi|quet).*(?:luc nao|khi nao)\b/.test(text)) {
     return plan(
-      `Với lịch gym ${formatSchedule(String(scheduleClaim.value))}, mình vẫn dùng Stopirex vào buổi tối trên da sạch, khô hoàn toàn. Tránh dùng ngay sau wax/cạo; nên để da ổn rồi mới dùng.`,
+      `Oke, mình gym ${formatSchedule(String(scheduleClaim.value))} thì vẫn lăn Stopirex buổi tối, lúc da sạch và khô nha. Hôm nào mới wax/cạo thì đợi da ổn rồi dùng.`,
       "usage_time",
       "usage",
       "schedule_aware_usage",
@@ -561,7 +576,7 @@ export function planConversationFactResponse(input: {
   }
   if (scheduleClaim && input.attribution.correction) {
     return plan(
-      `Em cập nhật lịch mới là ${formatSchedule(String(scheduleClaim.value))}; lịch cũ không còn là lịch hiện tại nữa. Mình vẫn ưu tiên dùng Stopirex vào buổi tối.`,
+      `Oke, giờ mình gym ${formatSchedule(String(scheduleClaim.value))} nha. Stopirex vẫn lăn buổi tối là ổn.`,
       "usage_time",
       "usage",
       "schedule_correction",
@@ -576,7 +591,7 @@ export function planConversationFactResponse(input: {
     /\b(?:quet|lan|boi|dung|xai).*(?:duoc chua|duoc khong|on khong|chua he)\b/.test(text)
   ) {
     return plan(
-      "Mình mới cạo nên chưa dùng ngay nha. Sau khi cạo/wax, mình nên chờ ít nhất 24–48 giờ và chỉ dùng khi da đã ổn, sạch và khô hoàn toàn.",
+      "Mới cạo xong thì chưa lăn ngay nha. Mình đợi 24–48 giờ, khi da đã ổn, sạch và khô hẳn rồi dùng.",
       "safety",
       "sensitive_skin",
       "hair_removal_safety",
@@ -585,7 +600,7 @@ export function planConversationFactResponse(input: {
   }
   if (hairReaction?.value === "none") {
     return plan(
-      `Em cập nhật: lần wax/cạo ${formatHairTime(String(hairTime ?? "yesterday"))} mình không bị xót. Điều này không xóa thông tin rằng những lần khác da mình vẫn có thể dễ xót sau wax.`,
+      `À, lần wax/cạo ${formatHairTime(String(hairTime ?? "yesterday"))} da mình không bị xót nha. Những lần khác mình vẫn có thể dễ xót sau wax.`,
       "safety",
       "sensitive_skin",
       "hair_removal_event_update",
@@ -594,7 +609,7 @@ export function planConversationFactResponse(input: {
   }
   if (hairTimeClaim && input.attribution.correction) {
     return plan(
-      `Em sửa lại rồi nha: mình cạo/wax ${formatHairTime(String(hairTimeClaim.value))}, không phải hôm nay.`,
+      `À đúng rồi, mình cạo/wax ${formatHairTime(String(hairTimeClaim.value))} nha.`,
       "safety",
       "sensitive_skin",
       "hair_removal_time_correction",
@@ -605,7 +620,7 @@ export function planConversationFactResponse(input: {
   const sensitivityContext = input.claims.find((claim) => claim.predicate === "skin_sensitivity_context");
   if (sensitivityContext && !directQuestion) {
     return plan(
-      "Em hiểu: da mình không nhất thiết là da nhạy cảm, nhưng có thể dễ xót sau wax. Khi vừa wax/cạo thì mình nên chờ da ổn hẳn rồi mới dùng.",
+      "À, vậy là da mình dễ xót lúc mới wax nha, chưa hẳn là da nhạy cảm đâu. Vừa wax/cạo xong thì đợi da ổn rồi dùng.",
       "safety",
       "sensitive_skin",
       "skin_context_acknowledgement",
@@ -624,7 +639,10 @@ export function planConversationFactResponse(input: {
   const consultationTurn =
     !input.semanticIntent || ["consultation", "other", "knowledge_unknown"].includes(input.semanticIntent);
   if ((sweatClaim || odorClaim) && descriptiveConcern && !directQuestion && consultationTurn) {
-    return plan(`${mainConcern}.`, "consultation", "sweat", "primary_concern_acknowledgement", false);
+    const acknowledgement = odorClaim
+      ? `Hiểu rồi, ${lowerFirst(mainConcern)}.`
+      : "À, vậy là mồ hôi nách của mình ra khá nhiều, kể cả khi trời lạnh nha.";
+    return plan(acknowledgement, "consultation", "sweat", "primary_concern_acknowledgement", false);
   }
   return undefined;
 }
@@ -768,11 +786,11 @@ function mainConcernText(ledger: ConversationFactLedger): string {
   const sweat = currentFact(ledger, "sweat_concern")?.value === true;
   const odor = currentFact(ledger, "odor_severity")?.value;
   if (sweat && odor === "mild") {
-    return "Vấn đề chính của bạn là mồ hôi nách nhiều làm ướt áo; mùi không đáng kể";
+    return "Mình bị mồ hôi nách nhiều làm ướt áo, còn mùi không đáng kể";
   }
-  if (sweat) return "Vấn đề chính của bạn là mồ hôi nách nhiều và gây khó chịu vì ướt áo";
-  if (odor === "mild") return "Bạn nói mùi ở mức bình thường và không phải vấn đề chính";
-  return "Mình chưa có đủ dữ kiện để kết luận vấn đề chính của bạn";
+  if (sweat) return "Mình bị mồ hôi nách nhiều";
+  if (odor === "mild") return "Mùi của mình ở mức bình thường, không phải vấn đề chính";
+  return "Mình chưa có đủ thông tin để chốt vấn đề chính";
 }
 
 function skinText(ledger: ConversationFactLedger): string {
@@ -780,16 +798,15 @@ function skinText(ledger: ConversationFactLedger): string {
   const context = currentFact(ledger, "skin_sensitivity_context")?.value;
   const lastReaction = currentFact(ledger, "hair_removal_reaction")?.value;
   if (skinType === "normal" && context === "after_hair_removal" && lastReaction === "none") {
-    return "Da bạn bình thường nhưng đôi khi dễ xót sau wax; lần wax/cạo gần nhất không bị xót";
+    return "Da mình bình thường, đôi khi dễ xót sau wax nhưng lần gần nhất không bị xót";
   }
   if (skinType === "normal" && context === "after_hair_removal") {
-    return "Da bạn bình thường nhưng đôi khi dễ xót sau wax";
+    return "Da mình bình thường nhưng đôi khi dễ xót sau wax";
   }
-  if (skinType === "normal") return "Da bạn bình thường";
-  if (skinType === "sensitive") return "Bạn đã xác nhận da mình nhạy cảm";
-  if (context === "after_hair_removal")
-    return "Bạn chỉ nói da đôi khi dễ xót sau wax, chưa xác nhận là da nhạy cảm";
-  return "Bạn chưa xác nhận loại da của mình";
+  if (skinType === "normal") return "Da mình bình thường";
+  if (skinType === "sensitive") return "Da mình nhạy cảm";
+  if (context === "after_hair_removal") return "Da mình đôi khi dễ xót sau wax, chưa hẳn là da nhạy cảm";
+  return "Mình chưa nói rõ loại da";
 }
 
 function formatSchedule(value: string): string {
@@ -803,11 +820,17 @@ function formatHairTime(value: string): string {
   return "trước đó";
 }
 
-function joinSentences(parts: Array<string | undefined>): string {
-  return parts
+function joinNaturalList(parts: Array<string | undefined>): string {
+  const values = parts
     .filter((part): part is string => Boolean(part?.trim()))
-    .map((part) => part.trim().replace(/[.!?]+$/u, ""))
-    .join(". ");
+    .map((part) => part.trim().replace(/[.!?]+$/u, ""));
+  if (values.length <= 1) return values[0] ?? "";
+  if (values.length === 2) return `${values[0]} và ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")} và ${values.at(-1)}`;
+}
+
+function capitalize(value: string): string {
+  return value ? `${value[0]?.toLocaleUpperCase("vi-VN")}${value.slice(1)}` : value;
 }
 
 function lowerFirst(value: string): string {

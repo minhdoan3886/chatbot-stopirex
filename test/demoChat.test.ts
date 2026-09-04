@@ -1188,6 +1188,26 @@ test("LLM gọi combo tiết kiệm là promotion vẫn dùng bảng giá và kh
   assert.doesNotMatch(result.reply, /khó chịu chủ yếu/iu);
 });
 
+test("LLM gọi combo tiết kiệm là price request vẫn dẫn sang chọn số lượng", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat("combo-saving-price-request", "có combo nào tiết kiệm hơn không", {
+    intent: "price_request",
+    topic: "price",
+    confidence: 0.99,
+    asksDirectAnswer: true,
+    evidence: ["combo nào tiết kiệm hơn"],
+    selectedCtaId: "ask_primary_symptom",
+    ctaText: "Hiện mình khó chịu chủ yếu vì mồ hôi làm ướt áo, mùi cơ thể hay cả hai tình trạng ạ?",
+    slots: {},
+  });
+
+  assert.equal(result.state.lastIntent, "price_request");
+  assert.equal(result.state.decisionTrace?.semantic.selectedCtaId, "ask_quantity");
+  assert.match(result.reply, /510\.000đ/u);
+  assert.match(result.reply, /muốn chọn phương án mấy lọ/iu);
+  assert.doesNotMatch(result.reply, /khó chịu chủ yếu/iu);
+});
+
 test("câu hỏi trực tiếp từ LLM được ưu tiên hơn rule thu đơn theo chữ số", () => {
   const chat = new DemoChatService();
   const sessionId = "semantic-before-order-data";

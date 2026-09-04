@@ -2151,12 +2151,7 @@ export class DemoChatService {
         [],
         "Câu hỏi combo tiết kiệm được đối chiếu với bảng giá đã duyệt, không phải ưu đãi chưa xác minh.",
       );
-      const continuation = showPrice(session, "choose_quantity");
-      const nextQuestion = continuationQuestion(continuation);
-      if (session.lastDecision) {
-        session.lastDecision.semantic.selectedCtaId = "ask_quantity";
-        session.lastDecision.semantic.ctaText = nextQuestion;
-      }
+      const nextQuestion = preparePriceResponse(session, text);
       return this.respond(session, priceReplyForRequest(text, nextQuestion));
     }
     if (directIntent === "promotion_inquiry") {
@@ -2224,8 +2219,8 @@ export class DemoChatService {
         ]);
         return this.respond(session, multiActionAnswer(["effectiveness", "price"], raw, semanticSlots));
       }
-      const continuation = showPrice(session);
-      return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
+      const nextQuestion = preparePriceResponse(session, text);
+      return this.respond(session, priceReplyForRequest(text, nextQuestion));
     }
 
     if (directIntent === "order_support" && isReturnsPolicyQuestion(text)) {
@@ -2580,8 +2575,8 @@ export class DemoChatService {
     }
 
     if (isPriceRequest(text)) {
-      const continuation = showPrice(session);
-      return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
+      const nextQuestion = preparePriceResponse(session, text);
+      return this.respond(session, priceReplyForRequest(text, nextQuestion));
     }
 
     if (session.messages === 1 && !session.openingSent && isGenericOpening(text)) {
@@ -6661,6 +6656,17 @@ function showPrice(session: DemoSession, forcedContinuation?: PriceContinuation)
   session.pendingAction = "choose_quantity";
   if (session.lastDecision) session.lastDecision.pendingActionAfter = "choose_quantity";
   return continuation;
+}
+
+function preparePriceResponse(session: DemoSession, text: string): string {
+  const comboSavings = isComboSavingsQuestion(text);
+  const continuation = showPrice(session, comboSavings ? "choose_quantity" : undefined);
+  const nextQuestion = continuationQuestion(continuation);
+  if (comboSavings && session.lastDecision) {
+    session.lastDecision.semantic.selectedCtaId = "ask_quantity";
+    session.lastDecision.semantic.ctaText = nextQuestion;
+  }
+  return nextQuestion;
 }
 
 function priceContinuationFor(session: DemoSession): PriceContinuation {

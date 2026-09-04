@@ -1485,7 +1485,9 @@ export function isFastTransition(customerMessage: string, state: DemoChatState):
   }
   if (
     state.pendingAction === "confirm_order" &&
-    /^(?:dung|dung roi|dong y|toi dong y|xac nhan dong y)$/.test(text)
+    /^(?:dung|dung roi|dong y|toi dong y|xac nhan dong y|chot|chot nha|chot nhe|chot giup minh|len don nha|len don nhe|(?:ok|oke|okay|uh|u|vang|duoc)(?:\s+vay)?\s+(?:chot|len don|giao)(?:\s+(?:nha|nhe|giup minh))?)$/.test(
+      text,
+    )
   ) {
     return true;
   }

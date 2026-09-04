@@ -394,10 +394,11 @@ export function planConversationFactResponse(input: {
   semanticIntent?: string;
 }): ConversationFactResponsePlan | undefined {
   const text = normalize(input.raw);
-  const descriptiveNotMuch = /\b(?:k|ko|khong) bao nhieu\b/.test(text);
+  const descriptiveNotMuch =
+    /\b(?:k|ko|khong) bao nhieu\b|\bmui\b.{0,35}\b(?:k|ko|khong) (?:nang|nhieu)\b/.test(text);
   const directQuestion =
     /[?？]/u.test(input.raw) ||
-    ((!descriptiveNotMuch || !/\bbao nhieu\b/.test(text)) &&
+    (!descriptiveNotMuch &&
       /\b(?:bao nhieu|the nao|tai sao|vi sao|co .* khong|duoc khong|dung khong|phai khong|hay khong)\b/.test(
         text,
       ));
@@ -635,13 +636,20 @@ export function planConversationFactResponse(input: {
   // contrast, or vivid weather analogy). Plain "ướt áo" must continue through
   // the existing guided opening, which asks the useful air-conditioned-room
   // follow-up.
-  const descriptiveConcern = /\bmh\b|nhu tam|mua (?:lanh|nong)/.test(text) || odorClaim;
+  const descriptiveConcern = /\bmh\b|nhu tam|(?:mua|troi) (?:lanh|nong)/.test(text) || odorClaim;
   const consultationTurn =
     !input.semanticIntent || ["consultation", "other", "knowledge_unknown"].includes(input.semanticIntent);
-  if ((sweatClaim || odorClaim) && descriptiveConcern && !directQuestion && consultationTurn) {
+  // An explicit low-odor statement is authoritative customer context, not an
+  // acceptance of a usage CTA from the previous turn. Let the Fact Ledger own
+  // this acknowledgement even when the LLM labels the turn as usage guidance.
+  if ((sweatClaim || odorClaim) && descriptiveConcern && !directQuestion && (consultationTurn || odorClaim)) {
     const acknowledgement = odorClaim
       ? `Hiểu rồi, ${lowerFirst(mainConcern)}.`
-      : "À, vậy là mồ hôi nách của mình ra khá nhiều, kể cả khi trời lạnh nha.";
+      : /(?:mua|troi) lanh/.test(text)
+        ? "À, vậy là mồ hôi nách của mình ra khá nhiều, kể cả khi trời lạnh nha."
+        : /(?:mua|troi) nong/.test(text)
+          ? "À, vậy là mồ hôi nách của mình ra khá nhiều, nhất là lúc đi làm và trời nóng nha."
+          : "À, vậy là mình ra mồ hôi nách khá nhiều nha.";
     return plan(acknowledgement, "consultation", "sweat", "primary_concern_acknowledgement", false);
   }
   return undefined;
@@ -681,7 +689,7 @@ function extractConversationFactClaims(
   }
   if (
     selfContext &&
-    /mui (?:thi )?(?:k|ko|khong) bao nhieu|mui (?:thi )?(?:binh thuong|bt)|mui (?:k|ko|khong) (?:nang|nhieu)|mui it/.test(
+    /mui (?:thi )?(?:k|ko|khong) bao nhieu|mui (?:thi )?(?:binh thuong|bt)|mui (?:k|ko|khong) (?:nang|nhieu)|mui.{0,35}(?:k|ko|khong) (?:nang|nhieu)|mui it/.test(
       text,
     )
   ) {

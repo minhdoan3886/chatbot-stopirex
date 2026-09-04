@@ -544,7 +544,7 @@ test("state reducer cập nhật quantity, thay/khôi phục địa chỉ, recap
   assert.equal(completed.state.pipeline, "6.Đã tạo đơn");
   assert.equal(completed.state.orderId, undefined);
   assert.equal(completed.state.orderDraft?.quantity, 2);
-  assert.match(completed.reply, /đã ghi nhận thông tin đơn/iu);
+  assert.match(completed.reply, /chốt đơn 2 lọ, tổng 510\.000đ/iu);
   assert.doesNotMatch(completed.reply, /DEMO-|đơn thử|localhost|sandbox/iu);
 });
 
@@ -638,6 +638,6 @@ test("khách kỹ tính đi đủ knowledge rồi chốt đơn trong một trans
     t7.state.orderTransactionTrace?.acceptedActions.map((action) => action.type),
     ["confirm_order"],
   );
-  assert.match(t7.reply, /đã ghi nhận thông tin đơn/iu);
+  assert.match(t7.reply, /chốt đơn 1 lọ, tổng 315\.000đ/iu);
   assert.doesNotMatch(t7.reply, /DEMO-|đơn thử|localhost|sandbox/iu);
 });

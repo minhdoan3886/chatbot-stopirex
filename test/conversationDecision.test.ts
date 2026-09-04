@@ -24,6 +24,28 @@ test("pending action hiểu câu ok theo đề nghị ngay trước đó", () =>
   assert.match(result.trace.reason, /đề nghị ngay trước/);
 });
 
+test("thông tin mới không bị intent usage lôi vào pending action cũ", () => {
+  const result = resolveConversationDecision({
+    semantic: {
+      slots: { primarySymptom: "sweat", odorPresent: true },
+      intent: "usage_guidance",
+      topic: "odor",
+      confidence: 0.92,
+      needsClarification: false,
+      evidence: ["mùi thì cũng có nhưng không nặng lắm"],
+    },
+    pendingAction: "send_usage_guidance",
+    optOut: false,
+    activeCare: false,
+    orderConfirmation: false,
+    collectingOrder: false,
+    affirmativeFollowup: false,
+  });
+
+  assert.equal(result.route, "direct_intent");
+  assert.equal(result.intent, "usage_guidance");
+});
+
 test("lệnh mua rõ ràng ghi đè đề nghị gửi giá đang chờ", () => {
   const result = resolveConversationDecision({
     semantic: {

@@ -628,15 +628,12 @@ test("chat nhớ ngữ cảnh và ghi nhận đơn sau xác nhận ĐỒNG Ý", 
 
   const created = chat.chat(sessionId, "ĐỒNG Ý");
   assert.equal(created.state.pipeline, "6.Đã tạo đơn");
-  assert.equal(created.replies.length, 2);
-  assert.match(created.reply, /xin phép lên đơn trên hệ thống/);
-  assert.match(created.reply, /chờ em một chút/);
+  assert.equal(created.replies.length, 1);
   assert.doesNotMatch(created.reply, /DEMO-|đơn thử|localhost|sandbox/iu);
-  assert.match(created.reply, /đã ghi nhận thông tin đơn/);
-  assert.match(created.reply, /Thanh toán khi nhận hàng \(COD\)/);
-  assert.match(created.reply, /Địa chỉ trước sáp nhập/);
+  assert.match(created.reply, /chốt đơn 2 lọ, tổng 510\.000đ/iu);
   assert.match(created.reply, /Viettel Post/);
   assert.match(created.reply, /Khi có mã vận đơn Viettel Post/iu);
+  assert.doesNotMatch(created.reply, /Người nhận:|Địa chỉ trước sáp nhập|Hình thức:/iu);
   assert.doesNotMatch(created.reply, /website hoặc ứng dụng Viettel Post.*nhập mã/isu);
   assert.doesNotMatch(created.reply, /https?:\/\/|Link tra cứu/iu);
   assert.doesNotMatch(created.reply, /mã vận đơn:\s*\S+/iu);
@@ -3339,7 +3336,7 @@ test("recap chấp nhận cả Đúng và không chỉ riêng Đồng ý", () =>
 
   const created = chat.chat("confirm-dung-alias", "Đúng");
   assert.equal(created.state.pipeline, "6.Đã tạo đơn");
-  assert.match(created.reply, /đã ghi nhận thông tin đơn/);
+  assert.match(created.reply, /chốt đơn 2 lọ, tổng 510\.000đ/iu);
 });
 
 test("tạo đơn xong phải xóa hành động xác nhận đang chờ", () => {
@@ -3686,6 +3683,105 @@ test("LLM fallback answers bottle duration and scent without selecting one bottl
   assert.equal(result.state.lastIntent, "usage_frequency");
   assert.match(result.reply, /3–4 tháng.*2–3 lần\/tuần/su);
   assert.match(result.reply, /mùi dược tính đặc trưng nhẹ.*bay hơi rất nhanh.*không bị lẫn mùi/su);
+});
+
+test("fallback trả combo tiết kiệm từ bảng giá đã duyệt thay vì handoff", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat("combo-savings-fallback", "có combo nào tiết kiệm hơn không", {
+    status: "fallback",
+    slots: {},
+  });
+
+  assert.equal(result.state.lastIntent, "price_request");
+  assert.notEqual(result.state.pipeline, "C3.Chờ CSKH");
+  assert.equal(result.state.selectedQuantity, undefined);
+  assert.match(result.reply, /Combo 2 lọ: 510\.000đ.*miễn phí giao.*tiết kiệm 60\.000đ/isu);
+  assert.doesNotMatch(result.reply, /chuyển bộ phận liên quan/iu);
+});
+
+test("fallback vẫn trả cách dùng đơn giản và thời điểm sau cạo", () => {
+  const chat = new DemoChatService();
+  const sessionId = "usage-and-shaving-fallback";
+
+  const usage = chat.chat(sessionId, "dùng có khó không shop", {
+    status: "fallback",
+    slots: {},
+  });
+  assert.equal(usage.state.lastIntent, "usage_guidance");
+  assert.match(usage.reply, /Không khó.*buổi tối.*da sạch, khô.*2–3 lần\/tuần/isu);
+  assert.doesNotMatch(usage.reply, /chuyển bộ phận liên quan/iu);
+
+  const shaving = chat.chat(sessionId, "mình hay cạo nách thì có dùng được không", {
+    status: "fallback",
+    slots: {},
+  });
+  assert.equal(shaving.state.lastIntent, "usage_guidance");
+  assert.match(shaving.reply, /dùng được.*không lăn ngay sau khi cạo.*24–48 giờ.*da đã ổn/isu);
+  assert.doesNotMatch(shaving.reply, /chuyển bộ phận liên quan/iu);
+});
+
+test("fallback hiểu mồ hôi khi trời nóng là vấn đề chính", () => {
+  const chat = new DemoChatService();
+  const result = chat.chat(
+    "sweat-in-hot-weather-fallback",
+    "mình bị ra mồ hôi nách nhiều, nhất là đi làm với trời nóng",
+    { status: "fallback", slots: {} },
+  );
+
+  assert.equal(result.state.slots.primarySymptom, "sweat");
+  assert.match(result.reply, /mồ hôi nách.*ra khá nhiều/iu);
+  assert.doesNotMatch(result.reply, /cả tình trạng.*mùi|chuyển bộ phận liên quan/iu);
+});
+
+test("order workflow trả tổng từ state và hiểu câu chốt tự nhiên", () => {
+  const chat = new DemoChatService();
+  const sessionId = "natural-order-total-and-confirmation";
+
+  chat.chat(sessionId, "thôi mình lấy 1 lọ trước thử xem");
+  const identity = chat.chat(sessionId, "Nguyễn Minh, 0987654321");
+  assert.equal(identity.state.orderDraft?.recipientName, "Nguyễn Minh");
+  assert.equal(identity.state.orderDraft?.phone, "0987654321");
+  assert.match(identity.reply, /^Oke, em có tên Nguyễn Minh và SĐT 0987654321 rồi nha\./u);
+  assert.doesNotMatch(identity.reply, /;/u);
+
+  chat.chat(sessionId, "25 Nguyễn Trãi, Thanh Xuân, Hà Nội nha");
+  const note = chat.chat(sessionId, "giao giờ hành chính giúp mình nhé");
+  assert.equal(note.state.orderDraft?.deliveryNote, "Giao trong giờ hành chính");
+  assert.equal(note.reply, "Oke, em thêm ghi chú “Giao trong giờ hành chính” vào đơn rồi nha.");
+
+  const total = chat.chat(sessionId, "tổng đơn của mình bao nhiêu vậy");
+  assert.match(
+    total.reply,
+    /1 lọ Stopirex.*tiền hàng 285\.000đ.*phí giao 30\.000đ.*tổng thanh toán 315\.000đ/isu,
+  );
+  assert.equal(total.state.orderFlowStatus, "awaiting_confirmation");
+
+  const confirmed = chat.chat(sessionId, "ok vậy chốt nha");
+  assert.equal(confirmed.state.orderReceived, true);
+  assert.equal(confirmed.state.orderFlowStatus, "created");
+  assert.equal(confirmed.state.orderDraft?.quantity, 1);
+  assert.equal(confirmed.state.orderDraft?.totalVnd, 315000);
+  assert.equal(confirmed.state.orderDraft?.deliveryNote, "Giao trong giờ hành chính");
+  assert.doesNotMatch(confirmed.reply, /phản hồi “ĐÚNG”|phản hồi “ĐỒNG Ý”/u);
+});
+
+test("Fact Ledger phản hồi mùi nhẹ thay vì chạy pending hướng dẫn", () => {
+  const chat = new DemoChatService();
+  const sessionId = "mild-odor-interrupts-usage-pending";
+  chat.chat(sessionId, "mình bị ra mồ hôi nách nhiều, nhất là đi làm với trời nóng");
+
+  const result = chat.chat(sessionId, "mùi thì cũng có nhưng không nặng lắm", {
+    slots: { primarySymptom: "sweat", odorPresent: true },
+    intent: "usage_guidance",
+    topic: "odor",
+    confidence: 0.92,
+    needsClarification: false,
+    evidence: ["mùi thì cũng có nhưng không nặng lắm"],
+  });
+
+  assert.equal(result.state.slots.primarySymptom, "sweat");
+  assert.match(result.reply, /mồ hôi nách nhiều.*mùi không đáng kể/iu);
+  assert.doesNotMatch(result.reply, /2–3 lần\/tuần|sau cạo|wax/iu);
 });
 
 test("global NER stores strong order fields and rejects discourse prefix as recipient name", () => {

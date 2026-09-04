@@ -242,8 +242,7 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
     !directQuestionInterruptsPendingAction &&
     !input.explicitPurchaseSelection &&
     (input.affirmativeFollowup ||
-      (expectedPendingReplyTo !== undefined && input.semantic.replyTo === expectedPendingReplyTo) ||
-      (pendingAction === "send_usage_guidance" && input.semantic.intent === "usage_guidance"));
+      (expectedPendingReplyTo !== undefined && input.semantic.replyTo === expectedPendingReplyTo));
   if (pendingMatches && pendingAction) {
     return decision(
       "pending_action",

@@ -488,10 +488,12 @@ export class DemoChatService {
       isDomesticDeliveryInspectionQuestion(text) ||
       isReturnsPolicyQuestion(text) ||
       isOrderRecapRequest(text) ||
+      isComboSavingsQuestion(text) ||
       isConditionalEfficacyObjection(text) ||
       priorOtherProductAdverseExperience ||
       isAlcoholAndScentPremiseQuestion(text) ||
       isHairRemovalSafetyQuestion(text) ||
+      isSimpleUsageQuestion(text) ||
       (!semanticRoutingReady &&
         (isPermanentControlQuestion(text) ||
           isSweatWashOffConcern(text) ||
@@ -1057,7 +1059,7 @@ export class DemoChatService {
       this.move(session, "order_created");
       session.signal = undefined;
       session.lastIntent = "buying";
-      return this.respond(session, [orderCreatingReply(session), orderCreatedReply(session)]);
+      return this.respond(session, orderCreatedReply(session));
     }
 
     if (retailEscapeFromWholesale) {
@@ -1949,7 +1951,7 @@ export class DemoChatService {
       this.move(session, "order_created");
       session.signal = undefined;
       session.lastIntent = "buying";
-      return this.respond(session, [orderCreatingReply(session), orderCreatedReply(session)]);
+      return this.respond(session, orderCreatedReply(session));
     }
 
     if (decision.route === "order_collection") {
@@ -4030,6 +4032,7 @@ function detectDirectIntent(text: string): CustomerIntent | undefined {
   }
   if (isUrgentComplaint(text)) return "order_support";
   if (isOrderRecapRequest(text)) return "order_support";
+  if (isComboSavingsQuestion(text)) return "price_request";
   if (isOrderCaptureMessage(text)) return "buying";
   if (isHypotheticalIrritationRefundQuestion(text)) return "order_support";
   if (isProductPurposeQuestion(text)) return "product_effect";
@@ -4042,6 +4045,7 @@ function detectDirectIntent(text: string): CustomerIntent | undefined {
   if (isAlcoholAndScentPremiseQuestion(text)) return "product_comparison";
   if (isProductNatureAndScentQuestion(text)) return "product_comparison";
   if (isHairRemovalSafetyQuestion(text)) return "usage_guidance";
+  if (isSimpleUsageQuestion(text)) return "usage_guidance";
   if (isConditionalQuantityPurchase(text)) return "buying";
   if (isPermanentControlQuestion(text)) return "product_effect";
   if (isApplicationFeelOrClothingConcern(text)) return "product_effect";
@@ -4988,10 +4992,15 @@ function isMorningApplicationQuestion(value: string): boolean {
 
 function isHairRemovalSafetyQuestion(value: string): boolean {
   const text = normalize(value);
+  const removalContext = /(?:nho|cao|wax|triet).{0,20}(?:long )?nach/.test(text);
   const recentRemoval = /(?:vua|moi|sang nay)?.{0,20}(?:nho|cao|wax|triet).{0,20}(?:long )?nach/.test(text);
   const immediateUse =
     /(?:boi|lan|quet|dung).{0,25}(?:luon|ngay)|(?:luon|ngay).{0,25}(?:boi|lan|quet|dung)/.test(text);
-  return recentRemoval && immediateUse;
+  const asksWhetherUsable =
+    /(?:co )?(?:dung|boi|lan|quet) (?:duoc|dc|ok) (?:khong|ko|k)|(?:cao|wax|triet).{0,35}(?:co )?(?:dung|boi|lan|quet).{0,15}(?:khong|ko|k)/.test(
+      text,
+    );
+  return (recentRemoval && immediateUse) || (removalContext && asksWhetherUsable);
 }
 
 export function isActualIrritationMessage(value: string): boolean {
@@ -5551,8 +5560,28 @@ function isPriceRequest(text: string): boolean {
 }
 
 function isOrderRecapRequest(text: string): boolean {
-  return /\b(?:nhac lai|xem lai|check lai|kiem tra lai|tom tat|tong ket)\b.{0,40}\b(?:don|don hang|thong tin don)\b|\b(?:bao nhieu tien|bao tien)\b.{0,20}\b(?:don|don nay|don hang)\b|\bdoc lai\b.{0,100}\b(?:(?:chot|lay).{0,30}(?:may|bao nhieu)\s*lo|tien bao nhieu|ship ve dau)\b/.test(
+  return /\b(?:nhac lai|xem lai|check lai|kiem tra lai|tom tat|tong ket)\b.{0,40}\b(?:don|don hang|thong tin don)\b|\b(?:bao nhieu tien|bao tien)\b.{0,20}\b(?:don|don nay|don hang)\b|\b(?:tong don|tong tien|tong thanh toan)\b.{0,35}\b(?:bao nhieu|bao tien|la bao nhieu)\b|\bdoc lai\b.{0,100}\b(?:(?:chot|lay).{0,30}(?:may|bao nhieu)\s*lo|tien bao nhieu|ship ve dau)\b/.test(
     text,
+  );
+}
+
+function isOrderTotalQuestion(text: string): boolean {
+  return /\b(?:tong don|tong tien|tong thanh toan)\b.{0,35}\b(?:bao nhieu|bao tien|la bao nhieu)\b/.test(
+    text,
+  );
+}
+
+function isSimpleUsageQuestion(value: string): boolean {
+  const text = normalize(value);
+  return /\b(?:dung|xai|su dung)\b.{0,25}\b(?:co )?(?:kho|phuc tap|de)\b.{0,10}\b(?:khong|ko|k)\b/.test(text);
+}
+
+function isComboSavingsQuestion(value: string): boolean {
+  const text = normalize(value);
+  return (
+    /\bcombo\b/.test(text) &&
+    /\b(?:tiet kiem|loi hon|re hon|uu dai|gia tot|kinh te)\b/.test(text) &&
+    /[?？]|\b(?:co|khong|ko|k|nao)\b/u.test(value)
   );
 }
 
@@ -5719,7 +5748,12 @@ function isBuyingIntent(text: string): boolean {
 
 function isCorrectConfirmation(text: string): boolean {
   return (
-    /^(dung|dung roi|xac nhan dung|dong y|toi dong y|xac nhan dong y|dong y tao don)$/.test(text) ||
+    /^(dung|dung roi|xac nhan dung|dong y|toi dong y|xac nhan dong y|dong y tao don|chot|chot nha|chot nhe|chot giup minh|len don nha|len don nhe)$/.test(
+      text,
+    ) ||
+    /^(?:ok|oke|okay|uh|u|vang|duoc)(?:\s+vay)?\s+(?:chot|len don|giao)(?:\s+(?:nha|nhe|giup minh))?$/.test(
+      text,
+    ) ||
     /\b(?:dung|dung roi|dung thong tin|thong tin dung|xac nhan dung)\b.{0,60}\b(?:gui|giao|len don|chot)\b/.test(
       text,
     )
@@ -6077,6 +6111,14 @@ function llmFailureKnowledgeAnswer(
       };
     }
   }
+  if (directIntent === "usage_guidance" && isSimpleUsageQuestion(text)) {
+    return {
+      reply:
+        "Không khó đâu mình. Buổi tối mình lăn một lớp mỏng trên da sạch, khô hẳn, dùng 2–3 lần/tuần rồi chờ khô trước khi mặc áo nha.",
+      knowledgeIds: ["usage-general"],
+      intent: "usage_guidance",
+    };
+  }
   if (isBottleLongevityQuestion(text) && asksAboutProductScent(text)) {
     return {
       reply: [
@@ -6119,6 +6161,14 @@ function llmFailureKnowledgeAnswer(
       reply:
         "Dạ mình chưa bôi ngay sáng nay ạ. Sau nhổ, cạo, wax hoặc triệt lông, mình chờ 24–48 giờ và chỉ dùng khi da đã ổn. Stopirex dùng buổi tối trên da sạch, khô, lăn mỏng; chờ khô rồi mặc áo. Dùng đúng hướng dẫn, sản phẩm không bết và không gây ố vàng nách áo.",
       knowledgeIds: ["usage-after-hair-removal", "usage-application-feel-clothing"],
+      intent: "usage_guidance",
+    };
+  }
+  if (isHairRemovalSafetyQuestion(text)) {
+    return {
+      reply:
+        "Dạ dùng được nha, nhưng mình không lăn ngay sau khi cạo. Chờ 24–48 giờ, khi da đã ổn, sạch và khô hoàn toàn rồi dùng lại ạ.",
+      knowledgeIds: ["usage-after-hair-removal"],
       intent: "usage_guidance",
     };
   }
@@ -8184,6 +8234,22 @@ function orderHasAllFields(order: OrderDraft): boolean {
 function orderCollectionReply(session: DemoSession, raw = ""): string {
   applyProfileRecipientFallback(session, raw);
   if (orderHasAllFields(session.order)) {
+    if (raw && isOrderTotalQuestion(normalize(raw)) && session.selectedQuantity) {
+      const selected = quote(session.selectedQuantity);
+      const shippingFeeVnd =
+        session.selectedQuantity === 1 && session.freeShippingApproved ? 0 : selected.shippingFee.amount;
+      return `Dạ đơn mình gồm ${quantityLabel(session.selectedQuantity)} Stopirex, tiền hàng ${formatVnd(selected.productPrice.amount)}, phí giao ${formatVnd(shippingFeeVnd)}, tổng thanh toán ${formatVnd(selected.productPrice.amount + shippingFeeVnd)} nha.`;
+    }
+    const changedFields = new Set(session.orderTransactionTrace?.changedFields ?? []);
+    if (
+      raw &&
+      changedFields.size === 1 &&
+      changedFields.has("deliveryNote") &&
+      session.order.deliveryNote &&
+      !isOrderRecapRequest(normalize(raw))
+    ) {
+      return `Oke, em thêm ghi chú “${session.order.deliveryNote}” vào đơn rồi nha.`;
+    }
     const updatingExistingOrder =
       session.orderConfirmationMode === "inbox" &&
       session.orderEditable === true &&
@@ -8245,6 +8311,18 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
     session.order.legacyAddress ? `địa chỉ ${session.order.legacyAddress}` : undefined,
     session.order.deliveryNote ? `ghi chú “${session.order.deliveryNote}”` : undefined,
   ].filter((item): item is string => Boolean(item));
+  const changedFields = new Set(session.orderTransactionTrace?.changedFields ?? []);
+  if (
+    raw &&
+    missingFields.length === 1 &&
+    missingFields[0] === "legacyAddress" &&
+    changedFields.has("recipientName") &&
+    changedFields.has("phone") &&
+    session.order.recipientName &&
+    session.order.phone
+  ) {
+    return `Oke, em có tên ${session.order.recipientName} và SĐT ${session.order.phone} rồi nha. Mình gửi em địa chỉ trước sáp nhập để nhận hàng nữa là được ạ.`;
+  }
   if (raw && isOrderRecapRequest(normalize(raw)) && session.selectedQuantity) {
     const selected = quote(session.selectedQuantity);
     const shippingFeeVnd =
@@ -8439,23 +8517,9 @@ function resolveOrderFlowStatus(session: DemoSession): NonNullable<DemoChatState
 function orderCreatedReply(session: DemoSession): string {
   const order = session.order;
   if (session.orderConfirmationMode === "inbox") {
-    return [
-      "Dạ em đã ghi nhận thông tin đơn của mình rồi ạ ✅",
-      "",
-      "Thông tin đã được chuyển vào danh sách xử lý. Khi có mã vận đơn, bên em sẽ gửi lại để mình theo dõi ạ.",
-    ].join("\n");
+    return "Oke, em chốt đơn và chuyển bộ phận bán hàng xử lý rồi nha ✅ Khi có mã vận đơn, bên em gửi mình theo dõi ạ.";
   }
-  return [
-    "Dạ em đã ghi nhận thông tin đơn của mình rồi ạ ✅",
-    "",
-    `Sản phẩm: Stopirex × ${order.quantity}`,
-    `Tổng thanh toán: ${order.totalVnd?.toLocaleString("vi-VN")}đ`,
-    `Hình thức: ${order.paymentMethod === "cod" ? "Thanh toán khi nhận hàng (COD)" : "Chuyển khoản"}`,
-    `Người nhận: ${order.recipientName} – ${order.phone}`,
-    `Địa chỉ trước sáp nhập: ${order.legacyAddress}`,
-    "",
-    "Khi có mã vận đơn Viettel Post, bên em sẽ gửi lại để mình theo dõi ạ.",
-  ].join("\n");
+  return `Oke, em chốt đơn ${order.quantity} lọ, tổng ${order.totalVnd?.toLocaleString("vi-VN")}đ cho mình rồi nha ✅ Khi có mã vận đơn Viettel Post, bên em gửi mình theo dõi ạ.`;
 }
 
 function orderUpdatedReply(session: DemoSession): string {
@@ -8476,15 +8540,4 @@ function orderUpdatedReply(session: DemoSession): string {
 
 function hasOrderTransactionChanges(session: DemoSession): boolean {
   return (session.orderTransactionTrace?.changedFields.length ?? 0) > 0;
-}
-
-function orderCreatingReply(session: DemoSession): string {
-  if (session.orderConfirmationMode === "inbox") {
-    return "Dạ em đang ghi nhận thông tin đơn để chuyển bộ phận bán hàng xử lý ạ.";
-  }
-  return [
-    "Dạ vâng, em xin phép lên đơn trên hệ thống cho mình ạ.",
-    "",
-    "Mình chờ em một chút; lên đơn xong em gửi lại mã vận đơn để mình tiện theo dõi nhé ạ.",
-  ].join("\n");
 }

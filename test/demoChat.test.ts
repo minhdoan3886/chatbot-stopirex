@@ -1163,6 +1163,8 @@ test("LLM gọi combo tiết kiệm là promotion vẫn dùng bảng giá và kh
     confidence: 0.99,
     asksDirectAnswer: true,
     evidence: ["combo nào tiết kiệm hơn"],
+    selectedCtaId: "ask_primary_symptom",
+    ctaText: "Hiện mình khó chịu chủ yếu vì mồ hôi làm ướt áo, mùi cơ thể hay cả hai tình trạng ạ?",
     slots: {},
   });
 
@@ -1170,6 +1172,7 @@ test("LLM gọi combo tiết kiệm là promotion vẫn dùng bảng giá và kh
   assert.equal(result.state.pipeline, "3.Đã báo giá");
   assert.notEqual(result.state.consultationStage, "H.handoff");
   assert.equal(result.state.handoffReason, undefined);
+  assert.equal(result.state.decisionTrace?.semantic.selectedCtaId, "ask_quantity");
   assert.match(result.reply, /285\.000đ/u);
   assert.match(result.reply, /510\.000đ/u);
   assert.match(result.reply, /muốn chọn phương án mấy lọ/iu);

@@ -2152,7 +2152,12 @@ export class DemoChatService {
         "Câu hỏi combo tiết kiệm được đối chiếu với bảng giá đã duyệt, không phải ưu đãi chưa xác minh.",
       );
       const continuation = showPrice(session, "choose_quantity");
-      return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
+      const nextQuestion = continuationQuestion(continuation);
+      if (session.lastDecision) {
+        session.lastDecision.semantic.selectedCtaId = "ask_quantity";
+        session.lastDecision.semantic.ctaText = nextQuestion;
+      }
+      return this.respond(session, priceReplyForRequest(text, nextQuestion));
     }
     if (directIntent === "promotion_inquiry") {
       session.lastIntent = "promotion_inquiry";

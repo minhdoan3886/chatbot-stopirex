@@ -2151,7 +2151,7 @@ export class DemoChatService {
         [],
         "Câu hỏi combo tiết kiệm được đối chiếu với bảng giá đã duyệt, không phải ưu đãi chưa xác minh.",
       );
-      const continuation = showPrice(session);
+      const continuation = showPrice(session, "choose_quantity");
       return this.respond(session, priceReplyForRequest(text, continuationQuestion(continuation)));
     }
     if (directIntent === "promotion_inquiry") {

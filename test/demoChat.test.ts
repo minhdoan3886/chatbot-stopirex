@@ -1172,6 +1172,8 @@ test("LLM gọi combo tiết kiệm là promotion vẫn dùng bảng giá và kh
   assert.equal(result.state.handoffReason, undefined);
   assert.match(result.reply, /285\.000đ/u);
   assert.match(result.reply, /510\.000đ/u);
+  assert.match(result.reply, /muốn chọn phương án mấy lọ/iu);
+  assert.doesNotMatch(result.reply, /khó chịu chủ yếu/iu);
 });
 
 test("câu hỏi trực tiếp từ LLM được ưu tiên hơn rule thu đơn theo chữ số", () => {

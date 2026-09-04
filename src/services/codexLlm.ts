@@ -3362,7 +3362,10 @@ function asksAboutEffectAndSelectsQuantity(value: string): boolean {
 
 function assertCustomerAdvisorVoice(customerMessage: string, generatedReply: string): void {
   assertStopirexResponseStyle({ customerMessage, response: generatedReply });
-  if (/\b(?:mình cần mình|em cần em|anh cần anh|chị cần chị)\b/iu.test(generatedReply)) {
+  if (
+    /\b(?:mình cần mình|em cần em|anh cần anh|chị cần chị)\b/iu.test(generatedReply) ||
+    /\b(mình|em|anh|chị)\b[^.?!\n]{0,50}\bgiúp \1\b/iu.test(generatedReply)
+  ) {
     const error = new Error("LLM tạo câu xưng hô lặp và khó hiểu");
     error.name = "AdvisorVoiceError";
     throw error;

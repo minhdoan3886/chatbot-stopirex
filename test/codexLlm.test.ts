@@ -1577,6 +1577,37 @@ test("single-pass chặn câu xưng hô lặp khó hiểu", () => {
   assert.equal(composed.reason, "advisor_voice_guard");
 });
 
+test("single-pass chặn CTA lặp mình ở câu xác nhận đơn", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "ok vậy chốt nha",
+    draftReply:
+      "Oke, em đã chốt đơn 1 lọ, tổng 315.000đ cho mình rồi nha. Mình kiểm tra lại giúp mình thông tin nhận hàng nhé.",
+    baseReply:
+      "Oke, em chốt đơn 1 lọ, tổng 315.000đ cho mình rồi nha. Khi có mã vận đơn, bên em gửi mình theo dõi ạ.",
+    state: {
+      ...state,
+      selectedQuantity: 1,
+      pipeline: "6.Đã tạo đơn",
+      orderReceived: true,
+      orderFlowStatus: "created",
+      orderDraft: {
+        recipientName: "Nguyễn Minh",
+        phone: "0987654321",
+        legacyAddress: "25 Nguyễn Trãi, Thanh Xuân, Hà Nội",
+        sku: "STOPIREX",
+        quantity: 1,
+        totalVnd: 315_000,
+        paymentMethod: "cod",
+      },
+    },
+    skillId: "order-closing",
+  });
+
+  assert.equal(composed.status, "fallback");
+  assert.equal(composed.reason, "advisor_voice_guard");
+});
+
 test("single-pass không nối lại câu hỏi đối tượng khi lịch sử đã xác nhận bé 15 tuổi", () => {
   const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
   const composed = bridge.adoptInterpretedDraft({

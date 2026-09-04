@@ -3251,6 +3251,16 @@ function assertCriticalDirectionsPreserved(
     .normalize("NFD")
     .replace(/\p{M}/gu, "")
     .replace(/đ/gu, "d");
+  const expectedOrderTotal = state.orderDraft?.totalVnd;
+  if (
+    expectedOrderTotal !== undefined &&
+    /\btong\s+(?:don|tien|thanh toan)\b|\bdon[^.?!\n]{0,30}\bbao nhieu\b/u.test(normalizedMessage) &&
+    !generatedReply.replace(/\s+/gu, "").includes(`${expectedOrderTotal.toLocaleString("vi-VN")}đ`)
+  ) {
+    const error = new Error("LLM làm mất tổng tiền đã được state tính chính xác");
+    error.name = "CriticalDirectionError";
+    throw error;
+  }
   const requiredPatterns = [
     {
       pattern: /chuyển (?:nhân viên|bộ phận liên quan)/iu,
@@ -3364,7 +3374,8 @@ function assertCustomerAdvisorVoice(customerMessage: string, generatedReply: str
   assertStopirexResponseStyle({ customerMessage, response: generatedReply });
   if (
     /\b(?:mình cần mình|em cần em|anh cần anh|chị cần chị)\b/iu.test(generatedReply) ||
-    /\b(mình|em|anh|chị)\b[^.?!\n]{0,50}\bgiúp \1\b/iu.test(generatedReply)
+    /\b(mình|em|anh|chị)\b[^.?!\n]{0,50}\bgiúp \1\b/iu.test(generatedReply) ||
+    /\b(mình|em|anh|chị)\s+(?:gửi|cho|nhắn|kiểm tra|xem)\b[^.?!\n]{0,30}\b\1\b/iu.test(generatedReply)
   ) {
     const error = new Error("LLM tạo câu xưng hô lặp và khó hiểu");
     error.name = "AdvisorVoiceError";
@@ -3413,6 +3424,14 @@ function isExplicitGuaranteeQuestion(value: string): boolean {
 
 function assertActionClaimsGrounded(state: DemoChatState, generatedReply: string): void {
   const normalized = generatedReply.toLocaleLowerCase("vi-VN");
+  if (
+    state.orderReceived &&
+    /(?:kiểm tra lại|xem lại)[^.!?\n]{0,80}(?:recap|đơn|thông tin nhận hàng)|(?:phản hồi|nhắn)[^.!?\n]{0,50}[“"']?đồng ý/iu.test(
+      generatedReply,
+    )
+  ) {
+    throw actionGroundingError("Câu trả lời yêu cầu xác nhận lại sau khi đơn đã được tạo");
+  }
   if (
     /(?:đơn|đơn hàng)[^.!?\n]{0,100}đã có mã vận đơn|đã có mã vận đơn[^.!?\n]{0,100}(?:đơn|đơn hàng)/iu.test(
       generatedReply,

@@ -1588,9 +1588,9 @@ test("single-pass chặn CTA lặp mình ở câu xác nhận đơn", () => {
     state: {
       ...state,
       selectedQuantity: 1,
-      pipeline: "6.Đã tạo đơn",
-      orderReceived: true,
-      orderFlowStatus: "created",
+      pipeline: "5.Chờ TT KH",
+      orderReceived: false,
+      orderFlowStatus: "awaiting_confirmation",
       orderDraft: {
         recipientName: "Nguyễn Minh",
         phone: "0987654321",
@@ -1606,6 +1606,59 @@ test("single-pass chặn CTA lặp mình ở câu xác nhận đơn", () => {
 
   assert.equal(composed.status, "fallback");
   assert.equal(composed.reason, "advisor_voice_guard");
+});
+
+test("single-pass chặn câu xin dữ liệu có xưng hô lặp", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "thôi mình lấy 1 lọ trước thử xem",
+    draftReply: "Oke, mình lấy 1 lọ trước nhé. Mình gửi mình xin tên người nhận với SĐT để lên đơn.",
+    baseReply: "Oke, mình lấy 1 lọ trước nhé. Mình gửi shop tên người nhận với SĐT để lên đơn nha.",
+    state: { ...state, selectedQuantity: 1 },
+    skillId: "order-closing",
+  });
+
+  assert.equal(composed.status, "fallback");
+  assert.equal(composed.reason, "advisor_voice_guard");
+});
+
+test("single-pass phải đọc đúng tổng tiền đã có trong state", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "tổng đơn của mình bao nhiêu vậy",
+    draftReply: "Mình chưa chốt được tổng đơn chính xác lúc này ạ.",
+    baseReply: "Đơn mình gồm 1 lọ, tổng thanh toán 315.000đ nha.",
+    state: {
+      ...state,
+      selectedQuantity: 1,
+      orderDraft: { quantity: 1, totalVnd: 315_000 },
+    },
+  });
+
+  assert.equal(composed.status, "fallback");
+  assert.equal(composed.reason, "critical_direction_guard");
+  assert.match(composed.reply, /315\.000đ/u);
+});
+
+test("single-pass không hỏi xác nhận lại sau khi đơn đã tạo", () => {
+  const bridge = new CodexLlmBridge({ enabled: true, runner: async () => "" });
+  const composed = bridge.adoptInterpretedDraft({
+    customerMessage: "ok vậy chốt nha",
+    draftReply:
+      "Oke, em chốt đơn 1 lọ, tổng 315.000đ rồi nha. Anh/chị kiểm tra lại đơn và xác nhận giúp em nhé.",
+    baseReply: "Oke, em chốt đơn 1 lọ, tổng 315.000đ rồi nha. Khi có mã vận đơn, bên em gửi mình theo dõi ạ.",
+    state: {
+      ...state,
+      selectedQuantity: 1,
+      pipeline: "6.Đã tạo đơn",
+      orderReceived: true,
+      orderFlowStatus: "created",
+      orderDraft: { quantity: 1, totalVnd: 315_000 },
+    },
+  });
+
+  assert.equal(composed.status, "fallback");
+  assert.equal(composed.reason, "action_grounding_guard");
 });
 
 test("single-pass không nối lại câu hỏi đối tượng khi lịch sử đã xác nhận bé 15 tuổi", () => {

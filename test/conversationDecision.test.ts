@@ -69,6 +69,27 @@ test("lệnh mua rõ ràng ghi đè đề nghị gửi giá đang chờ", () => 
   assert.equal(result.intent, "buying");
 });
 
+test("xác nhận đơn rõ ràng thắng nhãn LLM không ổn định", () => {
+  const result = resolveConversationDecision({
+    semantic: {
+      slots: {},
+      intent: "consultation",
+      topic: "other",
+      confidence: 0.99,
+    },
+    exactIntent: "buying",
+    optOut: false,
+    activeCare: false,
+    orderConfirmation: true,
+    collectingOrder: true,
+    affirmativeFollowup: false,
+  });
+
+  assert.equal(result.route, "order_confirmation");
+  assert.equal(result.intent, "buying");
+  assert.match(result.trace.reason, /xác nhận đơn đã đủ dữ liệu/iu);
+});
+
 test("câu hỏi trực tiếp ngắt bước chọn số lượng dù LLM nhận diện đang trả lời bước đó", () => {
   const result = resolveConversationDecision({
     semantic: {

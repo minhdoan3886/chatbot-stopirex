@@ -220,10 +220,7 @@ export function resolveConversationDecision(input: ResolveConversationDecisionIn
     );
   }
 
-  if (
-    input.orderConfirmation &&
-    (!semanticReady || input.semantic.intent === "buying" || input.semantic.intent === "order_support")
-  ) {
+  if (input.orderConfirmation) {
     return decision("order_confirmation", "Khách xác nhận đơn đã đủ dữ liệu.", baseTrace, "buying");
   }
 

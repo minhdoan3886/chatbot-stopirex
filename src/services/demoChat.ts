@@ -3033,11 +3033,14 @@ export class DemoChatService {
       semanticDecision?.status === "interpreted" && semanticDecision.selectedCtaId !== undefined;
     const semanticCta =
       llmOwnsCta && semanticDecision.selectedCtaId !== "none" ? semanticDecision.ctaText?.trim() : undefined;
-    const promptToAppend = factLedgerOwnsResponse
-      ? undefined
-      : llmOwnsCta
-        ? semanticCta
-        : nextBestAction.prompt;
+    const orderAlreadyCreated =
+      session.pipeline === "6.Đã tạo đơn" || resolveOrderFlowStatus(session) === "created";
+    const promptToAppend =
+      factLedgerOwnsResponse || orderAlreadyCreated
+        ? undefined
+        : llmOwnsCta
+          ? semanticCta
+          : nextBestAction.prompt;
     const activeResponseBudget = session.lastIntent === "price_request" ? 650 : 280;
     const nextBestActionFits =
       !promptToAppend || rawReplies.join("\n\n").length + promptToAppend.length + 2 <= activeResponseBudget;

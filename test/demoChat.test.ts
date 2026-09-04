@@ -626,7 +626,15 @@ test("chat nhớ ngữ cảnh và ghi nhận đơn sau xác nhận ĐỒNG Ý", 
   assert.match(confirmation.reply, /Anh\/chị kiểm tra/);
   assert.deepEqual(confirmation.state.orderMissing, []);
 
-  const created = chat.chat(sessionId, "ĐỒNG Ý");
+  const created = chat.chat(sessionId, "ĐỒNG Ý", {
+    intent: "buying",
+    topic: "order",
+    confidence: 0.99,
+    asksDirectAnswer: true,
+    selectedCtaId: "confirm_order_review",
+    ctaText: "Mình kiểm tra lại đơn giúp em nhé?",
+    slots: {},
+  });
   assert.equal(created.state.pipeline, "6.Đã tạo đơn");
   assert.equal(created.replies.length, 1);
   assert.doesNotMatch(created.reply, /DEMO-|đơn thử|localhost|sandbox/iu);
@@ -638,6 +646,7 @@ test("chat nhớ ngữ cảnh và ghi nhận đơn sau xác nhận ĐỒNG Ý", 
   assert.doesNotMatch(created.reply, /https?:\/\/|Link tra cứu/iu);
   assert.doesNotMatch(created.reply, /mã vận đơn:\s*\S+/iu);
   assert.doesNotMatch(created.reply, /không phát sinh giao hàng thật/iu);
+  assert.doesNotMatch(created.reply, /kiểm tra lại|xác nhận giúp/iu);
 });
 
 test("sau báo giá, câu '2 lọ' được chốt gói dù LLM gắn nhầm intent hỏi giá", () => {

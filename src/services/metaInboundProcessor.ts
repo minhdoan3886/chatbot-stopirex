@@ -68,6 +68,7 @@ export class MetaInboundProcessor {
       liveSendEnabled: boolean;
       staffName: string;
       openingVariantId: OpeningVariantId;
+      conversationContextTtlHours?: number;
       orderInbox?: OrderInboxWriter;
       followups?: FollowupCoordinator;
     },
@@ -264,6 +265,41 @@ export class MetaInboundProcessor {
       return { status: "paused", replyCount: dispatched.count };
     }
 
+    const text = batchMessages(
+      contentJobs.map((job) => ({
+        id: job.eventId,
+        sentAt: new Date(job.timestamp),
+        ...(job.text ? { text: job.text } : {}),
+      })),
+    );
+    if (!text) {
+      await this.markProcessed(jobs);
+      return { status: "ignored", replyCount: 0 };
+    }
+
+    const latestInboundAt = contentJobs.reduce(
+      (latest, job) => {
+        const candidate = new Date(job.timestamp);
+        return !Number.isNaN(candidate.getTime()) && candidate > latest ? candidate : latest;
+      },
+      new Date(0),
+    );
+    const contextExpired = isConversationContextExpired({
+      updatedAt: conversation.updatedAt,
+      inboundAt: latestInboundAt,
+      ttlHours: this.options.conversationContextTtlHours ?? 24,
+    });
+    if (contextExpired) {
+      this.options.chat.discardSession(sessionId);
+      this.options.logger.log("info", "conversation_episode_expired", {
+        traceId: first.traceId,
+        conversationId: conversation.conversationId,
+        previousPipeline: conversation.pipelineTag,
+        previousUpdatedAt: conversation.updatedAt,
+        ttlHours: this.options.conversationContextTtlHours ?? 24,
+      });
+    }
+
     let profileFirstName: string | undefined;
     if (!conversation.displayName && this.options.messenger.getProfile) {
       const profile = await this.options.messenger.getProfile(first.senderId);
@@ -285,17 +321,8 @@ export class MetaInboundProcessor {
     }
     const orderEditable = await this.options.orderInbox?.canEditPending?.(sessionId);
     const chatContext = this.context(conversation.displayName, profileFirstName, orderEditable);
-    this.options.chat.restoreSession(sessionId, conversation.runtimeState, chatContext);
-    const text = batchMessages(
-      contentJobs.map((job) => ({
-        id: job.eventId,
-        sentAt: new Date(job.timestamp),
-        ...(job.text ? { text: job.text } : {}),
-      })),
-    );
-    if (!text) {
-      await this.markProcessed(jobs);
-      return { status: "ignored", replyCount: 0 };
+    if (!contextExpired) {
+      this.options.chat.restoreSession(sessionId, conversation.runtimeState, chatContext);
     }
 
     void this.options.messenger.sendTyping(first.senderId).catch(() => undefined);
@@ -555,6 +582,23 @@ export class MetaInboundProcessor {
       });
     }
   }
+}
+
+export function isConversationContextExpired(input: {
+  updatedAt: string;
+  inboundAt: Date;
+  ttlHours: number;
+}): boolean {
+  const previous = new Date(input.updatedAt);
+  if (
+    Number.isNaN(previous.getTime()) ||
+    Number.isNaN(input.inboundAt.getTime()) ||
+    !Number.isFinite(input.ttlHours) ||
+    input.ttlHours <= 0
+  ) {
+    return false;
+  }
+  return input.inboundAt.getTime() - previous.getTime() >= input.ttlHours * 60 * 60 * 1_000;
 }
 
 const FOLLOWUP_PRICE_INTENTS = new Set([

@@ -32,6 +32,9 @@ function fixture(options: {
   attribution?: boolean;
   forceBrainReply?: string;
   stateConflictOnce?: boolean;
+  runtimeState?: unknown;
+  updatedAt?: string;
+  conversationContextTtlHours?: number;
 }) {
   const sent: string[] = [];
   const processed: string[] = [];
@@ -67,9 +70,10 @@ function fixture(options: {
         ...(cachedDisplayName ? { displayName: cachedDisplayName } : {}),
         conversationId: "conversation-1",
         humanStatus: options.humanStatus ?? "bot",
-        runtimeState: {},
+        runtimeState: options.runtimeState ?? {},
         stateVersion: 0,
         pipelineTag: "0.Chưa tư vấn",
+        updatedAt: options.updatedAt ?? new Date().toISOString(),
       };
     },
     async persistConversationMessage() {},
@@ -193,6 +197,7 @@ function fixture(options: {
     liveSendEnabled: options.live,
     staffName: "Mai Lan",
     openingVariantId: "AUTO.dynamic",
+    conversationContextTtlHours: options.conversationContextTtlHours ?? 24,
     orderInbox: {
       async push(input) {
         inboxPushes.push(input as unknown as Record<string, unknown>);
@@ -257,6 +262,33 @@ test("Meta inbound reload state và reconcile đúng một lần khi optimistic 
   assert.equal(result.status, "replied");
   assert.equal(context.sent.length, result.replyCount);
   assert.ok(result.replyCount > 0);
+});
+
+test("Meta mở episode mới sau 24 giờ và không đưa memory hội thoại cũ vào câu chào", async () => {
+  const seededChat = new DemoChatService();
+  seededChat.chat("stale-seed", "Mình không dùng lăn nách hằng ngày");
+  const staleState = seededChat.exportSession("stale-seed");
+  const context = fixture({
+    live: true,
+    runtimeState: staleState,
+    updatedAt: "2026-08-30T07:00:00.000Z",
+    conversationContextTtlHours: 24,
+  });
+
+  const result = await context.processor.processBatch([
+    job({
+      eventId: "new-episode-greeting",
+      text: "hi e",
+      timestamp: "2026-09-05T07:00:00.000Z",
+    }),
+  ]);
+
+  assert.equal(result.status, "replied");
+  assert.ok(context.sent.length > 0);
+  assert.doesNotMatch(context.sent.join(" "), /trước giờ|không dùng lăn nách/iu);
+  const committed = context.runtimeUpdates.at(-1)?.runtimeState;
+  assert.ok(committed && typeof committed === "object");
+  assert.doesNotMatch(JSON.stringify(committed), /không dùng lăn nách/iu);
 });
 
 test("Meta inbound ghi attribution trước cả khi công tắc gửi phản hồi đang tắt", async () => {

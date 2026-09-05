@@ -56,6 +56,7 @@ if (!env.redisUrl || !env.databaseUrl) {
     liveSendEnabled: env.metaLiveSendEnabled,
     staffName: env.metaStaffName,
     openingVariantId: parseOpeningVariant(env.metaOpeningVariant),
+    conversationContextTtlHours: env.outboundWindowHours,
     orderInbox,
     ...(env.followupMode !== "disabled" ? { followups } : {}),
   });

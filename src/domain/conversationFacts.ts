@@ -278,6 +278,7 @@ function semanticFactClaims(
     }
     const value = normalizeFactValue(predicate, fact.value);
     if (value === undefined) return [];
+    if (!semanticEvidenceSupportsFact(predicate, value, evidence)) return [];
     return [
       {
         subjectId,
@@ -293,6 +294,31 @@ function semanticFactClaims(
       },
     ];
   });
+}
+
+function semanticEvidenceSupportsFact(
+  predicate: ConversationFactPredicate,
+  value: string | number | boolean,
+  evidence: string,
+): boolean {
+  const text = normalize(evidence);
+  if (predicate === "product_reaction") {
+    if (value === "itching") return /\bngua\b/u.test(text);
+    if (value === "redness") return /\b(?:do da|da do)\b/u.test(text);
+    const explicitBurning =
+      /\brát\b/iu.test(evidence) || (!/\brất\b/iu.test(evidence) && /\brat\b/u.test(text));
+    return explicitBurning || /\b(?:kich ung|di ung|viem)\b/u.test(text);
+  }
+  if (predicate === "skin_type" && value === "sensitive") {
+    return /\b(?:nhay cam|sensitive)\b/u.test(text);
+  }
+  if (predicate === "sweat_concern") {
+    return /\b(?:mo hoi|uot|dam)\b/u.test(text);
+  }
+  if (predicate === "odor_severity") {
+    return /\b(?:mui|hoi nach)\b/u.test(text);
+  }
+  return true;
 }
 
 function deduplicateClaims(claims: readonly ConversationFactClaim[]): ConversationFactClaim[] {
@@ -756,7 +782,14 @@ function extractConversationFactClaims(
     }
   }
 
-  const adverse = text.match(/\b(ngua|rat|do da|kich ung|di ung|viem)\b/)?.[1];
+  const adverseCandidate = text.match(/\b(ngua|rat|do da|kich ung|di ung|viem)\b/)?.[1];
+  // After accent folding, Vietnamese “rất nhiều” and “rát” both become
+  // `rat`. Preserve the original accents so intensity is never stored as a
+  // skin reaction.
+  const adverse =
+    adverseCandidate === "rat" && /\brất\b/iu.test(raw) && !/\brát\b/iu.test(raw)
+      ? undefined
+      : adverseCandidate;
   const reactionQuestion =
     attribution.memoryQuestion ||
     /\b(?:dung khong|phai khong|chua ta)\b/.test(text) ||

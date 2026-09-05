@@ -32,6 +32,7 @@ import {
   isAbsurdProductRumor,
   isCombinedOrderUpdateAndContextRecap,
   isGarmentStainRemovalQuestion,
+  isNamedCompetitorDecisionQuestion,
   isSensitiveSkinConsultationRequest,
   isSplitShipmentQuoteRequest,
   isThirdPartyPersonalDataRequest,
@@ -788,6 +789,29 @@ export class DemoChatService {
       return this.respond(session, sensitiveSkinConsultationReply(session));
     }
 
+    if (isNamedCompetitorDecisionQuestion(raw)) {
+      session.pipeline = "4.XL băn khoăn";
+      session.orderCollectionPaused = false;
+      session.signal = "CT.Giá/Ship";
+      session.activeSkill = "pricing-objection";
+      session.skillReason = "So sánh đối thủ được trả từ chính sách trung lập và dữ kiện Stopirex đã duyệt.";
+      lockBoundaryDecision(
+        session,
+        "price_objection",
+        "comparison",
+        "Conversation Boundary Policy khóa so sánh đối thủ trước Coverage Gate.",
+      );
+      recordKnowledge(session, [
+        "competitor-neutral-advice",
+        "price-adjustment-france-import",
+        "product-comparison-traditional-rollon",
+        "lab-test-2025-skin-irritation",
+        "audience-sensitive-skin",
+        "pricing-approved-options-2026-08",
+      ]);
+      return this.respond(session, priceObjectionReply(session, text));
+    }
+
     if (isGarmentStainRemovalQuestion(raw)) {
       session.orderCollectionPaused = false;
       session.activeSkill = "direct-answer";
@@ -1301,10 +1325,19 @@ export class DemoChatService {
     const llmInterpretationFailed = Boolean(semantic.status && semantic.status !== "interpreted");
     if (multiActionEnabled && llmInterpretationFailed && isExplicitCustomerQuestion(raw)) {
       const fallback = llmFailureKnowledgeAnswer(raw, semanticSlots);
+      const acceptedQuantity = actionPlan.accepted.find(
+        (action): action is Extract<ConversationAction, { type: "select_quantity" }> =>
+          action.type === "select_quantity",
+      )?.quantity;
+      const canCommitFallbackQuantity = Boolean(
+        committedRequestedQuantity &&
+        (acceptedQuantity === committedRequestedQuantity || isExplicitUnconditionalOrderQuantity(text)),
+      );
       if (
         !quantityBlockedByConditionalRefund &&
         committedRequestedQuantity &&
-        committedRequestedQuantity <= 5
+        committedRequestedQuantity <= 5 &&
+        canCommitFallbackQuantity
       ) {
         selectQuantity(session, committedRequestedQuantity as SupportedOrderQuantity);
         this.move(session, "agreed_to_buy");
@@ -1325,7 +1358,10 @@ export class DemoChatService {
       const replies = [
         ...(fallback ? [fallback.reply] : []),
         ...(needsHuman ? [unsupportedQuestionHandoffReply(raw, [raw])] : []),
-        ...(!quantityBlockedByConditionalRefund && committedRequestedQuantity && session.selectedQuantity
+        ...(!quantityBlockedByConditionalRefund &&
+        committedRequestedQuantity &&
+        canCommitFallbackQuantity &&
+        session.selectedQuantity
           ? [`Dạ em đã ghi nhận mình muốn lấy ${session.selectedQuantity} lọ ạ.`]
           : []),
       ];
@@ -3492,6 +3528,19 @@ function lockBoundaryDecision(
   topic: NonNullable<SemanticUnderstanding["topic"]>,
   reason: string,
 ): void {
+  if (session.manualHandoffReason) {
+    if (session.pipeline === "C3.Chờ CSKH") {
+      session.pipeline = session.previousSalesPipeline ?? "2.Đang tư vấn";
+      session.consultation = {
+        ...session.consultation,
+        stage: session.previousSalesStage ?? "S5.guidance",
+      };
+    }
+    delete session.previousSalesPipeline;
+    delete session.previousSalesStage;
+    delete session.manualHandoffReason;
+    session.orderCollectionPaused = false;
+  }
   overrideDecisionClassification(session, intent, topic, [], reason);
   if (!session.lastDecision) return;
   session.lastDecision.selectedRoute = "direct_intent";
@@ -4636,7 +4685,11 @@ export function isInternalSystemProbe(value: string): boolean {
     /(?:tra ve|xuat ra|in ra).{0,25}(?:json|schema|tool call|function call).{0,35}(?:he thong|noi bo|bi mat)|(?:jailbreak|prompt injection|do thiet lap)/.test(
       text,
     );
-  return asksForSecrets || instructionOverride || forcedInternalOutput;
+  const claimedAuthorityProbe =
+    /\b(?:toi|minh|anh|chi) (?:la|ben)\b.{0,45}\b(?:quan ly|admin|quan tri|noi bo|du an)\b.{0,110}\b(?:liet ke|nhac lai|in ra|cho xem)\b.{0,40}\b(?:quy tac|huong dan|chi dan|cai dat)\b/.test(
+      text,
+    );
+  return asksForSecrets || instructionOverride || forcedInternalOutput || claimedAuthorityProbe;
 }
 
 /** Những phép thử nằm ngoài phạm vi tư vấn Stopirex và cần trả lời minh bạch. */
@@ -5008,10 +5061,10 @@ function priceObjectionReply(session: DemoSession, customerText = ""): string {
     "Stopirex là sản phẩm nhập khẩu từ Pháp, thuộc dòng ngăn tiết mồ hôi chuyên sâu; sau giai đoạn làm quen thường dùng giãn cách 2–3 ngày/lần tùy tình trạng.";
 
   if (isNamedCompetitorPriceObjection(customerText)) {
-    const sensitive = session.conversationMemory.consultationFacts.sensitiveSkin
-      ? " Với da nhạy cảm như mình đã chia sẻ, mình nên thử vùng nhỏ, chỉ lăn mỏng khi da lành và khô."
-      : "";
-    return `Dạ em hiểu mình đang cân nhắc giữa các sản phẩm ạ. Em không nhận xét xấu về Perspirex hay Etiaxil. Stopirex là dòng ngăn tiết mồ hôi chuyên sâu nhập khẩu từ Pháp, dùng giãn cách 2–3 ngày/lần khi đã ổn định. Mẫu thử ghi nhận mức kích ứng da không đáng kể.${sensitive} 1 lọ hiện 285.000đ, combo 2 lọ 510.000đ và miễn phí giao ạ.`;
+    const lastSentence = session.conversationMemory.consultationFacts.sensitiveSkin
+      ? "Với da nhạy cảm như mình đã chia sẻ, mình thử vùng nhỏ và chỉ lăn mỏng khi da lành, khô. Giá 1 lọ là 285.000đ, combo 2 lọ 510.000đ và miễn phí giao ạ."
+      : "Giá 1 lọ là 285.000đ, combo 2 lọ 510.000đ và miễn phí giao ạ.";
+    return `Dạ em hiểu mình đang cân nhắc giữa các sản phẩm, bên em không nhận xét xấu về Perspirex hay Etiaxil ạ. Stopirex là dòng ngăn tiết mồ hôi chuyên sâu nhập khẩu từ Pháp, dùng giãn cách 2–3 ngày/lần khi đã ổn định và mẫu thử ghi nhận mức kích ứng da không đáng kể. ${lastSentence}`;
   }
 
   if (session.selectedQuantity && session.selectedQuantity >= 2) {
@@ -5750,14 +5803,7 @@ export function isPriceConcern(text: string): boolean {
 }
 
 function isNamedCompetitorPriceObjection(value: string): boolean {
-  const text = normalize(value);
-  const namesKnownCompetitor = /\b(?:etiaxil|perspirex)\b/.test(text);
-  const comparesPrice =
-    isPriceConcern(text) ||
-    /\b(?:gia|tien)\b.{0,30}\b(?:etiaxil|perspirex)\b|\b(?:etiaxil|perspirex)\b.{0,60}\b(?:gia|tien|\d+\s*k|re hon|mac hon)\b/.test(
-      text,
-    );
-  return namesKnownCompetitor && comparesPrice;
+  return isNamedCompetitorDecisionQuestion(value);
 }
 
 /**
@@ -6130,6 +6176,18 @@ function extractExplicitOrderQuantity(text: string): number | undefined {
     /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\b/.test(text);
   if (!hasPurchaseAction) return undefined;
   return extractRequestedQuantity(text);
+}
+
+function isExplicitUnconditionalOrderQuantity(text: string): boolean {
+  const purchase = /(?:^|\b)(?:cho|gui|lay|chon|chot|dat|mua)(?:\s+(?:minh|menh|toi|anh|a|chi|em))?\b/.exec(
+    text,
+  );
+  if (purchase?.index === undefined || !extractRequestedQuantity(text)) return false;
+  const conditionalBeforePurchase = /(?:^|\b)(?:neu|gia su|truong hop)\b/.test(text.slice(0, purchase.index));
+  const conditionalPriceOrShipping =
+    /(?:^|\b)(?:neu|gia su|truong hop)\b/.test(text) &&
+    (isQuantityShippingPolicyQuestion(text) || isPriceAndShippingPolicyQuestion(text));
+  return !conditionalBeforePurchase && !conditionalPriceOrShipping;
 }
 
 function extractQuantityOperation(text: string): QuantityOperation | undefined {

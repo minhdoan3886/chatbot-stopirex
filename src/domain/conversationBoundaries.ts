@@ -29,14 +29,26 @@ export function isAbsurdProductRumor(value: string): boolean {
 export function isThirdPartyPersonalDataRequest(value: string): boolean {
   const text = normalize(value);
   const thirdParty =
-    /\b(?:ban|nguoi quen|dong nghiep|anh ay|chi ay|nguoi khac)\b/u.test(text) ||
-    /\b(?:cua|cho) (?:ban|nguoi quen|dong nghiep|anh ay|chi ay|nguoi khac)\b/u.test(text);
+    /\b(?:nguoi ban|ban (?:toi|minh|tui)|nguoi quen|dong nghiep|anh ay|chi ay|nguoi khac)\b/u.test(text) ||
+    /\b(?:cua|cho) (?:nguoi ban|ban (?:toi|minh|tui)|nguoi quen|dong nghiep|anh ay|chi ay|nguoi khac)\b/u.test(
+      text,
+    );
   const requestsLookup =
     /\b(?:check|kiem tra|tra cuu|tim|xem)\b.{0,65}\b(?:so dien thoai|sdt|don|don hang|lich su|he thong|mua)\b/u.test(
       text,
     ) ||
     /\b(?:so dien thoai|sdt|don|don hang|lich su)\b.{0,65}\b(?:check|kiem tra|tra cuu|tim|xem)\b/u.test(text);
   return thirdParty && requestsLookup;
+}
+
+export function isNamedCompetitorDecisionQuestion(value: string): boolean {
+  const text = normalize(value);
+  const namesCompetitor = /\b(?:etiaxil|perspirex)\b/u.test(text);
+  const asksComparison =
+    /\b(?:gia|tien|mac|re hon|mac hon|khac gi|hon gi|co gi hon|tai sao (?:nen|phai) mua|vi sao (?:nen|phai) mua|\d+\s*k)\b/u.test(
+      text,
+    );
+  return namesCompetitor && asksComparison;
 }
 
 export function isSplitShipmentQuoteRequest(value: string): boolean {
@@ -77,6 +89,7 @@ export function isDeterministicBoundaryTurn(value: string): boolean {
     isGarmentStainRemovalQuestion(value) ||
     isAbsurdProductRumor(value) ||
     isThirdPartyPersonalDataRequest(value) ||
+    isNamedCompetitorDecisionQuestion(value) ||
     isSplitShipmentQuoteRequest(value) ||
     isSensitiveSkinConsultationRequest(value) ||
     isCombinedOrderUpdateAndContextRecap(value)

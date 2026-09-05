@@ -29,10 +29,9 @@ export function isAbsurdProductRumor(value: string): boolean {
 export function isThirdPartyPersonalDataRequest(value: string): boolean {
   const text = normalize(value);
   const thirdParty =
-    /\b(?:nguoi ban|ban (?:toi|minh|tui)|nguoi quen|dong nghiep|anh ay|chi ay|nguoi khac)\b/u.test(text) ||
-    /\b(?:cua|cho) (?:nguoi ban|ban (?:toi|minh|tui)|nguoi quen|dong nghiep|anh ay|chi ay|nguoi khac)\b/u.test(
+    /\b(?:nguoi ban|ban minh|ban cua (?:toi|minh|tui)|nguoi quen|dong nghiep|anh ay|chi ay|nguoi khac)\b/u.test(
       text,
-    );
+    ) || /\b(?:cua|cho) (?:nguoi ban|ban minh|nguoi quen|dong nghiep|anh ay|chi ay|nguoi khac)\b/u.test(text);
   const requestsLookup =
     /\b(?:check|kiem tra|tra cuu|tim|xem)\b.{0,65}\b(?:so dien thoai|sdt|don|don hang|lich su|he thong|mua)\b/u.test(
       text,

@@ -414,7 +414,12 @@ export class DemoChatService {
       isBottleLongevityQuestion(text) || semantic.knowledgeIds?.includes("usage-bottle-duration") === true;
 
     if (isReset(text)) return this.reset(session.id);
-    rememberMentionedDeliveryContext(session, raw);
+    // Multi-destination quotes and combined recap/update turns have dedicated
+    // reducers below. The generic single-address observer must not persist a
+    // fragment such as “quê cho em trai ở Đà Nẵng” into shared memory.
+    if (!splitShipmentQuote && !combinedOrderContextRecap) {
+      rememberMentionedDeliveryContext(session, raw);
+    }
     rememberTurn(session, { role: "user", text: raw });
     rememberSemanticPlan(session, semantic, raw);
     const factReduction = reduceConversationFactLedger({
@@ -628,6 +633,7 @@ export class DemoChatService {
           deterministicDeliveryNoteReady ||
           (!semanticAuthorityReady && (session.selectedQuantity || isOrderCaptureMessage(raw))),
         ),
+      acceptLocationChanges: !splitShipmentQuote && !combinedOrderContextRecap,
     });
     const quantityBlockedByConditionalRefund = actionPlan.conflicts.some((conflict) =>
       conflict.includes("giả định hoàn tiền"),
@@ -7627,6 +7633,7 @@ function commitReconciledObservations(input: {
   candidates: ObservedEntityChanges;
   raw: string;
   acceptOrderChanges: boolean;
+  acceptLocationChanges?: boolean;
   semanticOwnedFields?: readonly OrderObservationField[];
 }): ObservedEntityChanges {
   const { session, projection, candidates, raw } = input;
@@ -7698,7 +7705,11 @@ function commitReconciledObservations(input: {
       ],
     };
   }
-  if (candidates.location && (input.acceptOrderChanges || proposed.length === 0)) {
+  if (
+    input.acceptLocationChanges !== false &&
+    candidates.location &&
+    (input.acceptOrderChanges || proposed.length === 0)
+  ) {
     rememberLocation(session, candidates.location, raw);
     acceptedChanges.location = candidates.location;
   }

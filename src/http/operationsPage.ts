@@ -6,7 +6,7 @@ export const operationsPage = `<!doctype html>
 .idle{color:var(--gray);background:#eef0f4}.stage-grid{grid-template-columns:repeat(5,minmax(0,1fr));margin-top:14px}.stage-card{border:1px solid var(--line);border-radius:13px;padding:13px;min-height:120px}.stage-card h3{font-size:13px;margin:0}@media(max-width:1050px){.stage-grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:720px){.stage-grid{grid-template-columns:1fr}}
 </style></head><body><main>
 <section class="hero"><div class="hero-row"><div><h1>Tổng quan vận hành</h1><p>Kết nối, hàng đợi và trạng thái hội thoại Meta trong một màn hình.</p></div><div><div class="hero-actions"><button id="restartConnections" class="restart">↻ Khởi động lại & kiểm tra</button><button id="refresh" class="refresh">Làm mới</button></div><div id="freshness" class="freshness">Đang tải dữ liệu…</div></div></div></section>
-<nav class="tabs"><a class="tab active" href="/operations">Tổng quan kết nối</a><a class="tab" href="/orders">Đơn hàng</a><a class="tab" href="/product">Thông tin sản phẩm</a></nav>
+<nav class="tabs"><a class="tab active" href="/operations">Tổng quan kết nối</a><a class="tab" href="/orders">Đơn hàng</a><a class="tab" href="/comments">Bình luận</a><a class="tab" href="/product">Thông tin sản phẩm</a><a class="tab" href="/pages">Fanpage</a></nav>
 <div id="error" class="error-banner"></div>
 <div id="controlResult" class="control-banner" role="status" aria-live="polite"></div>
 <section id="dashboard">

@@ -7,6 +7,8 @@ import { FollowupDispatcher } from "./services/followupDispatcher.js";
 import { PgFollowupRepository } from "./services/followupRepository.js";
 import { CodexLlmBridge } from "./services/codexLlm.js";
 import { StructuredLogger } from "./services/logger.js";
+import { MetaPageCredentialVault } from "./services/metaPageCredential.js";
+import { MetaPageManagementService } from "./services/metaPageManagement.js";
 
 const env = loadEnv();
 const logger = new StructuredLogger();
@@ -30,9 +32,21 @@ if (!env.redisUrl || !env.databaseUrl) {
     pageAccessToken: env.metaPageAccessToken ?? "",
     graphVersion: env.metaGraphVersion,
   });
+  const metaPages = env.encryptionKey
+    ? new MetaPageManagementService({
+        store: postgres,
+        vault: new MetaPageCredentialVault(env.encryptionKey),
+        graphVersion: env.metaGraphVersion,
+        ...(env.metaPageId ? { environmentPageId: env.metaPageId } : {}),
+        ...(env.metaPageAccessToken ? { environmentPageAccessToken: env.metaPageAccessToken } : {}),
+      })
+    : undefined;
   const dispatcher = new FollowupDispatcher({
     repository,
     messenger,
+    ...(metaPages
+      ? { messengerForPage: (pageId: string) => metaPages.messengerForInternalPage(pageId) }
+      : {}),
     logger,
     mode: env.followupMode,
     outboundWindowHours: env.outboundWindowHours,

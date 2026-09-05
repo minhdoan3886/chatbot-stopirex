@@ -32,6 +32,24 @@ function page(title: string, body: string): string {
 
 const pageContact = `Nếu cần hỗ trợ hoặc thực hiện quyền đối với dữ liệu, khách hàng có thể nhắn tin trực tiếp cho <a href="https://www.facebook.com/108631178590851">Facebook Page Stopirex</a>.`;
 
+export const appReviewPage = page(
+  "Facebook App Review",
+  `<h1>Stopirex Facebook Customer Care</h1>
+  <p class="meta">Official application information for Meta App Review.</p>
+  <p>Stopirex is a customer-care and commerce application used by authorized staff to manage conversations and comments on Facebook Pages that they administer.</p>
+  <h2>How the application uses Meta products</h2>
+  <ul>
+    <li>Facebook Login lets a Page administrator select which managed Page to connect.</li>
+    <li>Messenger Webhooks deliver customer-initiated messages for customer-care replies.</li>
+    <li>Page comment events support public replies, one private follow-up and protection of phone numbers or emails posted publicly.</li>
+    <li>Each connected Page can be enabled or disabled independently.</li>
+  </ul>
+  <h2>Policies</h2>
+  <ul><li><a href="/privacy-policy">Privacy Policy</a></li><li><a href="/terms">Terms of Service</a></li><li><a href="/data-deletion">Data Deletion Instructions</a></li></ul>
+  <h2>Reviewer test path</h2>
+  <p>Sign in through the Fanpage administration screen, grant the requested Page permissions, select the supplied test Page, then test Messenger and a new Page comment.</p>`,
+);
+
 export const privacyPolicyPage = page(
   "Chính sách quyền riêng tư",
   `<h1>Chính sách quyền riêng tư</h1>

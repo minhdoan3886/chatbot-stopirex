@@ -13,6 +13,8 @@ import { MetaInboundProcessor, type MetaInboundJob } from "./services/metaInboun
 import { PipelineTelemetryTracker } from "./services/pipelineTelemetry.js";
 import { PgFollowupRepository } from "./services/followupRepository.js";
 import { OrderInboxService } from "./services/orderInbox.js";
+import { MetaPageCredentialVault } from "./services/metaPageCredential.js";
+import { MetaPageManagementService } from "./services/metaPageManagement.js";
 
 const queueTopic = "inbound";
 const queueGroup = "meta-inbound-v1";
@@ -47,9 +49,21 @@ if (!env.redisUrl || !env.databaseUrl) {
     pageAccessToken: env.metaPageAccessToken ?? "",
     graphVersion: env.metaGraphVersion,
   });
+  const metaPages = env.encryptionKey
+    ? new MetaPageManagementService({
+        store: postgres,
+        vault: new MetaPageCredentialVault(env.encryptionKey),
+        graphVersion: env.metaGraphVersion,
+        ...(env.metaPageId ? { environmentPageId: env.metaPageId } : {}),
+        ...(env.metaPageAccessToken ? { environmentPageAccessToken: env.metaPageAccessToken } : {}),
+      })
+    : undefined;
   const processor = new MetaInboundProcessor({
     store: postgres,
     messenger,
+    ...(metaPages
+      ? { messengerForPage: (pageId: string) => metaPages.messengerForInternalPage(pageId) }
+      : {}),
     chat,
     brain,
     logger,
@@ -269,7 +283,7 @@ function parseQueueMessage(
     typeof value.eventId !== "string" ||
     typeof value.senderId !== "string" ||
     typeof value.kind !== "string" ||
-    !["text", "image", "postback", "referral", "delivery", "read"].includes(value.kind) ||
+    !["text", "image", "postback", "referral", "delivery", "read", "comment"].includes(value.kind) ||
     typeof value.timestamp !== "string"
   ) {
     return undefined;
@@ -287,6 +301,8 @@ function parseQueueMessage(
     attempt: typeof value.attempt === "number" && Number.isInteger(value.attempt) ? value.attempt : 0,
     ...(typeof value.text === "string" ? { text: value.text } : {}),
     ...(typeof value.attachmentUrl === "string" ? { attachmentUrl: value.attachmentUrl } : {}),
+    ...(typeof value.commentId === "string" ? { commentId: value.commentId } : {}),
+    ...(typeof value.postId === "string" ? { postId: value.postId } : {}),
     ...(isMetaReferralAttribution(value.referral) ? { referral: value.referral } : {}),
   };
   return { id: message.id, payload: parsed };
@@ -310,7 +326,7 @@ function groupByConversation(
 ): Array<Array<RedisQueueMessage<MetaInboundJob>>> {
   const grouped = new Map<string, Array<RedisQueueMessage<MetaInboundJob>>>();
   for (const message of messages) {
-    const key = `${message.payload.tenantId}:${message.payload.pageId}:${message.payload.senderId}`;
+    const key = conversationKey(message.payload);
     const batch = grouped.get(key) ?? [];
     batch.push(message);
     grouped.set(key, batch);
@@ -327,6 +343,9 @@ async function collectConversationBurst(
   }
   const first = initialBatch[0];
   if (!first) return initialBatch;
+  // Each comment has its own public/private reply lifecycle and must never be
+  // debounced together with a different comment from the same customer.
+  if (first.payload.kind === "comment") return initialBatch;
   const targetKey = conversationKey(first.payload);
   const batch = [...initialBatch];
   const seenIds = new Set(batch.map((message) => message.id));
@@ -374,11 +393,12 @@ async function collectConversationBurst(
 }
 
 function conversationKey(job: MetaInboundJob): string {
-  return `${job.tenantId}:${job.pageId}:${job.senderId}`;
+  const channel = job.kind === "comment" ? `comment:${job.eventId}` : `messenger:${job.senderId}`;
+  return `${job.tenantId}:${job.pageId}:${channel}`;
 }
 
 function isCustomerContent(job: MetaInboundJob): boolean {
-  return job.kind === "text" || job.kind === "image" || job.kind === "postback";
+  return job.kind === "text" || job.kind === "image" || job.kind === "postback" || job.kind === "comment";
 }
 
 async function retryOrAcknowledge(

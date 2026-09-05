@@ -56,6 +56,7 @@ export class FollowupDispatcher {
     private readonly options: {
       repository: PgFollowupRepository;
       messenger: MetaMessenger;
+      messengerForPage?: (pageId: string) => Promise<MetaMessenger>;
       logger: StructuredLogger;
       mode: FollowupMode;
       outboundWindowHours: number;
@@ -131,7 +132,10 @@ export class FollowupDispatcher {
         };
     const text = composed.text;
     const pendingQuestionTopic = questionTopic(text);
-    const result = await this.options.messenger.sendText({
+    const messenger = this.options.messengerForPage
+      ? await this.options.messengerForPage(job.pageId)
+      : this.options.messenger;
+    const result = await messenger.sendText({
       recipientId: job.externalCustomerId,
       text,
       idempotencyKey: job.idempotencyKey,

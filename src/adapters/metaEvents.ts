@@ -6,13 +6,15 @@ export type MetaInbound = {
   recipientId?: string;
   eventId: string;
   timestamp: Date;
-  kind: "text" | "image" | "postback" | "referral" | "delivery" | "read";
+  kind: "text" | "image" | "postback" | "referral" | "delivery" | "read" | "comment";
   text?: string;
   attachmentUrl?: string;
   isEcho: boolean;
   appId?: string;
   metadata?: string;
   referral?: MetaReferralAttribution;
+  commentId?: string;
+  postId?: string;
   payload: unknown;
 };
 
@@ -29,9 +31,9 @@ export function parseMetaWebhook(payload: unknown): MetaInbound[] {
   const events: MetaInbound[] = [];
   for (const entry of root.entry) {
     if (!entry || typeof entry !== "object") continue;
-    const page = entry as { id?: unknown; messaging?: unknown[] };
-    if (typeof page.id !== "string" || !Array.isArray(page.messaging)) continue;
-    for (const item of page.messaging) {
+    const page = entry as { id?: unknown; messaging?: unknown[]; changes?: unknown[] };
+    if (typeof page.id !== "string") continue;
+    for (const item of page.messaging ?? []) {
       if (!item || typeof item !== "object") continue;
       const event = item as Record<string, unknown>;
       const sender = event.sender as { id?: unknown } | undefined;
@@ -100,6 +102,40 @@ export function parseMetaWebhook(payload: unknown): MetaInbound[] {
           : {}),
         ...(typeof message?.metadata === "string" ? { metadata: message.metadata } : {}),
         ...(referral ? { referral } : {}),
+        payload: item,
+      });
+    }
+    for (const item of page.changes ?? []) {
+      const change = record(item);
+      const value = record(change?.value);
+      const from = record(value?.from);
+      if (
+        change?.field !== "feed" ||
+        value?.item !== "comment" ||
+        value?.verb !== "add" ||
+        typeof from?.id !== "string" ||
+        from.id === page.id ||
+        typeof value?.comment_id !== "string" ||
+        typeof value?.message !== "string" ||
+        !value.message.trim()
+      ) {
+        continue;
+      }
+      const rawTimestamp = Number(
+        value.created_time ?? (entry as Record<string, unknown>).time ?? Date.now(),
+      );
+      const timestampMs =
+        rawTimestamp > 0 && rawTimestamp < 10_000_000_000 ? rawTimestamp * 1_000 : rawTimestamp;
+      events.push({
+        pageId: page.id,
+        senderId: from.id,
+        eventId: value.comment_id,
+        timestamp: new Date(Number.isFinite(timestampMs) ? timestampMs : Date.now()),
+        kind: "comment",
+        text: value.message.trim(),
+        isEcho: false,
+        commentId: value.comment_id,
+        ...(typeof value.post_id === "string" ? { postId: value.post_id } : {}),
         payload: item,
       });
     }

@@ -9,6 +9,7 @@ export type AppEnv = {
   metaPageAccessToken?: string;
   metaPageId?: string;
   metaPublicWebhookUrl?: string;
+  metaOAuthRedirectUri?: string;
   metaActivePage: "primary" | "test";
   metaGraphVersion: string;
   metaLiveSendEnabled: boolean;
@@ -104,6 +105,18 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
       throw new Error("META_PUBLIC_WEBHOOK_URL phải dùng HTTPS");
     }
     env.metaPublicWebhookUrl = publicWebhookUrl.toString();
+  }
+  const oauthRedirectValue =
+    source.META_OAUTH_REDIRECT_URI ||
+    (env.metaPublicWebhookUrl
+      ? new URL("/api/meta/oauth/callback", env.metaPublicWebhookUrl).toString()
+      : undefined);
+  if (oauthRedirectValue) {
+    const oauthRedirectUri = new URL(oauthRedirectValue);
+    if (oauthRedirectUri.protocol !== "https:") {
+      throw new Error("META_OAUTH_REDIRECT_URI phải dùng HTTPS");
+    }
+    env.metaOAuthRedirectUri = oauthRedirectUri.toString();
   }
   if (source.DATABASE_URL) env.databaseUrl = source.DATABASE_URL;
   if (source.REDIS_URL) env.redisUrl = source.REDIS_URL;

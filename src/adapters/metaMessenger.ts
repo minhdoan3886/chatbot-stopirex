@@ -94,6 +94,41 @@ export class GraphMetaMessenger implements MetaMessenger {
     return result.ok ? { ok: true, value: undefined } : result;
   }
 
+  async sendPrivateCommentReply(input: {
+    commentId: string;
+    text: string;
+    idempotencyKey: string;
+  }): Promise<ProviderResult<{ messageId: string }>> {
+    const direct = await this.requestEndpoint(`${encodeURIComponent(input.commentId)}/private_replies`, {
+      message: input.text,
+    });
+    if (direct.ok) return resultWithMessageId(direct.value);
+    if (direct.code !== "meta_400" && direct.code !== "meta_404") return direct;
+    const fallback = await this.request({
+      recipient: { comment_id: input.commentId },
+      message: { text: input.text },
+    });
+    return fallback.ok ? resultWithMessageId(fallback.value) : fallback;
+  }
+
+  async sendPublicCommentReply(input: {
+    commentId: string;
+    text: string;
+    idempotencyKey: string;
+  }): Promise<ProviderResult<{ messageId: string }>> {
+    const result = await this.requestEndpoint(`${encodeURIComponent(input.commentId)}/comments`, {
+      message: input.text,
+    });
+    return result.ok ? resultWithMessageId(result.value) : result;
+  }
+
+  async setCommentHidden(input: { commentId: string; hidden: boolean }): Promise<ProviderResult<void>> {
+    const result = await this.requestEndpoint(encodeURIComponent(input.commentId), {
+      is_hidden: input.hidden,
+    });
+    return result.ok ? { ok: true, value: undefined } : result;
+  }
+
   private async send(body: unknown): Promise<ProviderResult<{ messageId: string }>> {
     const result = await this.request(body);
     if (!result.ok) return result;
@@ -104,9 +139,13 @@ export class GraphMetaMessenger implements MetaMessenger {
   }
 
   private async request(body: unknown): Promise<ProviderResult<unknown>> {
+    return this.requestEndpoint("me/messages", body);
+  }
+
+  private async requestEndpoint(endpoint: string, body: unknown): Promise<ProviderResult<unknown>> {
     try {
       const response = await (this.config.fetcher ?? fetch)(
-        `https://graph.facebook.com/${this.config.graphVersion}/me/messages?access_token=${encodeURIComponent(this.config.pageAccessToken)}`,
+        `https://graph.facebook.com/${this.config.graphVersion}/${endpoint}?access_token=${encodeURIComponent(this.config.pageAccessToken)}`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -114,13 +153,15 @@ export class GraphMetaMessenger implements MetaMessenger {
           signal: AbortSignal.timeout(this.config.timeoutMs ?? 10_000),
         },
       );
-      const payload = (await response.json()) as unknown;
+      const payload = (await response.json()) as {
+        error?: { code?: unknown; error_subcode?: unknown; message?: unknown };
+      };
       if (response.ok) return { ok: true, value: payload };
       return {
         ok: false,
         retryable: response.status === 429 || response.status >= 500,
         code: `meta_${response.status}`,
-        message: "Meta request failed",
+        message: typeof payload.error?.message === "string" ? payload.error.message : "Meta request failed",
       };
     } catch (error) {
       return {
@@ -131,6 +172,19 @@ export class GraphMetaMessenger implements MetaMessenger {
       };
     }
   }
+}
+
+function resultWithMessageId(payload: unknown): ProviderResult<{ messageId: string }> {
+  const record = payload as { id?: unknown; message_id?: unknown };
+  const messageId =
+    typeof record.id === "string"
+      ? record.id
+      : typeof record.message_id === "string"
+        ? record.message_id
+        : undefined;
+  return messageId
+    ? { ok: true, value: { messageId } }
+    : { ok: false, retryable: false, code: "invalid_response", message: "Meta không trả message_id" };
 }
 
 function cleanProfileName(value: unknown): string | undefined {

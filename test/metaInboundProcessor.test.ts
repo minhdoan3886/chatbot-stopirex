@@ -37,6 +37,11 @@ function fixture(options: {
   conversationContextTtlHours?: number;
 }) {
   const sent: string[] = [];
+  const privateCommentReplies: string[] = [];
+  const publicCommentReplies: string[] = [];
+  const commentDispatchOrder: string[] = [];
+  const commentVisibilityChanges: Array<{ commentId: string; hidden: boolean }> = [];
+  const commentWorkflowUpdates: Array<Record<string, unknown>> = [];
   const processed: string[] = [];
   const runtimeUpdates: Array<Record<string, unknown>> = [];
   const outbox = new Map<
@@ -122,6 +127,26 @@ function fixture(options: {
     async markInboundProcessed(input) {
       processed.push(input.externalEventId);
     },
+    async upsertMetaCommentReceived(input) {
+      commentWorkflowUpdates.push({ action: "received", ...input });
+      return "comment-workflow-1";
+    },
+    async prepareMetaCommentReplies(input) {
+      commentWorkflowUpdates.push({ action: "prepared", ...input });
+      return true;
+    },
+    async markMetaCommentPartSent(input) {
+      commentWorkflowUpdates.push({ action: "sent", ...input });
+      return true;
+    },
+    async markMetaCommentIssue(input) {
+      commentWorkflowUpdates.push({ action: "issue", ...input });
+      return true;
+    },
+    async markMetaCommentVisibilityByExternal(input) {
+      commentWorkflowUpdates.push({ action: "visibility", ...input });
+      return true;
+    },
     ...(options.attribution
       ? {
           async recordMarketingAttribution(input: Record<string, unknown>) {
@@ -165,6 +190,38 @@ function fixture(options: {
     },
     async sendImage() {
       return { ok: true, value: { messageId: "image-1" } };
+    },
+    async sendPrivateCommentReply(input) {
+      sendAttempts += 1;
+      if ((options.failFirstSend && sendAttempts === 1) || options.failSendAttempt === sendAttempts) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "temporary_failure",
+          message: "temporary failure",
+        };
+      }
+      commentDispatchOrder.push("private");
+      privateCommentReplies.push(input.text);
+      return { ok: true, value: { messageId: `private-comment-${privateCommentReplies.length}` } };
+    },
+    async sendPublicCommentReply(input) {
+      sendAttempts += 1;
+      if ((options.failFirstSend && sendAttempts === 1) || options.failSendAttempt === sendAttempts) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "temporary_failure",
+          message: "temporary failure",
+        };
+      }
+      commentDispatchOrder.push("public");
+      publicCommentReplies.push(input.text);
+      return { ok: true, value: { messageId: `public-comment-${publicCommentReplies.length}` } };
+    },
+    async setCommentHidden(input) {
+      commentVisibilityChanges.push(input);
+      return { ok: true, value: undefined };
     },
   };
   const chat = new DemoChatService();
@@ -215,6 +272,11 @@ function fixture(options: {
     followupCancellations,
     inboxPushes,
     attributionTouches,
+    privateCommentReplies,
+    publicCommentReplies,
+    commentDispatchOrder,
+    commentVisibilityChanges,
+    commentWorkflowUpdates,
     get commitAttempts() {
       return commitAttempts;
     },
@@ -252,6 +314,74 @@ test("Meta inbound chỉ lưu dữ liệu khi công tắc gửi thật đang t�
   assert.deepEqual(result, { status: "ingested", replyCount: 0 });
   assert.deepEqual(context.sent, []);
   assert.deepEqual(context.processed, ["message-1"]);
+});
+
+test("Meta comment trả lời công khai trước rồi gửi đúng một private reply", async () => {
+  const context = fixture({ live: true });
+  const result = await context.processor.processBatch([
+    job({
+      eventId: "comment-1",
+      kind: "comment",
+      commentId: "comment-1",
+      text: "Giá combo 2 lọ bao nhiêu?",
+    }),
+  ]);
+
+  assert.deepEqual(result, { status: "replied", replyCount: 2 });
+  assert.deepEqual(context.commentDispatchOrder, ["public", "private"]);
+  assert.equal(context.privateCommentReplies.length, 1);
+  assert.match(context.privateCommentReplies[0] ?? "", /510\.000đ/u);
+  assert.doesNotMatch(context.publicCommentReplies[0] ?? "", /\d{3}[.]?\d{3}\s*đ/iu);
+  assert.ok(
+    context.commentWorkflowUpdates.some((item) => item.action === "prepared" && item.category === "price"),
+  );
+  assert.equal(context.followupSchedules.length, 0);
+});
+
+test("Meta comment có SĐT được tự ẩn để bảo vệ khách", async () => {
+  const context = fixture({ live: true });
+  await context.processor.processBatch([
+    job({
+      eventId: "comment-pii-1",
+      kind: "comment",
+      commentId: "comment-pii-1",
+      text: "Shop gọi mình số 0983425566 nhé",
+    }),
+  ]);
+  assert.deepEqual(context.commentVisibilityChanges, [{ commentId: "comment-pii-1", hidden: true }]);
+  assert.ok(
+    context.commentWorkflowUpdates.some((item) => item.action === "visibility" && item.hidden === true),
+  );
+});
+
+test("Meta không tự ẩn khiếu nại thật nếu comment không có PII", async () => {
+  const context = fixture({ live: true });
+  await context.processor.processBatch([
+    job({
+      eventId: "comment-complaint-1",
+      kind: "comment",
+      commentId: "comment-complaint-1",
+      text: "Đơn của mình bị hủy, shop kiểm tra gấp giúp",
+    }),
+  ]);
+  assert.deepEqual(context.commentVisibilityChanges, []);
+});
+
+test("retry private comment không gửi lại public hoặc nhân đôi private reply", async () => {
+  const context = fixture({ live: true, failSendAttempt: 2 });
+  const input = job({
+    eventId: "comment-retry-1",
+    kind: "comment",
+    commentId: "comment-retry-1",
+    text: "xin giá combo 2 lọ",
+  });
+  await assert.rejects(() => context.processor.processBatch([input]), /temporary failure/u);
+  assert.equal(context.publicCommentReplies.length, 1);
+  assert.equal(context.privateCommentReplies.length, 0);
+  const retried = await context.processor.processBatch([input]);
+  assert.equal(retried.status, "replied");
+  assert.equal(context.publicCommentReplies.length, 1);
+  assert.equal(context.privateCommentReplies.length, 1);
 });
 
 test("Meta inbound reload state và reconcile đúng một lần khi optimistic commit xung đột", async () => {

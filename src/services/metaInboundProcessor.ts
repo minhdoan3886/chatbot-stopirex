@@ -16,6 +16,7 @@ import type { FollowupCycleSchedule } from "./followupRepository.js";
 import type { OrderDraft } from "../domain/orders.js";
 import type { PushOrderInboxInput } from "./orderInbox.js";
 import type { MetaReferralAttribution } from "../domain/marketingAttribution.js";
+import { composeCommentReplyPlan, isLowInformationComment } from "./commentReplyPolicy.js";
 
 export type FollowupCoordinator = {
   cancelConversation(input: { tenantId: string; conversationId: string; reason: string }): Promise<number>;
@@ -34,10 +35,12 @@ export type MetaInboundJob = {
   externalPageId: string;
   eventId: string;
   senderId: string;
-  kind: "text" | "image" | "postback" | "referral" | "delivery" | "read";
+  kind: "text" | "image" | "postback" | "referral" | "delivery" | "read" | "comment";
   text?: string;
   attachmentUrl?: string;
   referral?: MetaReferralAttribution;
+  commentId?: string;
+  postId?: string;
   timestamp: string;
   payload: unknown;
   attempt: number;
@@ -54,6 +57,11 @@ export type MetaInboundStore = Pick<
   | "markConversationTurnOutboundSent"
   | "markInboundProcessed"
   | "canDispatchConversationOutbound"
+  | "upsertMetaCommentReceived"
+  | "prepareMetaCommentReplies"
+  | "markMetaCommentPartSent"
+  | "markMetaCommentIssue"
+  | "markMetaCommentVisibilityByExternal"
 > &
   Partial<Pick<PostgresStore, "recordMarketingAttribution">>;
 
@@ -62,6 +70,7 @@ export class MetaInboundProcessor {
     private readonly options: {
       store: MetaInboundStore;
       messenger: MetaMessenger;
+      messengerForPage?: (pageId: string) => Promise<MetaMessenger>;
       chat: DemoChatService;
       brain: MetaChatBrain;
       logger: StructuredLogger;
@@ -111,14 +120,30 @@ export class MetaInboundProcessor {
     ) {
       throw new Error("meta_batch_scope_mismatch");
     }
+    const isCommentTurn = jobs.every((job) => job.kind === "comment");
+    if (jobs.some((job) => (job.kind === "comment") !== isCommentTurn)) {
+      throw new Error("meta_batch_channel_mismatch");
+    }
     let conversation = await this.options.store.ensureMessengerConversation({
       tenantId: first.tenantId,
       pageId: first.pageId,
       externalCustomerId: first.senderId,
     });
+    if (isCommentTurn && first.commentId && first.text) {
+      await this.options.store.upsertMetaCommentReceived({
+        tenantId: first.tenantId,
+        pageId: first.pageId,
+        conversationId: conversation.conversationId,
+        externalCommentId: first.commentId,
+        ...(first.postId ? { externalPostId: first.postId } : {}),
+        externalCustomerId: first.senderId,
+        commentText: first.text,
+      });
+    }
     const sessionId = `${first.pageId}:${first.senderId}`;
     const contentJobs = jobs.filter(
-      (job) => job.kind === "text" || job.kind === "image" || job.kind === "postback",
+      (job) =>
+        job.kind === "text" || job.kind === "image" || job.kind === "postback" || job.kind === "comment",
     );
     const attributionJob = jobs.find((job) => job.referral) ?? contentJobs[0];
     if (attributionJob && this.options.store.recordMarketingAttribution) {
@@ -150,7 +175,7 @@ export class MetaInboundProcessor {
         conversationId: conversation.conversationId,
         externalMessageId: job.eventId,
         direction: "inbound",
-        kind: job.kind as "text" | "image" | "postback",
+        kind: job.kind === "comment" ? "text" : (job.kind as "text" | "image" | "postback"),
         ...(job.text ? { text: job.text } : {}),
         payload: job.payload,
       });
@@ -183,9 +208,21 @@ export class MetaInboundProcessor {
       return { status: "ingested", replyCount: 0 };
     }
     if (conversation.humanStatus !== "bot") {
+      if (isCommentTurn && first.commentId) {
+        await this.options.store.markMetaCommentIssue({
+          tenantId: first.tenantId,
+          pageId: first.pageId,
+          externalCommentId: first.commentId,
+          status: "paused",
+          errorCode: "human_takeover_active",
+        });
+      }
       await this.markProcessed(jobs);
       return { status: "paused", replyCount: 0 };
     }
+    const messenger = this.options.messengerForPage
+      ? await this.options.messengerForPage(first.pageId)
+      : this.options.messenger;
     const existingOutbound = await this.options.store.findConversationTurnOutbound({
       tenantId: first.tenantId,
       idempotencyKey: turnIdempotencyKey,
@@ -204,12 +241,13 @@ export class MetaInboundProcessor {
           conversation,
           existingOutbound,
           conversation.stateVersion,
+          messenger,
         );
         replyCount = dispatched.count;
         suppressed = dispatched.suppressed;
         lastMessageId = dispatched.lastMessageId ?? lastMessageId;
       }
-      if (lastMessageId && isFollowupEligiblePipeline(conversation.pipelineTag)) {
+      if (!isCommentTurn && lastMessageId && isFollowupEligiblePipeline(conversation.pipelineTag)) {
         await this.scheduleFollowup({
           tenantId: first.tenantId,
           pageId: first.pageId,
@@ -237,7 +275,7 @@ export class MetaInboundProcessor {
     if (imageJobs.length > 0) {
       const reply =
         "Dạ em đã nhận được hình ảnh của mình ạ. Em chuyển bộ phận liên quan kiểm tra nội dung ảnh và phản hồi lại mình sớm nhé.";
-      void this.options.messenger.sendTyping(first.senderId).catch(() => undefined);
+      void messenger.sendTyping(first.senderId).catch(() => undefined);
       const committed = await this.options.store.commitConversationTurn({
         tenantId: first.tenantId,
         pageId: first.pageId,
@@ -261,6 +299,7 @@ export class MetaInboundProcessor {
         conversation,
         committed.outbound,
         committed.stateVersion,
+        messenger,
       );
       return { status: "paused", replyCount: dispatched.count };
     }
@@ -277,13 +316,10 @@ export class MetaInboundProcessor {
       return { status: "ignored", replyCount: 0 };
     }
 
-    const latestInboundAt = contentJobs.reduce(
-      (latest, job) => {
-        const candidate = new Date(job.timestamp);
-        return !Number.isNaN(candidate.getTime()) && candidate > latest ? candidate : latest;
-      },
-      new Date(0),
-    );
+    const latestInboundAt = contentJobs.reduce((latest, job) => {
+      const candidate = new Date(job.timestamp);
+      return !Number.isNaN(candidate.getTime()) && candidate > latest ? candidate : latest;
+    }, new Date(0));
     const contextExpired = isConversationContextExpired({
       updatedAt: conversation.updatedAt,
       inboundAt: latestInboundAt,
@@ -301,8 +337,8 @@ export class MetaInboundProcessor {
     }
 
     let profileFirstName: string | undefined;
-    if (!conversation.displayName && this.options.messenger.getProfile) {
-      const profile = await this.options.messenger.getProfile(first.senderId);
+    if (!conversation.displayName && messenger.getProfile) {
+      const profile = await messenger.getProfile(first.senderId);
       if (profile.ok && profile.value.name) {
         profileFirstName = profile.value.firstName;
         conversation = await this.options.store.ensureMessengerConversation({
@@ -325,16 +361,40 @@ export class MetaInboundProcessor {
       this.options.chat.restoreSession(sessionId, conversation.runtimeState, chatContext);
     }
 
-    void this.options.messenger.sendTyping(first.senderId).catch(() => undefined);
-    let result = await this.options.brain.reply({
-      sessionId,
-      text,
-      traceId: first.traceId,
-      tenantId: first.tenantId,
-      pageId: first.pageId,
-      conversationId: conversation.conversationId,
-      ...chatContext,
-    });
+    if (!isCommentTurn) {
+      void messenger.sendTyping(first.senderId).catch(() => undefined);
+    }
+    const lowInformationComment = isCommentTurn && isLowInformationComment(text);
+    let result = lowInformationComment
+      ? this.options.chat.chat(
+          sessionId,
+          text,
+          {
+            slots: {},
+            intent: "consultation",
+            topic: "other",
+            subject: "product",
+            scenario: "actual",
+            asksDirectAnswer: false,
+            confidence: 1,
+            needsClarification: false,
+            evidence: [],
+            actions: [],
+            uncertainties: [],
+            knowledgeIds: [],
+            unsupportedQuestions: [],
+          },
+          chatContext,
+        )
+      : await this.options.brain.reply({
+          sessionId,
+          text,
+          traceId: first.traceId,
+          tenantId: first.tenantId,
+          pageId: first.pageId,
+          conversationId: conversation.conversationId,
+          ...chatContext,
+        });
     if (isContentFreeCustomerMessage(text) && !isHelpfulContentFreeReply(text, result.reply)) {
       const reply =
         "Dạ em chào mình ạ. Mình đang cần hỗ trợ về mồ hôi, mùi cơ thể, cách dùng, giá hay đơn hàng ạ?";
@@ -361,6 +421,17 @@ export class MetaInboundProcessor {
       });
       return { status: "superseded", replyCount: 0 };
     }
+    const commentPlan = isCommentTurn
+      ? composeCommentReplyPlan({
+          commentText: text,
+          ...(result.state.lastIntent ? { intent: result.state.lastIntent } : {}),
+          groundedReplies: result.replies.slice(0, 2),
+          humanCareRequired:
+            result.state.botPaused ||
+            result.state.decisionTrace?.selectedRoute === "start_care" ||
+            result.state.decisionTrace?.selectedRoute === "active_care",
+        })
+      : undefined;
     const committed = await this.options.store.commitConversationTurn({
       tenantId: first.tenantId,
       pageId: first.pageId,
@@ -376,9 +447,53 @@ export class MetaInboundProcessor {
       outbound: {
         idempotencyKey: turnIdempotencyKey,
         recipientId: first.senderId,
-        texts: result.replies.slice(0, 2),
+        texts: commentPlan ? [commentPlan.publicReply, commentPlan.privateReply] : result.replies.slice(0, 2),
       },
     });
+    if (commentPlan && first.commentId) {
+      await this.options.store.prepareMetaCommentReplies({
+        tenantId: first.tenantId,
+        pageId: first.pageId,
+        externalCommentId: first.commentId,
+        ...(result.state.lastIntent ? { intent: result.state.lastIntent } : {}),
+        category: commentPlan.category,
+        priority: commentPlan.priority,
+        moderationRecommendation: commentPlan.moderationRecommendation,
+        ...(commentPlan.moderationReason ? { moderationReason: commentPlan.moderationReason } : {}),
+        publicReplyText: commentPlan.publicReply,
+        privateReplyText: commentPlan.privateReply,
+      });
+      if (commentPlan.autoHide) {
+        const hidden = messenger.setCommentHidden
+          ? await messenger.setCommentHidden({ commentId: first.commentId, hidden: true })
+          : {
+              ok: false as const,
+              retryable: false,
+              code: "meta_comment_visibility_not_supported",
+              message: "Meta messenger không hỗ trợ ẩn comment",
+            };
+        if (hidden.ok) {
+          await this.options.store.markMetaCommentVisibilityByExternal({
+            tenantId: first.tenantId,
+            pageId: first.pageId,
+            externalCommentId: first.commentId,
+            hidden: true,
+          });
+          this.options.logger.log("info", "meta_comment_pii_auto_hidden", {
+            traceId: first.traceId,
+            pageId: first.pageId,
+            externalCommentId: first.commentId,
+          });
+        } else {
+          this.options.logger.log("warn", "meta_comment_pii_auto_hide_failed", {
+            traceId: first.traceId,
+            pageId: first.pageId,
+            externalCommentId: first.commentId,
+            code: hidden.code,
+          });
+        }
+      }
+    }
     await this.pushCreatedOrder({
       sessionId,
       state: result.state,
@@ -388,6 +503,7 @@ export class MetaInboundProcessor {
       conversation,
       committed.outbound,
       committed.stateVersion,
+      messenger,
     );
     if (result.state.botPaused) {
       this.options.logger.log("warn", "customer_automation_suppressed_for_human_review", {
@@ -400,7 +516,11 @@ export class MetaInboundProcessor {
         humanStatus: "paused",
       });
     }
-    if (dispatched.lastMessageId && isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)) {
+    if (
+      !isCommentTurn &&
+      dispatched.lastMessageId &&
+      isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)
+    ) {
       await this.scheduleFollowup({
         tenantId: first.tenantId,
         pageId: first.pageId,
@@ -495,6 +615,7 @@ export class MetaInboundProcessor {
     conversation: MessengerConversation,
     plan: ConversationOutboundPlan,
     expectedStateVersion: number,
+    messenger: MetaMessenger,
   ): Promise<{ count: number; lastMessageId?: string; suppressed: boolean }> {
     if (!plan) return { count: 0, suppressed: false };
     let sentThisAttempt = 0;
@@ -516,15 +637,44 @@ export class MetaInboundProcessor {
         break;
       }
       const text = plan.texts[index]!;
-      const outbound = await this.options.messenger.sendText({
-        recipientId: plan.recipientId,
-        text,
-        idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
-      });
+      const outbound =
+        job.kind === "comment"
+          ? await this.sendCommentOutbound({
+              job,
+              text,
+              index,
+              idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
+              messenger,
+            })
+          : await messenger.sendText({
+              recipientId: plan.recipientId,
+              text,
+              idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
+            });
       if (!outbound.ok) {
+        if (job.kind === "comment" && job.commentId) {
+          await this.options.store.markMetaCommentIssue({
+            tenantId: job.tenantId,
+            pageId: job.pageId,
+            externalCommentId: job.commentId,
+            status: "failed",
+            errorCode: outbound.code,
+          });
+        }
         const error = new Error(outbound.message);
         error.name = outbound.retryable ? "RetryableMetaSendError" : "MetaSendError";
         throw error;
+      }
+      // A Meta comment permits only one private reply. Advance the durable
+      // cursor immediately after delivery so a later audit-write failure
+      // cannot duplicate the private message during retry.
+      if (job.kind === "comment") {
+        await this.options.store.markConversationTurnOutboundSent({
+          tenantId: job.tenantId,
+          outboxId: plan.outboxId,
+          sentCount: index + 1,
+          messageId: outbound.value.messageId,
+        });
       }
       await this.options.store.persistConversationMessage({
         tenantId: job.tenantId,
@@ -538,15 +688,41 @@ export class MetaInboundProcessor {
           sourceEventIds: plan.sourceEventIds,
           part: index + 1,
           totalParts: plan.texts.length,
+          channel:
+            job.kind === "comment"
+              ? index === 0
+                ? "comment_public_reply"
+                : "comment_private_reply"
+              : "messenger",
         },
       });
+      if (job.kind === "comment" && job.commentId) {
+        await this.options.store.markMetaCommentPartSent({
+          tenantId: job.tenantId,
+          pageId: job.pageId,
+          externalCommentId: job.commentId,
+          part: index === 0 ? "public" : "private",
+          messageId: outbound.value.messageId,
+        });
+      }
       sentThisAttempt += 1;
       lastMessageId = outbound.value.messageId;
-      await this.options.store.markConversationTurnOutboundSent({
+      if (job.kind !== "comment") {
+        await this.options.store.markConversationTurnOutboundSent({
+          tenantId: job.tenantId,
+          outboxId: plan.outboxId,
+          sentCount: index + 1,
+          messageId: outbound.value.messageId,
+        });
+      }
+    }
+    if (suppressed && job.kind === "comment" && job.commentId) {
+      await this.options.store.markMetaCommentIssue({
         tenantId: job.tenantId,
-        outboxId: plan.outboxId,
-        sentCount: index + 1,
-        messageId: outbound.value.messageId,
+        pageId: job.pageId,
+        externalCommentId: job.commentId,
+        status: "paused",
+        errorCode: "human_takeover_during_dispatch",
       });
     }
     return {
@@ -554,6 +730,36 @@ export class MetaInboundProcessor {
       suppressed,
       ...(lastMessageId ? { lastMessageId } : {}),
     };
+  }
+
+  private async sendCommentOutbound(input: {
+    job: MetaInboundJob;
+    text: string;
+    index: number;
+    idempotencyKey: string;
+    messenger: MetaMessenger;
+  }): Promise<
+    | { ok: true; value: { messageId: string } }
+    | { ok: false; retryable: boolean; code: string; message: string }
+  > {
+    if (!input.job.commentId) {
+      return { ok: false, retryable: false, code: "missing_comment_id", message: "Thiếu comment_id" };
+    }
+    const sender =
+      input.index === 0 ? input.messenger.sendPublicCommentReply : input.messenger.sendPrivateCommentReply;
+    if (!sender) {
+      return {
+        ok: false,
+        retryable: false,
+        code: "comment_reply_not_supported",
+        message: "Meta adapter chưa hỗ trợ trả lời bình luận",
+      };
+    }
+    return sender.call(input.messenger, {
+      commentId: input.job.commentId,
+      text: input.text,
+      idempotencyKey: input.idempotencyKey,
+    });
   }
 
   private async scheduleFollowup(input: Omit<FollowupCycleSchedule, "anchorSentAt">): Promise<void> {

@@ -74,6 +74,17 @@ export interface MetaMessenger {
     caption?: string;
     idempotencyKey: string;
   }): Promise<ProviderResult<{ messageId: string }>>;
+  sendPrivateCommentReply?(input: {
+    commentId: string;
+    text: string;
+    idempotencyKey: string;
+  }): Promise<ProviderResult<{ messageId: string }>>;
+  sendPublicCommentReply?(input: {
+    commentId: string;
+    text: string;
+    idempotencyKey: string;
+  }): Promise<ProviderResult<{ messageId: string }>>;
+  setCommentHidden?(input: { commentId: string; hidden: boolean }): Promise<ProviderResult<void>>;
   sendTyping(recipientId: string): Promise<ProviderResult<void>>;
 }
 

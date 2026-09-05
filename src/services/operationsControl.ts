@@ -50,6 +50,7 @@ const requiredMetaWebhookFields = [
   "message_deliveries",
   "message_reads",
   "message_echoes",
+  "feed",
 ] as const;
 
 type ProcessRuntime = {
@@ -351,7 +352,7 @@ export class OperationsControlService {
       }
       if (!verified.found) throw new Error("Meta nhận lệnh subscribe nhưng chưa trả về app trên Page");
       if (!verified.hasAllRequiredFields) {
-        throw new Error("Meta chưa đăng ký đủ webhook fields bắt buộc cho tin nhắn và attribution");
+        throw new Error("Meta chưa đăng ký đủ webhook fields bắt buộc cho tin nhắn, comment và attribution");
       }
     }
 
@@ -359,7 +360,7 @@ export class OperationsControlService {
       status: "healthy",
       pageId,
       appId,
-      detail: "Page đã subscribe app nhận messages",
+      detail: "Page đã subscribe app nhận messages và feed comments",
     });
   }
 

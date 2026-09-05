@@ -26,7 +26,7 @@ if (profile.id !== env.metaPageId) {
 const subscribeUrl = new URL(`${graphBase}/${env.metaPageId}/subscribed_apps`);
 subscribeUrl.searchParams.set(
   "subscribed_fields",
-  "messages,messaging_postbacks,messaging_referrals,message_deliveries,message_reads,message_echoes",
+  "messages,messaging_postbacks,messaging_referrals,message_deliveries,message_reads,message_echoes,feed",
 );
 subscribeUrl.searchParams.set("access_token", env.metaPageAccessToken);
 const response = await fetch(subscribeUrl, {
@@ -53,6 +53,7 @@ console.log(
       "message_deliveries",
       "message_reads",
       "message_echoes",
+      "feed",
     ],
   }),
 );

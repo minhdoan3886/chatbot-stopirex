@@ -108,6 +108,7 @@ Sau khi callback được lưu, tại dòng Page Stopirex bấm **Thêm đăng k
 - `message_deliveries`
 - `message_reads`
 - `message_echoes`
+- `feed` (nhận bình luận mới để trả lời công khai/inbox và bảo vệ PII)
 
 Có thể thực hiện bằng lệnh sau sau khi đã điền Page Token:
 

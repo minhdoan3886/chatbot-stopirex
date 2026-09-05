@@ -65,6 +65,7 @@ export type RejectedConversationAction = {
     | "unverifiable_purchase_condition"
     | "inapplicable_return_logistics"
     | "inapplicable_recurrence_statistic"
+    | "multi_destination_requires_split"
     | "llm_authority_conflict";
 };
 

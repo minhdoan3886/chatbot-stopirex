@@ -33,6 +33,7 @@ import {
   type CanonicalKnowledgeResolution,
 } from "../domain/knowledgeResolver.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
+import { isDeterministicBoundaryTurn } from "../domain/conversationBoundaries.js";
 import {
   CodexLlmBridge,
   isContentFreeCustomerMessage,
@@ -296,10 +297,37 @@ export class MetaChatBrain {
       sessionId: input.sessionId,
     });
     const snapshotBefore = this.chat.exportSession(input.sessionId);
-    const base = this.chat.chat(input.sessionId, input.text, interpreted, {
-      ...context,
-      actionExecutionMode: liveVariant,
-    });
+    let base: DemoChatResponse;
+    try {
+      base = this.chat.chat(input.sessionId, input.text, interpreted, {
+        ...context,
+        actionExecutionMode: liveVariant,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "conversation_turn_failed";
+      this.logger?.log("warn", "conversation_turn_recovered", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        sessionId: input.sessionId,
+        reason,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      const recovered = this.chat.recoverFailedTurn(
+        input.sessionId,
+        snapshotBefore,
+        input.text,
+        "Em chưa thể xử lý trọn yêu cầu này trong một bước. Mình tách giúp em từng yêu cầu hoặc từng địa chỉ để em hỗ trợ chính xác nhé.",
+        context,
+      );
+      return this.deliverTurn(
+        input,
+        before,
+        recovered,
+        responseGuardVerdict({
+          reason: `conversation_turn_recovered:${reason}`,
+          source: "workflow_safe_fallback",
+        }),
+      );
+    }
     const responseContract = buildWorkflowResponseContract({
       state: base.state,
       customerMessage: input.text,
@@ -368,6 +396,21 @@ export class MetaChatBrain {
       return deliver(
         base,
         responseGuardVerdict({ accepted: true, reason: "llm_disabled", source: "llm_disabled" }),
+      );
+    }
+    if (isDeterministicBoundaryTurn(input.text)) {
+      this.logger?.log("debug", "conversation_boundary_response_locked", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        sessionId: input.sessionId,
+        selectedIntent: base.state.lastIntent,
+      });
+      return deliver(
+        base,
+        responseGuardVerdict({
+          accepted: true,
+          reason: "conversation_boundary_response_locked",
+          source: "workflow_safe_fallback",
+        }),
       );
     }
     if (base.state.conversationFactReceipt?.responseSource === "fact_ledger") {

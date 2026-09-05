@@ -689,7 +689,7 @@ function extractConversationFactClaims(
   }
   if (
     selfContext &&
-    /mui (?:thi )?(?:k|ko|khong) bao nhieu|mui (?:thi )?(?:binh thuong|bt)|mui (?:k|ko|khong) (?:nang|nhieu)|mui.{0,35}(?:k|ko|khong) (?:nang|nhieu)|mui it/.test(
+    /mui (?:thi )?(?:k|ko|khong) bao nhieu|mui (?:thi )?(?:binh thuong|bt)|mui (?:k|ko|khong) (?:nang|nhieu)|mui.{0,35}(?:k|ko|khong) (?:nang|nhieu)|mui it|thinh thoang (?:co )?mui|doi khi (?:co )?mui/.test(
       text,
     )
   ) {
@@ -699,8 +699,9 @@ function extractConversationFactClaims(
   const selfNormal =
     /\b(?:tui|toi|minh) da (?:bt|binh thuong)\b|\bda (?:tui|toi|minh) (?:bt|binh thuong)\b/.test(text);
   const selfSensitive =
-    /\b(?:tui|toi|minh) da (?:hoi )?nhay cam\b|\bda (?:tui|toi|minh|minh) (?:hoi )?nhay cam\b/.test(text) &&
-    !attribution.memoryQuestion;
+    /\b(?:tui|toi|minh) da (?:hoi )?nhay cam\b|\bda (?:tui|toi|minh) (?:la da )?(?:hoi )?nhay cam\b/.test(
+      text,
+    ) && !attribution.memoryQuestion;
   if (selfNormal) add({ ...actualSelfReport, predicate: "skin_type", value: "normal" });
   if (selfSensitive) add({ ...actualSelfReport, predicate: "skin_type", value: "sensitive" });
   if (/\b(?:em|e|no|nho e|dua e).{0,45}\bda nhay cam\b|\bda nhay cam.{0,30}\b(?:em|e|no)\b/.test(text)) {

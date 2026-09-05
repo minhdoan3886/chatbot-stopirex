@@ -13,6 +13,7 @@ export type OrderMutationAction = (
   | { type: "set_quantity"; quantity: SupportedOrderQuantity; evidence: string }
   | { type: "set_phone"; phone: string; evidence: string }
   | { type: "set_recipient_name"; recipientName: string; evidence: string }
+  | { type: "clear_address"; evidence: string }
   | {
       type: "set_address";
       address: string;
@@ -104,6 +105,10 @@ export function reduceOrderTransaction(
         if (after.order.recipientName !== action.recipientName) changedFields.add("recipientName");
         after.order.recipientName = action.recipientName;
         break;
+      case "clear_address":
+        if (after.order.legacyAddress !== undefined) changedFields.add("legacyAddress");
+        delete after.order.legacyAddress;
+        break;
       case "set_address": {
         const nextAddress =
           action.operation === "replace"
@@ -191,6 +196,8 @@ function mutationChanged(
       return before.order.phone !== after.order.phone;
     case "set_recipient_name":
       return before.order.recipientName !== after.order.recipientName;
+    case "clear_address":
+      return before.order.legacyAddress !== after.order.legacyAddress;
     case "set_address":
       return before.order.legacyAddress !== after.order.legacyAddress;
     case "set_delivery_note":

@@ -29,6 +29,14 @@ import {
 } from "../domain/conversationActions.js";
 import { reduceOrderTransaction, type OrderMutationAction } from "../domain/conversationTransaction.js";
 import {
+  isAbsurdProductRumor,
+  isCombinedOrderUpdateAndContextRecap,
+  isGarmentStainRemovalQuestion,
+  isSensitiveSkinConsultationRequest,
+  isSplitShipmentQuoteRequest,
+  isThirdPartyPersonalDataRequest,
+} from "../domain/conversationBoundaries.js";
+import {
   formatVietnameseAddress,
   mergeDeliveryNotes,
   normalizeDeliveryNotes,
@@ -366,6 +374,8 @@ export class DemoChatService {
     if (session.pipeline === "7.Chờ followup") session.freeShippingApproved = true;
     const raw = input.trim();
     const text = normalize(raw);
+    const splitShipmentQuote = isSplitShipmentQuoteRequest(raw);
+    const combinedOrderContextRecap = isCombinedOrderUpdateAndContextRecap(raw);
     // Order lifecycle and conversational focus are independent. An inbox
     // order remains editable until a real tracking code is attached even when
     // the customer temporarily asks a product question and the sales pipeline
@@ -459,7 +469,11 @@ export class DemoChatService {
         ? (text as "1" | "2" | "3")
         : undefined;
 
-    const exactIntent = detectDirectIntent(text);
+    const exactIntent = splitShipmentQuote
+      ? "price_request"
+      : combinedOrderContextRecap
+        ? "order_support"
+        : detectDirectIntent(text);
     // Intent routing and factual grounding are separate responsibilities.
     // A strong LLM interpretation may own what the customer is asking before
     // retrieval attaches Knowledge IDs. Knowledge still validates factual
@@ -554,6 +568,26 @@ export class DemoChatService {
       optOut: isOptOut(text),
       collectingOrder: orderMutationAllowed && Boolean(session.selectedQuantity),
     });
+    if (splitShipmentQuote) {
+      const rejectedMutations = actionPlan.accepted.filter((action) =>
+        ["select_quantity", "update_order", "continue_order_collection"].includes(action.type),
+      );
+      actionPlan.accepted = actionPlan.accepted.filter(
+        (action) => !["select_quantity", "update_order", "continue_order_collection"].includes(action.type),
+      );
+      actionPlan.rejected.push(
+        ...rejectedMutations.map((action) => ({
+          action,
+          reason: "multi_destination_requires_split" as const,
+        })),
+      );
+      delete actionPlan.quantity;
+      actionPlan.primaryIntent = "price_request";
+      actionPlan.answerTopics = [
+        ...new Set([...actionPlan.answerTopics, "price", "shipping"]),
+      ] as Array<SemanticTopic>;
+      actionPlan.shouldClarify = false;
+    }
     const deterministicDeliveryNoteReady = Boolean(
       session.selectedQuantity &&
       normalizeDeliveryNotes(raw).valid &&
@@ -587,6 +621,7 @@ export class DemoChatService {
       ),
       acceptOrderChanges:
         orderMutationAllowed &&
+        !splitShipmentQuote &&
         Boolean(
           actionPlan.accepted.some((action) => action.type === "update_order") ||
           deterministicDeliveryNoteReady ||
@@ -598,6 +633,7 @@ export class DemoChatService {
     );
     const semanticOrderDataRecorded =
       orderMutationAllowed &&
+      !splitShipmentQuote &&
       Boolean(
         session.selectedQuantity ||
         (!quantityBlockedByConditionalRefund &&
@@ -729,6 +765,132 @@ export class DemoChatService {
       session.activeSkill = "direct-answer";
       session.skillReason =
         "LLM đã xác định câu hỏi cần trả lời trực tiếp và Reconciler đã chấp nhận answer action.";
+    }
+
+    if (isSensitiveSkinConsultationRequest(raw)) {
+      session.pipeline = "2.Đang tư vấn";
+      session.consultation = { ...session.consultation, stage: "S5.guidance" };
+      session.orderCollectionPaused = false;
+      session.activeSkill = "solution-guidance";
+      session.skillReason =
+        "Tư vấn mồ hôi kèm da nhạy cảm phải dùng đồng thời Fact Ledger và Knowledge an toàn đã duyệt.";
+      lockBoundaryDecision(
+        session,
+        "consultation",
+        "sensitive_skin",
+        "Conversation Boundary Policy khóa câu tư vấn đa ý có yếu tố da nhạy cảm.",
+      );
+      recordKnowledge(session, [
+        "audience-sensitive-skin",
+        "usage-general",
+        "product-comparison-traditional-rollon",
+      ]);
+      return this.respond(session, sensitiveSkinConsultationReply(session));
+    }
+
+    if (isGarmentStainRemovalQuestion(raw)) {
+      session.orderCollectionPaused = false;
+      session.activeSkill = "direct-answer";
+      session.skillReason = "Giới hạn đúng phạm vi tư vấn, không dùng RAG sản phẩm để hướng dẫn tẩy vết cũ.";
+      lockBoundaryDecision(
+        session,
+        "other",
+        "other",
+        "Conversation Boundary Policy tách chăm sóc quần áo khỏi claim của Stopirex.",
+      );
+      return this.respond(
+        session,
+        "Bên em không có hướng dẫn đã kiểm chứng để chọn Javel hay baking soda cho vết ố cũ, nên mình xem nhãn áo hoặc hỏi bên giặt ủi để tránh hỏng vải nhé. Stopirex chỉ hỗ trợ kiểm soát mồ hôi, từ đó hạn chế phát sinh vết ẩm mới ạ.",
+      );
+    }
+
+    if (isAbsurdProductRumor(raw)) {
+      session.orderCollectionPaused = false;
+      session.activeSkill = "direct-answer";
+      session.skillReason = "Đính chính tin đồn phi lý bằng ranh giới thông tin sản phẩm đã duyệt.";
+      lockBoundaryDecision(
+        session,
+        "authenticity_question",
+        "irritation",
+        "Conversation Boundary Policy chặn tin đồn sản phẩm phi thực tế.",
+      );
+      recordKnowledge(session, ["product-composition-tolerance-approved", "lab-test-2025-skin-irritation"]);
+      return this.respond(
+        session,
+        "Không nha, thông tin Stopirex làm da chuyển xanh hoặc phát sáng không nằm trong bất kỳ thông tin sản phẩm hay cảnh báo đã được duyệt nào. Nếu da có đổi màu hoặc khó chịu bất thường, mình tạm ngưng và nhắn bên em kiểm tra ngay ạ.",
+      );
+    }
+
+    if (isThirdPartyPersonalDataRequest(raw)) {
+      session.activeSkill = "direct-answer";
+      session.skillReason = "Privacy boundary không cho phép tra cứu hoặc tiết lộ dữ liệu của người khác.";
+      lockBoundaryDecision(
+        session,
+        "order_support",
+        "order",
+        "Conversation Boundary Policy từ chối yêu cầu dữ liệu của bên thứ ba.",
+      );
+      return this.respond(
+        session,
+        "Mình thông cảm nha, bên em không thể tra cứu hoặc tiết lộ số điện thoại và đơn hàng của người khác. Mình mô tả nhu cầu của mình, em sẽ tư vấn phương án phù hợp trực tiếp cho mình ạ.",
+      );
+    }
+
+    if (splitShipmentQuote) {
+      session.pipeline = "3.Đã báo giá";
+      session.orderCollectionPaused = false;
+      delete session.pendingAction;
+      session.activeSkill = "direct-answer";
+      session.skillReason =
+        "Một tin có nhiều điểm giao chỉ được báo giá theo từng kiện, chưa commit vào OrderDraft một địa chỉ.";
+      lockBoundaryDecision(
+        session,
+        "price_request",
+        "shipping",
+        "Conversation Boundary Policy tách báo giá nhiều điểm giao khỏi mutation đơn một địa chỉ.",
+      );
+      recordKnowledge(session, ["pricing-approved-options-2026-08"]);
+      return this.respond(session, splitShipmentQuoteReply());
+    }
+
+    if (combinedOrderContextRecap) {
+      const finalQuantity = detectQuantity(text);
+      if (finalQuantity) {
+        selectQuantity(session, finalQuantity);
+        session.pipeline = "5.Chờ TT KH";
+        session.consultation = { ...session.consultation, stage: "S8.order" };
+        session.orderCollectionPaused = false;
+      }
+      const destinationCity = extractExplicitDestinationCity(text);
+      if (destinationCity) {
+        rememberDestinationCity(session, destinationCity, raw);
+        if (
+          session.order.legacyAddress &&
+          !normalize(session.order.legacyAddress).includes(normalize(destinationCity))
+        ) {
+          commitOrderMutations(session, [
+            {
+              type: "clear_address",
+              evidence: raw,
+              source: "deterministic_parser",
+              confidence: 1,
+            },
+          ]);
+        }
+      }
+      session.activeSkill = "order-closing";
+      session.skillReason = "Commit thay đổi đơn trước rồi đọc recap trực tiếp từ Fact Ledger hiện hành.";
+      lockBoundaryDecision(
+        session,
+        "order_support",
+        "order",
+        "Conversation Boundary Policy xử lý đồng thời sửa đơn và yêu cầu nhớ ngữ cảnh.",
+      );
+      if (finalQuantity && session.lastDecision?.actionPlan) {
+        session.lastDecision.actionPlan.quantity = finalQuantity;
+      }
+      recordKnowledge(session, ["pricing-approved-options-2026-08", "audience-sensitive-skin"]);
+      return this.respond(session, combinedOrderContextRecapReply(session, destinationCity));
     }
 
     if (factResponsePlan) {
@@ -2534,7 +2696,13 @@ export class DemoChatService {
     if (directIntent === "price_objection" || isPriceConcern(text)) {
       session.lastIntent = "price_objection";
       session.signal = "CT.Giá/Ship";
-      recordKnowledge(session, ["price-adjustment-france-import", "product-comparison-traditional-rollon"]);
+      recordKnowledge(session, [
+        "price-adjustment-france-import",
+        "product-comparison-traditional-rollon",
+        ...(isNamedCompetitorPriceObjection(text)
+          ? ["competitor-neutral-advice", "lab-test-2025-skin-irritation", "audience-sensitive-skin"]
+          : []),
+      ]);
       try {
         session.pipeline = transitionPipeline(session.pipeline, "objection_found");
       } catch {
@@ -2865,6 +3033,33 @@ export class DemoChatService {
 
   discardSession(sessionId: string): boolean {
     return this.sessions.delete(sessionId);
+  }
+
+  recoverFailedTurn(
+    sessionId: string,
+    snapshot: unknown,
+    customerMessage: string,
+    reply: string,
+    context: DemoChatContext = {},
+  ): DemoChatResponse {
+    this.sessions.delete(sessionId);
+    if (snapshot) this.restoreSession(sessionId, snapshot, context);
+    const session = this.getOrCreate(sessionId, context);
+    applyChatContext(session, context);
+    delete session.lastDecision;
+    delete session.orderTransactionTrace;
+    rememberTurn(session, { role: "user", text: customerMessage.trim() });
+    session.messages += 1;
+    const rendered = personalizeCustomerAddress(reply, session.identity);
+    rememberTurn(session, { role: "assistant", text: rendered });
+    return {
+      sessionId: session.id,
+      reply: rendered,
+      replies: [rendered],
+      state: stateOf(session),
+      sandbox: true,
+      productionData: false,
+    };
   }
 
   restoreSession(sessionId: string, snapshot: unknown, context: DemoChatContext = {}): boolean {
@@ -3291,9 +3486,77 @@ function overrideDecisionClassification(
   if (reason) session.lastDecision.reason = reason;
 }
 
+function lockBoundaryDecision(
+  session: DemoSession,
+  intent: CustomerIntent,
+  topic: NonNullable<SemanticUnderstanding["topic"]>,
+  reason: string,
+): void {
+  overrideDecisionClassification(session, intent, topic, [], reason);
+  if (!session.lastDecision) return;
+  session.lastDecision.selectedRoute = "direct_intent";
+  session.lastDecision.semantic.selectedCtaId = "none";
+  session.lastDecision.semantic.ctaText = "";
+  session.lastDecision.semantic.unsupportedQuestions = [];
+  if (session.lastDecision.actionPlan) {
+    session.lastDecision.actionPlan.accepted = session.lastDecision.actionPlan.accepted.filter(
+      (action) => action.type !== "handoff_to_human" && action.type !== "pause_order",
+    );
+    session.lastDecision.actionPlan.shouldClarify = false;
+  }
+}
+
 function recordKnowledge(session: DemoSession, entityIds: readonly string[]): void {
   if (!session.lastDecision) return;
   session.lastDecision.knowledgeEntityIds = [...new Set(entityIds)];
+}
+
+function sensitiveSkinConsultationReply(session: DemoSession): string {
+  const facts = session.conversationMemory.consultationFacts;
+  const concern =
+    facts.odorSeverity === "mild" ? "mồ hôi nách nhiều, thỉnh thoảng có mùi" : "mồ hôi nách nhiều";
+  return `Với ${concern} và da nhạy cảm, mình dùng Stopirex được khi da đang lành. Lăn thật mỏng buổi tối trên da sạch, khô, 2–3 lần/tuần và thử trước ở vùng nhỏ. Nếu da khó chịu thì tạm ngưng và nhắn shop nhé.`;
+}
+
+function splitShipmentQuoteReply(): string {
+  const single = quote(1);
+  const total = single.total.amount * 2;
+  return `Vì giao 2 nơi nên mình cần tách thành 2 đơn nha. Mỗi đơn 1 lọ là ${formatVnd(single.productPrice.amount)} + ${formatVnd(single.shippingFee.amount)} phí giao, tổng hai đơn là ${formatVnd(total)}. Nếu gộp 2 lọ về một nơi thì combo còn ${formatVnd(quote(2).total.amount)} và miễn phí giao ạ.`;
+}
+
+function extractExplicitDestinationCity(text: string): string | undefined {
+  if (/\bha noi\b/u.test(text)) return "Hà Nội";
+  if (/\bda nang\b/u.test(text)) return "Đà Nẵng";
+  if (/\b(?:sai gon|tp hcm|ho chi minh)\b/u.test(text)) return "TP Hồ Chí Minh";
+  if (/\bhai phong\b/u.test(text)) return "Hải Phòng";
+  if (/\bcan tho\b/u.test(text)) return "Cần Thơ";
+  return undefined;
+}
+
+function rememberDestinationCity(session: DemoSession, city: string, evidence: string): void {
+  session.locationMemory.addressContext = {
+    city,
+    rawParts: [city],
+    status: "mentioned",
+  };
+  delete session.locationMemory.legacyAddress;
+  delete session.locationMemory.evidence;
+  delete session.locationMemory.sourceTurn;
+  session.locationMemory.history = (session.locationMemory.history ?? []).filter((item) =>
+    normalize(item.legacyAddress).includes(normalize(city)),
+  );
+  session.locationMemory.evidence = evidence;
+  session.locationMemory.sourceTurn = session.messages + 1;
+}
+
+function combinedOrderContextRecapReply(session: DemoSession, destinationCity?: string): string {
+  const quantity = session.selectedQuantity ?? 1;
+  const facts = session.conversationMemory.consultationFacts;
+  const symptoms =
+    facts.odorSeverity === "mild" ? "mồ hôi nách nhiều, thỉnh thoảng có mùi" : "mồ hôi nách nhiều";
+  const skin = facts.sensitiveSkin ? "da nhạy cảm" : "chưa có thông tin chắc về loại da";
+  const destination = destinationCity ? ` giao chung tại ${destinationCity}` : "";
+  return `Oke, em chỉnh thành ${quantity} lọ${destination}, tổng ${formatVnd(quote(quantity).total.amount)} nha. Ban đầu mình nói ${symptoms} và ${skin}. Mình gửi địa chỉ nhận cụ thể để em hoàn thiện đơn nhé.`;
 }
 
 function newSession(id: string, context: DemoChatContext = {}): DemoSession {
@@ -3883,6 +4146,32 @@ function groundSemanticSlots(session: DemoSession, proposed: ConsultationSlots):
       (grounded.primarySymptom === "both" && !(sweatEvidence && odorEvidence)))
   ) {
     delete grounded.primarySymptom;
+  }
+  const existingPriorProduct = session.consultation.slots.priorProduct;
+  const priorProductEvidence =
+    grounded.priorProduct === "none"
+      ? /\b(?:chua|khong|ko|k) (?:tung )?(?:dung|xai).{0,30}(?:lan|san pham|loai nao)|\blan dau (?:dung|xai)\b/.test(
+          customerText,
+        )
+      : grounded.priorProduct === "specialized"
+        ? /\b(?:perspirex|etiaxil|stopirex|ngan tiet mo hoi|dac tri)\b/.test(customerText)
+        : /\b(?:lan thuong|lan khu mui|deodorant|romano|nivea|rexona)\b/.test(customerText);
+  if (grounded.priorProduct && grounded.priorProduct !== existingPriorProduct && !priorProductEvidence) {
+    delete grounded.priorProduct;
+  }
+  const existingPriorIrritation = session.consultation.slots.priorIrritation;
+  const priorIrritationEvidence =
+    grounded.priorIrritation === true
+      ? /\b(?:tung|truoc day|loai truoc|lan khac)\b.{0,55}\b(?:ngua|rat|do|kich ung|xot|viem)\b/.test(
+          customerText,
+        )
+      : /\b(?:chua|khong|ko|k) (?:tung )?(?:bi )?(?:ngua|rat|do|kich ung|xot|viem)\b/.test(customerText);
+  if (
+    grounded.priorIrritation !== undefined &&
+    grounded.priorIrritation !== existingPriorIrritation &&
+    !priorIrritationEvidence
+  ) {
+    delete grounded.priorIrritation;
   }
   return grounded;
 }
@@ -4676,6 +4965,7 @@ function resumeAfterSoftHandoff(session: DemoSession): void {
   delete session.previousSalesPipeline;
   delete session.previousSalesStage;
   delete session.manualHandoffReason;
+  session.orderCollectionPaused = false;
 }
 
 function negotiationReply(
@@ -4716,6 +5006,13 @@ function priceObjectionReply(session: DemoSession, customerText = ""): string {
   const money = (amount: number): string => `${amount.toLocaleString("vi-VN")}đ`;
   const value =
     "Stopirex là sản phẩm nhập khẩu từ Pháp, thuộc dòng ngăn tiết mồ hôi chuyên sâu; sau giai đoạn làm quen thường dùng giãn cách 2–3 ngày/lần tùy tình trạng.";
+
+  if (isNamedCompetitorPriceObjection(customerText)) {
+    const sensitive = session.conversationMemory.consultationFacts.sensitiveSkin
+      ? " Với da nhạy cảm như mình đã chia sẻ, mình nên thử vùng nhỏ, chỉ lăn mỏng khi da lành và khô."
+      : "";
+    return `Dạ em hiểu mình đang cân nhắc giữa các sản phẩm ạ. Em không nhận xét xấu về Perspirex hay Etiaxil. Stopirex là dòng ngăn tiết mồ hôi chuyên sâu nhập khẩu từ Pháp, dùng giãn cách 2–3 ngày/lần khi đã ổn định. Mẫu thử ghi nhận mức kích ứng da không đáng kể.${sensitive} 1 lọ hiện 285.000đ, combo 2 lọ 510.000đ và miễn phí giao ạ.`;
+  }
 
   if (session.selectedQuantity && session.selectedQuantity >= 2) {
     const selected = quote(session.selectedQuantity);
@@ -5457,7 +5754,7 @@ function isNamedCompetitorPriceObjection(value: string): boolean {
   const namesKnownCompetitor = /\b(?:etiaxil|perspirex)\b/.test(text);
   const comparesPrice =
     isPriceConcern(text) ||
-    /\b(?:gia|tien)\b.{0,30}\b(?:etiaxil|perspirex)\b|\b(?:etiaxil|perspirex)\b.{0,45}\b(?:gia|tien|\d+\s*k)\b/.test(
+    /\b(?:gia|tien)\b.{0,30}\b(?:etiaxil|perspirex)\b|\b(?:etiaxil|perspirex)\b.{0,60}\b(?:gia|tien|\d+\s*k|re hon|mac hon)\b/.test(
       text,
     );
   return namesKnownCompetitor && comparesPrice;
@@ -6872,6 +7169,8 @@ function orderMutationField(action: OrderMutationAction): string {
       return "phone";
     case "set_recipient_name":
       return "recipientName";
+    case "clear_address":
+      return "legacyAddress";
     case "set_address":
       return "legacyAddress";
     case "set_delivery_note":
@@ -6894,6 +7193,8 @@ function maskedOrderMutationValue(
     }
     case "set_recipient_name":
       return state.order.recipientName ? "[recipient_name]" : null;
+    case "clear_address":
+      return null;
     case "set_address":
       return state.order.legacyAddress ? "[delivery_address]" : null;
     case "set_delivery_note":
@@ -7363,6 +7664,7 @@ function orderObservationField(action: OrderMutationAction): OrderObservationFie
     case "set_delivery_note":
       return "deliveryNote";
     case "set_quantity":
+    case "clear_address":
     case "confirm_order":
       throw new Error(`not_an_observation_field:${action.type}`);
   }

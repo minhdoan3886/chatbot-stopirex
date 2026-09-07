@@ -10,6 +10,13 @@ export type RedisQueueSnapshot = {
   pending: number;
 };
 
+export type RedisDeadLetter<T = unknown> = {
+  originalId: string;
+  failedAt: string;
+  reason: string;
+  payload: T;
+};
+
 export class RedisRuntime {
   private readonly client: RedisClientType;
   constructor(url: string) {
@@ -84,6 +91,31 @@ export class RedisRuntime {
   async enqueue(topic: string, payload: unknown): Promise<string> {
     await this.connect();
     return this.client.xAdd(`queue:${topic}`, "*", { payload: JSON.stringify(payload) });
+  }
+
+  /** Atomically preserve a poison message in a dead-letter stream and ACK its source entry. */
+  async deadLetter<T>(input: {
+    topic: string;
+    group: string;
+    message: RedisQueueMessage<T>;
+    reason: string;
+    failedAt?: Date;
+  }): Promise<string> {
+    await this.connect();
+    const record: RedisDeadLetter<T> = {
+      originalId: input.message.id,
+      failedAt: (input.failedAt ?? new Date()).toISOString(),
+      reason: input.reason.slice(0, 240),
+      payload: input.message.payload,
+    };
+    const result = await this.client.eval(
+      "local id = redis.call('xadd', KEYS[2], '*', 'payload', ARGV[3]); redis.call('xack', KEYS[1], ARGV[1], ARGV[2]); return id",
+      {
+        keys: [`queue:${input.topic}`, `queue:${input.topic}:dead-letter`],
+        arguments: [input.group, input.message.id, JSON.stringify(record)],
+      },
+    );
+    return String(result);
   }
 
   async ensureConsumerGroup(topic: string, group: string): Promise<void> {

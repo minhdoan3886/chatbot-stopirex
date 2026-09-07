@@ -18,6 +18,10 @@ test("development cho phép chạy khi chưa có credential bên ngoài", () => 
     metaDebounceMs: 6000,
     dataRetentionDays: 90,
     outboundWindowHours: 24,
+    conversationContextTtlHours: 24,
+    metaInboundMaxAttempts: 3,
+    metaConversationLeaseTtlMs: 120000,
+    metaConversationLeaseRenewMs: 30000,
     followupMode: "shadow",
     followupWorkerConsumer: "followup-worker-1",
     followupPollMs: 1000,
@@ -74,6 +78,32 @@ test("tỷ giá hiển thị chi phí LLM phải là số dương", () => {
   assert.throws(
     () => loadEnv({ NODE_ENV: "development", LLM_USD_TO_VND_RATE: "0" }),
     /LLM_USD_TO_VND_RATE phải là số dương/u,
+  );
+});
+
+test("TTL hội thoại độc lập với cửa sổ gửi Meta và lease phải được gia hạn trước khi hết hạn", () => {
+  const env = loadEnv({
+    NODE_ENV: "development",
+    OUTBOUND_WINDOW_HOURS: "24",
+    CONVERSATION_CONTEXT_TTL_HOURS: "12",
+    META_INBOUND_MAX_ATTEMPTS: "5",
+    META_CONVERSATION_LEASE_TTL_MS: "180000",
+    META_CONVERSATION_LEASE_RENEW_MS: "45000",
+  });
+  assert.equal(env.outboundWindowHours, 24);
+  assert.equal(env.conversationContextTtlHours, 12);
+  assert.equal(env.metaInboundMaxAttempts, 5);
+  assert.equal(env.metaConversationLeaseTtlMs, 180000);
+  assert.equal(env.metaConversationLeaseRenewMs, 45000);
+
+  assert.throws(
+    () =>
+      loadEnv({
+        NODE_ENV: "development",
+        META_CONVERSATION_LEASE_TTL_MS: "60000",
+        META_CONVERSATION_LEASE_RENEW_MS: "60000",
+      }),
+    /phải nhỏ hơn/u,
   );
 });
 

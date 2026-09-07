@@ -21,6 +21,9 @@ export type MessengerConversation = {
   runtimeState: unknown;
   stateVersion: number;
   pipelineTag: string;
+  /** Persisted workflow fields used to keep public-comment episodes isolated. */
+  consultationStage?: string;
+  signalTag?: string;
   updatedAt: string;
 };
 
@@ -726,7 +729,8 @@ export class PostgresStore {
           ? String(customer.rows[0].display_name).trim()
           : undefined;
       const existing = await client.query(
-        `SELECT id::text, human_status, runtime_state, state_version::int, pipeline_tag, updated_at
+        `SELECT id::text, human_status, runtime_state, state_version::int, pipeline_tag,
+                consultation_stage, signal_tag, updated_at
          FROM conversations
          WHERE tenant_id = $1 AND page_id = $2 AND customer_id = $3
          ORDER BY updated_at DESC
@@ -742,13 +746,16 @@ export class PostgresStore {
           runtimeState: existing.rows[0].runtime_state,
           stateVersion: Number(existing.rows[0].state_version),
           pipelineTag: String(existing.rows[0].pipeline_tag),
+          consultationStage: String(existing.rows[0].consultation_stage),
+          ...(existing.rows[0].signal_tag ? { signalTag: String(existing.rows[0].signal_tag) } : {}),
           updatedAt: new Date(existing.rows[0].updated_at).toISOString(),
         };
       }
       const created = await client.query(
         `INSERT INTO conversations (tenant_id, page_id, customer_id)
          VALUES ($1, $2, $3)
-         RETURNING id::text, human_status, runtime_state, state_version::int, pipeline_tag, updated_at`,
+         RETURNING id::text, human_status, runtime_state, state_version::int, pipeline_tag,
+                   consultation_stage, signal_tag, updated_at`,
         [input.tenantId, input.pageId, customerId],
       );
       return {
@@ -759,6 +766,8 @@ export class PostgresStore {
         runtimeState: created.rows[0].runtime_state,
         stateVersion: Number(created.rows[0].state_version),
         pipelineTag: String(created.rows[0].pipeline_tag),
+        consultationStage: String(created.rows[0].consultation_stage),
+        ...(created.rows[0].signal_tag ? { signalTag: String(created.rows[0].signal_tag) } : {}),
         updatedAt: new Date(created.rows[0].updated_at).toISOString(),
       };
     });

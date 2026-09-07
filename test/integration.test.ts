@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PostgresStore } from "../src/infrastructure/postgres.js";
-import { RedisRuntime } from "../src/infrastructure/redis.js";
+import { RedisRuntime, type RedisDeadLetter } from "../src/infrastructure/redis.js";
 import { tenantId } from "../src/domain/types.js";
 
 const enabled = process.env.INTEGRATION === "1";
@@ -34,6 +34,40 @@ integration("Redis readiness, lease và queue", async () => {
     assert.equal(await redis.acquireLease(key, "worker-1", 5_000), true);
     assert.equal(await redis.acquireLease(key, "worker-2", 5_000), false);
     assert.ok(await redis.enqueue("integration", { key }));
+
+    const deadLetterTopic = `integration-dead-letter-${Date.now()}`;
+    const sourceGroup = "source-group";
+    await redis.ensureConsumerGroup(deadLetterTopic, sourceGroup);
+    await redis.enqueue(deadLetterTopic, { key, attempt: 3 });
+    const [source] = await redis.readGroup<{ key: string; attempt: number }>({
+      topic: deadLetterTopic,
+      group: sourceGroup,
+      consumer: "source-consumer",
+      count: 1,
+      blockMs: 0,
+    });
+    assert.ok(source);
+    await redis.deadLetter({
+      topic: deadLetterTopic,
+      group: sourceGroup,
+      message: source,
+      reason: "integration_failure",
+    });
+    assert.equal((await redis.queueSnapshot(deadLetterTopic, sourceGroup)).pending, 0);
+
+    const dlqTopic = `${deadLetterTopic}:dead-letter`;
+    const dlqGroup = "dlq-group";
+    await redis.ensureConsumerGroup(dlqTopic, dlqGroup);
+    const [deadLetter] = await redis.readGroup<RedisDeadLetter<{ key: string; attempt: number }>>({
+      topic: dlqTopic,
+      group: dlqGroup,
+      consumer: "dlq-consumer",
+      count: 1,
+      blockMs: 0,
+    });
+    assert.ok(deadLetter);
+    assert.equal(deadLetter.payload.reason, "integration_failure");
+    assert.equal(deadLetter.payload.payload.attempt, 3);
   } finally {
     await redis.close();
   }

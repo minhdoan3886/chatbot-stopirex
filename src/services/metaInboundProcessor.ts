@@ -140,7 +140,12 @@ export class MetaInboundProcessor {
         commentText: first.text,
       });
     }
-    const sessionId = `${first.pageId}:${first.senderId}`;
+    // A public comment is its own short-lived episode. Reusing the Messenger
+    // session here can leak an old inbox topic into a public/private comment reply
+    // and can overwrite the customer's active order draft with comment context.
+    const sessionId = isCommentTurn
+      ? `${first.pageId}:${first.senderId}:comment:${first.commentId ?? first.eventId}`
+      : `${first.pageId}:${first.senderId}`;
     const contentJobs = jobs.filter(
       (job) =>
         job.kind === "text" || job.kind === "image" || job.kind === "postback" || job.kind === "comment",
@@ -180,7 +185,7 @@ export class MetaInboundProcessor {
         payload: job.payload,
       });
     }
-    if (contentJobs.length > 0 && this.options.followups) {
+    if (contentJobs.length > 0 && !isCommentTurn && this.options.followups) {
       const cancelled = await this.options.followups.cancelConversation({
         tenantId: first.tenantId,
         conversationId: conversation.conversationId,
@@ -231,10 +236,12 @@ export class MetaInboundProcessor {
       let replyCount = 0;
       let lastMessageId = existingOutbound.lastMessageId;
       let suppressed = false;
-      await this.pushCreatedOrder({
-        sessionId,
-        state: conversation.runtimeState,
-      });
+      if (!isCommentTurn) {
+        await this.pushCreatedOrder({
+          sessionId,
+          state: conversation.runtimeState,
+        });
+      }
       if (existingOutbound.status !== "sent") {
         const dispatched = await this.dispatchOutbound(
           first,
@@ -266,6 +273,7 @@ export class MetaInboundProcessor {
         });
       }
       await this.markProcessed(jobs);
+      if (isCommentTurn) this.options.chat.discardSession(sessionId);
       return {
         status: suppressed ? "paused" : "replied",
         replyCount,
@@ -357,7 +365,7 @@ export class MetaInboundProcessor {
     }
     const orderEditable = await this.options.orderInbox?.canEditPending?.(sessionId);
     const chatContext = this.context(conversation.displayName, profileFirstName, orderEditable);
-    if (!contextExpired) {
+    if (!contextExpired && !isCommentTurn) {
       this.options.chat.restoreSession(sessionId, conversation.runtimeState, chatContext);
     }
 
@@ -437,11 +445,24 @@ export class MetaInboundProcessor {
       pageId: first.pageId,
       conversationId: conversation.conversationId,
       expectedStateVersion: conversation.stateVersion,
-      consultationStage: result.state.consultationStage,
-      pipelineTag: result.state.pipeline,
-      ...(result.state.signal ? { signalTag: result.state.signal } : {}),
-      humanStatus: result.state.botPaused ? "paused" : "bot",
-      runtimeState: this.options.chat.exportSession(sessionId) ?? {},
+      // Keep the durable Messenger workflow untouched for public comments.
+      // The isolated comment episode may still produce a useful reply, but it
+      // must not move an existing order pipeline or pause the inbox bot.
+      consultationStage: isCommentTurn
+        ? (conversation.consultationStage ?? result.state.consultationStage)
+        : result.state.consultationStage,
+      pipelineTag: isCommentTurn ? conversation.pipelineTag : result.state.pipeline,
+      ...(isCommentTurn
+        ? conversation.signalTag
+          ? { signalTag: conversation.signalTag }
+          : {}
+        : result.state.signal
+          ? { signalTag: result.state.signal }
+          : {}),
+      humanStatus: isCommentTurn ? conversation.humanStatus : result.state.botPaused ? "paused" : "bot",
+      runtimeState: isCommentTurn
+        ? conversation.runtimeState
+        : (this.options.chat.exportSession(sessionId) ?? {}),
       summary: `${result.state.pipeline} · ${result.state.breakpoint}`.slice(0, 800),
       sourceEventIds: contentJobs.map((job) => job.eventId),
       outbound: {
@@ -494,10 +515,14 @@ export class MetaInboundProcessor {
         }
       }
     }
-    await this.pushCreatedOrder({
-      sessionId,
-      state: result.state,
-    });
+    // A public comment is a separate episode and must never create or mutate
+    // an inbox order draft from the customer's Messenger conversation.
+    if (!isCommentTurn) {
+      await this.pushCreatedOrder({
+        sessionId,
+        state: result.state,
+      });
+    }
     const dispatched = await this.dispatchOutbound(
       first,
       conversation,
@@ -505,6 +530,7 @@ export class MetaInboundProcessor {
       committed.stateVersion,
       messenger,
     );
+    if (isCommentTurn) this.options.chat.discardSession(sessionId);
     if (result.state.botPaused) {
       this.options.logger.log("warn", "customer_automation_suppressed_for_human_review", {
         traceId: first.traceId,

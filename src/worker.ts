@@ -18,7 +18,6 @@ import { MetaPageManagementService } from "./services/metaPageManagement.js";
 
 const queueTopic = "inbound";
 const queueGroup = "meta-inbound-v1";
-const maximumAttempts = 3;
 const env = loadEnv();
 const pipelineTelemetry = new PipelineTelemetryTracker();
 const logger = new StructuredLogger(console.log, (record) => pipelineTelemetry.observe(record));
@@ -70,7 +69,7 @@ if (!env.redisUrl || !env.databaseUrl) {
     liveSendEnabled: env.metaLiveSendEnabled,
     staffName: env.metaStaffName,
     openingVariantId: parseOpeningVariant(env.metaOpeningVariant),
-    conversationContextTtlHours: env.outboundWindowHours,
+    conversationContextTtlHours: env.conversationContextTtlHours,
     orderInbox,
     ...(env.followupMode !== "disabled" ? { followups } : {}),
   });
@@ -164,8 +163,9 @@ if (!env.redisUrl || !env.databaseUrl) {
       const validIds = new Set(valid.map((item) => item.id));
       const invalidIds = firstRead.filter((item) => !validIds.has(item.id)).map((item) => item.id);
       if (invalidIds.length > 0) {
-        await redis.acknowledge(queueTopic, queueGroup, invalidIds);
-        logger.log("warn", "meta_queue_invalid_jobs_acked", {
+        const invalidMessages = firstRead.filter((item) => !validIds.has(item.id));
+        await deadLetterBatch(redis, invalidMessages, "invalid_queue_payload");
+        logger.log("error", "meta_queue_invalid_jobs_dead_lettered", {
           count: invalidIds.length,
         });
       }
@@ -174,13 +174,11 @@ if (!env.redisUrl || !env.databaseUrl) {
       if (!initialBatch) continue;
       const batch = await collectConversationBurst(redis, initialBatch);
       await publishWorkerHeartbeat(redis, llm.healthSnapshot(), pipelineTelemetry.snapshot());
-      if (env.metaPageId && batch[0]?.payload.externalPageId !== env.metaPageId) {
-        await redis.acknowledge(
-          queueTopic,
-          queueGroup,
-          batch.map((item) => item.id),
-        );
-        logger.log("warn", "meta_queue_wrong_page_acked", {
+      if (!metaPages && env.metaPageId && batch[0]?.payload.externalPageId !== env.metaPageId) {
+        await deadLetterBatch(redis, batch, "unmanaged_meta_page");
+        logger.log("error", "meta_queue_unmanaged_page_dead_lettered", {
+          traceId: batch[0]?.payload.traceId,
+          externalPageId: batch[0]?.payload.externalPageId,
           eventCount: batch.length,
         });
         continue;
@@ -189,17 +187,36 @@ if (!env.redisUrl || !env.databaseUrl) {
       if (!first) continue;
       const leaseKey = `meta:${first.payload.pageId}:${first.payload.senderId}`;
       const leaseOwner = `${env.metaWorkerConsumer}:${first.id}`;
-      const acquired = await redis.acquireLease(leaseKey, leaseOwner, 60_000);
+      const acquired = await redis.acquireLease(leaseKey, leaseOwner, env.metaConversationLeaseTtlMs);
       if (!acquired) {
-        await retryOrAcknowledge(redis, batch, "conversation_lease_busy");
+        logger.log("warn", "conversation_lease_busy", {
+          traceId: first.payload.traceId,
+          eventCount: batch.length,
+        });
+        // Keep the original pending entry and retry it without consuming the
+        // poison-message retry budget. Lease contention is not a processing failure.
+        await delay(Math.min(1_000, env.metaConversationLeaseRenewMs));
         continue;
       }
+      let conversationLeaseLost = false;
+      const conversationLeaseTimer = setInterval(() => {
+        void redis
+          .renewLease(leaseKey, leaseOwner, env.metaConversationLeaseTtlMs)
+          .then((renewed) => {
+            if (!renewed) conversationLeaseLost = true;
+          })
+          .catch(() => {
+            conversationLeaseLost = true;
+          });
+      }, env.metaConversationLeaseRenewMs);
+      conversationLeaseTimer.unref();
       try {
         const result = await processor.processBatch(
           batch
             .map((item) => item.payload)
             .sort((left, right) => left.timestamp.localeCompare(right.timestamp)),
         );
+        if (conversationLeaseLost) throw new Error("conversation_lease_lost");
         if (result.status !== "superseded") {
           await redis.acknowledge(
             queueTopic,
@@ -215,8 +232,9 @@ if (!env.redisUrl || !env.databaseUrl) {
         });
         await publishWorkerHeartbeat(redis, llm.healthSnapshot(), pipelineTelemetry.snapshot());
       } catch (error) {
-        await retryOrAcknowledge(redis, batch, error instanceof Error ? error.name : "unknown_error");
+        await retryOrDeadLetter(redis, batch, error instanceof Error ? error.name : "unknown_error");
       } finally {
+        clearInterval(conversationLeaseTimer);
         await redis.releaseLease(leaseKey, leaseOwner);
       }
     }
@@ -372,8 +390,9 @@ async function collectConversationBurst(
     const parsedIds = new Set(parsed.map((message) => message.id));
     const invalidIds = newlyRead.filter((message) => !parsedIds.has(message.id)).map((message) => message.id);
     if (invalidIds.length > 0) {
-      await redis.acknowledge(queueTopic, queueGroup, invalidIds);
-      logger.log("warn", "meta_queue_invalid_jobs_acked", {
+      const invalidMessages = newlyRead.filter((message) => !parsedIds.has(message.id));
+      await deadLetterBatch(redis, invalidMessages, "invalid_queue_payload");
+      logger.log("error", "meta_queue_invalid_jobs_dead_lettered", {
         count: invalidIds.length,
       });
     }
@@ -401,31 +420,51 @@ function isCustomerContent(job: MetaInboundJob): boolean {
   return job.kind === "text" || job.kind === "image" || job.kind === "postback" || job.kind === "comment";
 }
 
-async function retryOrAcknowledge(
+async function retryOrDeadLetter(
   redis: RedisRuntime,
   batch: readonly RedisQueueMessage<MetaInboundJob>[],
   reason: string,
 ): Promise<void> {
   const first = batch[0];
   if (!first) return;
-  const retryable = batch.filter((message) => message.payload.attempt + 1 < maximumAttempts);
+  const retryable = batch.filter((message) => message.payload.attempt + 1 < env.metaInboundMaxAttempts);
+  const exhausted = batch.filter((message) => message.payload.attempt + 1 >= env.metaInboundMaxAttempts);
   for (const message of retryable) {
     await redis.enqueue(queueTopic, {
       ...message.payload,
       attempt: message.payload.attempt + 1,
     });
   }
-  await redis.acknowledge(
-    queueTopic,
-    queueGroup,
-    batch.map((item) => item.id),
-  );
-  logger.log(retryable.length > 0 ? "warn" : "error", "meta_batch_failed", {
+  if (retryable.length > 0) {
+    await redis.acknowledge(
+      queueTopic,
+      queueGroup,
+      retryable.map((item) => item.id),
+    );
+  }
+  await deadLetterBatch(redis, exhausted, reason);
+  logger.log(exhausted.length > 0 ? "error" : "warn", "meta_batch_failed", {
     traceId: first.payload.traceId,
     eventCount: batch.length,
     retryCount: retryable.length,
+    deadLetterCount: exhausted.length,
     reason,
   });
+}
+
+async function deadLetterBatch<T>(
+  redis: RedisRuntime,
+  batch: readonly RedisQueueMessage<T>[],
+  reason: string,
+): Promise<void> {
+  for (const message of batch) {
+    await redis.deadLetter({
+      topic: queueTopic,
+      group: queueGroup,
+      message,
+      reason,
+    });
+  }
 }
 
 function delay(ms: number): Promise<void> {

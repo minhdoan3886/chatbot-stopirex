@@ -338,6 +338,26 @@ test("Meta comment trả lời công khai trước rồi gửi đúng một priv
   assert.equal(context.followupSchedules.length, 0);
 });
 
+test("Meta comment dùng episode riêng và không ghi đè memory Messenger đang hoạt động", async () => {
+  const seededChat = new DemoChatService();
+  seededChat.chat("seed", "Mình lấy 1 lọ");
+  const messengerRuntime = seededChat.exportSession("seed");
+  assert.ok(messengerRuntime);
+  const context = fixture({ live: true, runtimeState: messengerRuntime });
+
+  await context.processor.processBatch([
+    job({
+      eventId: "comment-isolated-1",
+      kind: "comment",
+      commentId: "comment-isolated-1",
+      text: "Shop ơi sản phẩm dùng thế nào?",
+    }),
+  ]);
+
+  const committed = context.runtimeUpdates.at(-1)?.runtimeState;
+  assert.deepEqual(committed, messengerRuntime);
+});
+
 test("Meta comment có SĐT được tự ẩn để bảo vệ khách", async () => {
   const context = fixture({ live: true });
   await context.processor.processBatch([

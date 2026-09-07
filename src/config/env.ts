@@ -23,6 +23,10 @@ export type AppEnv = {
   encryptionKey?: string;
   dataRetentionDays: number;
   outboundWindowHours: number;
+  conversationContextTtlHours: number;
+  metaInboundMaxAttempts: number;
+  metaConversationLeaseTtlMs: number;
+  metaConversationLeaseRenewMs: number;
   followupMode: "disabled" | "shadow" | "enabled";
   followupWorkerConsumer: string;
   followupPollMs: number;
@@ -49,6 +53,21 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
 
   const dataRetentionDays = positiveInteger(source.DATA_RETENTION_DAYS ?? "90", "DATA_RETENTION_DAYS");
   const outboundWindowHours = positiveInteger(source.OUTBOUND_WINDOW_HOURS ?? "24", "OUTBOUND_WINDOW_HOURS");
+  const conversationContextTtlHours = positiveInteger(
+    source.CONVERSATION_CONTEXT_TTL_HOURS ?? "24",
+    "CONVERSATION_CONTEXT_TTL_HOURS",
+  );
+  const metaConversationLeaseTtlMs = positiveInteger(
+    source.META_CONVERSATION_LEASE_TTL_MS ?? "120000",
+    "META_CONVERSATION_LEASE_TTL_MS",
+  );
+  const metaConversationLeaseRenewMs = positiveInteger(
+    source.META_CONVERSATION_LEASE_RENEW_MS ?? "30000",
+    "META_CONVERSATION_LEASE_RENEW_MS",
+  );
+  if (metaConversationLeaseRenewMs >= metaConversationLeaseTtlMs) {
+    throw new Error("META_CONVERSATION_LEASE_RENEW_MS phải nhỏ hơn META_CONVERSATION_LEASE_TTL_MS");
+  }
   const metaActivePage = source.META_ACTIVE_PAGE ?? "primary";
   if (metaActivePage !== "primary" && metaActivePage !== "test") {
     throw new Error("META_ACTIVE_PAGE phải là primary hoặc test");
@@ -79,6 +98,13 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     metaDebounceMs: positiveInteger(source.META_DEBOUNCE_MS ?? "6000", "META_DEBOUNCE_MS"),
     dataRetentionDays,
     outboundWindowHours,
+    conversationContextTtlHours,
+    metaInboundMaxAttempts: positiveInteger(
+      source.META_INBOUND_MAX_ATTEMPTS ?? "3",
+      "META_INBOUND_MAX_ATTEMPTS",
+    ),
+    metaConversationLeaseTtlMs,
+    metaConversationLeaseRenewMs,
     followupMode: followupMode as AppEnv["followupMode"],
     followupWorkerConsumer: source.FOLLOWUP_WORKER_CONSUMER?.trim() || "followup-worker-1",
     followupPollMs: positiveInteger(source.FOLLOWUP_POLL_MS ?? "1000", "FOLLOWUP_POLL_MS"),

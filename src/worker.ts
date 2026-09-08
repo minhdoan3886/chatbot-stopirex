@@ -133,8 +133,27 @@ if (!env.redisUrl || !env.databaseUrl) {
       followupMode: env.followupMode,
     });
 
+    let reclaimCursor = "0-0";
+    let nextReclaimAt = 0;
     while (!stopping) {
       await publishWorkerHeartbeat(redis, llm.healthSnapshot(), pipelineTelemetry.snapshot());
+      if (Date.now() >= nextReclaimAt) {
+        const recovered = await redis.reclaimPending<unknown>({
+          topic: queueTopic,
+          group: queueGroup,
+          consumer: env.metaWorkerConsumer,
+          minIdleMs: Math.max(60_000, env.metaConversationLeaseTtlMs * 2),
+          cursor: reclaimCursor,
+          count: 100,
+        });
+        reclaimCursor = recovered.cursor;
+        nextReclaimAt = Date.now() + (reclaimCursor === "0-0" ? 30_000 : 1_000);
+        if (recovered.messages.length > 0) {
+          logger.log("info", "meta_pending_recovered", { count: recovered.messages.length });
+        }
+        // Recovered entries now belong to this consumer and join ownPending.
+        // The conversation lease still protects turns another worker is executing.
+      }
       const ownPending = await redis.readGroup<unknown>({
         topic: queueTopic,
         group: queueGroup,
@@ -215,6 +234,17 @@ if (!env.redisUrl || !env.databaseUrl) {
           batch
             .map((item) => item.payload)
             .sort((left, right) => left.timestamp.localeCompare(right.timestamp)),
+          async () => {
+            if (
+              stopping ||
+              conversationLeaseLost ||
+              !(await redis.renewLease(leaseKey, leaseOwner, env.metaConversationLeaseTtlMs))
+            ) {
+              const error = new Error("conversation_lease_lost");
+              error.name = "ConversationLeaseLostError";
+              throw error;
+            }
+          },
         );
         if (conversationLeaseLost) throw new Error("conversation_lease_lost");
         if (result.status !== "superseded") {
@@ -232,7 +262,17 @@ if (!env.redisUrl || !env.databaseUrl) {
         });
         await publishWorkerHeartbeat(redis, llm.healthSnapshot(), pipelineTelemetry.snapshot());
       } catch (error) {
-        await retryOrDeadLetter(redis, batch, error instanceof Error ? error.name : "unknown_error");
+        const reason = error instanceof Error ? error.name : "unknown_error";
+        if (reason === "ConversationLeaseLostError") {
+          // The message may already belong to another consumer. Leave it pending
+          // so the normal idle-claim path remains the single recovery owner.
+          logger.log("warn", "meta_batch_lease_lost", {
+            traceId: first.payload.traceId,
+            eventCount: batch.length,
+          });
+        } else {
+          await retryOrDeadLetter(redis, batch, reason, reason === "MetaSendError" ? 1 : undefined);
+        }
       } finally {
         clearInterval(conversationLeaseTimer);
         await redis.releaseLease(leaseKey, leaseOwner);
@@ -424,23 +464,19 @@ async function retryOrDeadLetter(
   redis: RedisRuntime,
   batch: readonly RedisQueueMessage<MetaInboundJob>[],
   reason: string,
+  maximumAttempts = env.metaInboundMaxAttempts,
 ): Promise<void> {
   const first = batch[0];
   if (!first) return;
-  const retryable = batch.filter((message) => message.payload.attempt + 1 < env.metaInboundMaxAttempts);
-  const exhausted = batch.filter((message) => message.payload.attempt + 1 >= env.metaInboundMaxAttempts);
+  const retryable = batch.filter((message) => message.payload.attempt + 1 < maximumAttempts);
+  const exhausted = batch.filter((message) => message.payload.attempt + 1 >= maximumAttempts);
   for (const message of retryable) {
-    await redis.enqueue(queueTopic, {
-      ...message.payload,
-      attempt: message.payload.attempt + 1,
+    await redis.retryPending({
+      topic: queueTopic,
+      group: queueGroup,
+      originalId: message.id,
+      payload: { ...message.payload, attempt: message.payload.attempt + 1 },
     });
-  }
-  if (retryable.length > 0) {
-    await redis.acknowledge(
-      queueTopic,
-      queueGroup,
-      retryable.map((item) => item.id),
-    );
   }
   await deadLetterBatch(redis, exhausted, reason);
   logger.log(exhausted.length > 0 ? "error" : "warn", "meta_batch_failed", {

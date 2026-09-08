@@ -150,7 +150,7 @@ test("dashboard tổng hợp healthcheck, queue, worker và phiên cần chú ý
         return heartbeat as T;
       },
       async queueSnapshot() {
-        return { streamLength: 12, pending: 1 };
+        return { streamLength: 12, pending: 1, deadLetter: 2 };
       },
     },
     llm: { enabled: true, provider: "openai", model: "gpt-test" },
@@ -164,6 +164,8 @@ test("dashboard tổng hợp healthcheck, queue, worker và phiên cần chú ý
   assert.equal(result.metrics.activeSessions24h, 2);
   assert.equal(result.metrics.sessionsNeedAttention, 2);
   assert.equal(result.metrics.pendingInboundEvents, 1);
+  assert.equal(result.metrics.queueDeadLetter, 2);
+  assert.ok(result.alerts.some((alert) => /dead-letter/u.test(alert.title)));
   assert.equal(result.connections.find((item) => item.id === "meta-worker")?.status, "healthy");
   assert.equal(result.connections.find((item) => item.id === "openai-llm")?.status, "healthy");
   assert.equal(result.connections.find((item) => item.id === "openai-llm")?.name, "OpenAI Responses API");
@@ -219,7 +221,7 @@ test("dashboard không báo healthy khi kết nối xanh nhưng còn inbound ch�
         } as T;
       },
       async queueSnapshot() {
-        return { streamLength: 12, pending: 0 };
+        return { streamLength: 12, pending: 0, deadLetter: 0 };
       },
     },
     llm: { enabled: false, model: "gpt-test" },
@@ -284,7 +286,7 @@ test("public webhook báo down khi callback sống nhưng Page chưa subscribe a
         return undefined;
       },
       async queueSnapshot() {
-        return { streamLength: 0, pending: 0 };
+        return { streamLength: 0, pending: 0, deadLetter: 0 };
       },
     },
     llm: { enabled: false, model: "gpt-test" },
@@ -324,7 +326,7 @@ test("public webhook báo degraded khi token không đọc lại được subscr
         return undefined;
       },
       async queueSnapshot() {
-        return { streamLength: 0, pending: 0 };
+        return { streamLength: 0, pending: 0, deadLetter: 0 };
       },
     },
     llm: { enabled: false, model: "gpt-test" },
@@ -361,7 +363,7 @@ test("dashboard ưu tiên Public Webhook URL mới đã lưu trong Redis", async
         return undefined;
       },
       async queueSnapshot() {
-        return { streamLength: 0, pending: 0 };
+        return { streamLength: 0, pending: 0, deadLetter: 0 };
       },
     },
     llm: { enabled: false, model: "gpt-test" },
@@ -419,7 +421,7 @@ test("worker heartbeat cũ được báo mất kết nối", async () => {
         } as T;
       },
       async queueSnapshot() {
-        return { streamLength: 0, pending: 0 };
+        return { streamLength: 0, pending: 0, deadLetter: 0 };
       },
     },
     llm: { enabled: true, model: "gpt-test" },
@@ -466,7 +468,7 @@ test("router dùng lần OpenAI thành công đã lưu sau khi worker vừa rest
         } as T;
       },
       async queueSnapshot() {
-        return { streamLength: 0, pending: 0 };
+        return { streamLength: 0, pending: 0, deadLetter: 0 };
       },
     },
     llm: { enabled: true, provider: "openai", model: "gpt-mini" },

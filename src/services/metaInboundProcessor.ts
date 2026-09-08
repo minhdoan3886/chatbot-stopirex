@@ -83,12 +83,15 @@ export class MetaInboundProcessor {
     },
   ) {}
 
-  async processBatch(jobs: readonly MetaInboundJob[]): Promise<{
+  async processBatch(
+    jobs: readonly MetaInboundJob[],
+    assertLease: () => Promise<void> = async () => {},
+  ): Promise<{
     status: "ignored" | "ingested" | "replied" | "paused" | "superseded";
     replyCount: number;
   }> {
     try {
-      return await this.processBatchOnce(jobs);
+      return await this.processBatchOnce(jobs, assertLease);
     } catch (error) {
       if (!(error instanceof Error) || error.name !== "ConversationStateConflictError" || jobs.length === 0) {
         throw error;
@@ -102,11 +105,14 @@ export class MetaInboundProcessor {
       });
       // Inbound persistence and outbound planning are idempotent. Reload the
       // latest committed state and reconcile the same evidence exactly once.
-      return this.processBatchOnce(jobs);
+      return this.processBatchOnce(jobs, assertLease);
     }
   }
 
-  private async processBatchOnce(jobs: readonly MetaInboundJob[]): Promise<{
+  private async processBatchOnce(
+    jobs: readonly MetaInboundJob[],
+    assertLease: () => Promise<void>,
+  ): Promise<{
     status: "ignored" | "ingested" | "replied" | "paused" | "superseded";
     replyCount: number;
   }> {
@@ -174,6 +180,9 @@ export class MetaInboundProcessor {
     }
     const turnIdempotencyKey = `${first.eventId}:reply:turn`;
     for (const job of contentJobs) {
+      // Comments already have their own inbound_events/meta_comments audit.
+      // Inserting them as inbox messages would cancel follow-ups indirectly.
+      if (isCommentTurn) continue;
       await this.options.store.persistConversationMessage({
         tenantId: job.tenantId,
         pageId: job.pageId,
@@ -236,6 +245,7 @@ export class MetaInboundProcessor {
       let replyCount = 0;
       let lastMessageId = existingOutbound.lastMessageId;
       let suppressed = false;
+      await assertLease();
       if (!isCommentTurn) {
         await this.pushCreatedOrder({
           sessionId,
@@ -249,12 +259,14 @@ export class MetaInboundProcessor {
           existingOutbound,
           conversation.stateVersion,
           messenger,
+          assertLease,
         );
         replyCount = dispatched.count;
         suppressed = dispatched.suppressed;
         lastMessageId = dispatched.lastMessageId ?? lastMessageId;
       }
       if (!isCommentTurn && lastMessageId && isFollowupEligiblePipeline(conversation.pipelineTag)) {
+        await assertLease();
         await this.scheduleFollowup({
           tenantId: first.tenantId,
           pageId: first.pageId,
@@ -284,6 +296,7 @@ export class MetaInboundProcessor {
       const reply =
         "Dạ em đã nhận được hình ảnh của mình ạ. Em chuyển bộ phận liên quan kiểm tra nội dung ảnh và phản hồi lại mình sớm nhé.";
       void messenger.sendTyping(first.senderId).catch(() => undefined);
+      await assertLease();
       const committed = await this.options.store.commitConversationTurn({
         tenantId: first.tenantId,
         pageId: first.pageId,
@@ -308,6 +321,7 @@ export class MetaInboundProcessor {
         committed.outbound,
         committed.stateVersion,
         messenger,
+        assertLease,
       );
       return { status: "paused", replyCount: dispatched.count };
     }
@@ -414,12 +428,14 @@ export class MetaInboundProcessor {
       });
       result = { ...result, reply, replies, state };
     }
-    const hasNewerInbound = await this.options.store.hasNewerInboundContent({
-      tenantId: first.tenantId,
-      pageId: first.pageId,
-      externalCustomerId: first.senderId,
-      currentEventIds: contentJobs.map((job) => job.eventId),
-    });
+    const hasNewerInbound =
+      !isCommentTurn &&
+      (await this.options.store.hasNewerInboundContent({
+        tenantId: first.tenantId,
+        pageId: first.pageId,
+        externalCustomerId: first.senderId,
+        currentEventIds: contentJobs.map((job) => job.eventId),
+      }));
     if (hasNewerInbound) {
       this.options.chat.discardSession(sessionId);
       this.options.logger.log("info", "meta_reply_superseded", {
@@ -440,6 +456,7 @@ export class MetaInboundProcessor {
             result.state.decisionTrace?.selectedRoute === "active_care",
         })
       : undefined;
+    await assertLease();
     const committed = await this.options.store.commitConversationTurn({
       tenantId: first.tenantId,
       pageId: first.pageId,
@@ -463,6 +480,7 @@ export class MetaInboundProcessor {
       runtimeState: isCommentTurn
         ? conversation.runtimeState
         : (this.options.chat.exportSession(sessionId) ?? {}),
+      preserveConversationState: isCommentTurn,
       summary: `${result.state.pipeline} · ${result.state.breakpoint}`.slice(0, 800),
       sourceEventIds: contentJobs.map((job) => job.eventId),
       outbound: {
@@ -471,6 +489,7 @@ export class MetaInboundProcessor {
         texts: commentPlan ? [commentPlan.publicReply, commentPlan.privateReply] : result.replies.slice(0, 2),
       },
     });
+    await assertLease();
     if (commentPlan && first.commentId) {
       await this.options.store.prepareMetaCommentReplies({
         tenantId: first.tenantId,
@@ -518,6 +537,7 @@ export class MetaInboundProcessor {
     // A public comment is a separate episode and must never create or mutate
     // an inbox order draft from the customer's Messenger conversation.
     if (!isCommentTurn) {
+      await assertLease();
       await this.pushCreatedOrder({
         sessionId,
         state: result.state,
@@ -529,6 +549,7 @@ export class MetaInboundProcessor {
       committed.outbound,
       committed.stateVersion,
       messenger,
+      assertLease,
     );
     if (isCommentTurn) this.options.chat.discardSession(sessionId);
     if (result.state.botPaused) {
@@ -547,6 +568,7 @@ export class MetaInboundProcessor {
       dispatched.lastMessageId &&
       isFollowupEligibleTurn(result.state.lastIntent, result.state.pipeline)
     ) {
+      await assertLease();
       await this.scheduleFollowup({
         tenantId: first.tenantId,
         pageId: first.pageId,
@@ -642,12 +664,14 @@ export class MetaInboundProcessor {
     plan: ConversationOutboundPlan,
     expectedStateVersion: number,
     messenger: MetaMessenger,
+    assertLease: () => Promise<void>,
   ): Promise<{ count: number; lastMessageId?: string; suppressed: boolean }> {
     if (!plan) return { count: 0, suppressed: false };
     let sentThisAttempt = 0;
     let lastMessageId = plan.lastMessageId;
     let suppressed = false;
     for (let index = plan.sentCount; index < plan.texts.length; index += 1) {
+      await assertLease();
       const dispatchCurrent = await this.options.store.canDispatchConversationOutbound({
         tenantId: job.tenantId,
         conversationId: conversation.conversationId,
@@ -691,17 +715,14 @@ export class MetaInboundProcessor {
         error.name = outbound.retryable ? "RetryableMetaSendError" : "MetaSendError";
         throw error;
       }
-      // A Meta comment permits only one private reply. Advance the durable
-      // cursor immediately after delivery so a later audit-write failure
-      // cannot duplicate the private message during retry.
-      if (job.kind === "comment") {
-        await this.options.store.markConversationTurnOutboundSent({
-          tenantId: job.tenantId,
-          outboxId: plan.outboxId,
-          sentCount: index + 1,
-          messageId: outbound.value.messageId,
-        });
-      }
+      // Meta has accepted this part. Advance the durable cursor before the
+      // secondary audit write so any later failure cannot send it twice.
+      await this.options.store.markConversationTurnOutboundSent({
+        tenantId: job.tenantId,
+        outboxId: plan.outboxId,
+        sentCount: index + 1,
+        messageId: outbound.value.messageId,
+      });
       await this.options.store.persistConversationMessage({
         tenantId: job.tenantId,
         pageId: job.pageId,
@@ -733,14 +754,6 @@ export class MetaInboundProcessor {
       }
       sentThisAttempt += 1;
       lastMessageId = outbound.value.messageId;
-      if (job.kind !== "comment") {
-        await this.options.store.markConversationTurnOutboundSent({
-          tenantId: job.tenantId,
-          outboxId: plan.outboxId,
-          sentCount: index + 1,
-          messageId: outbound.value.messageId,
-        });
-      }
     }
     if (suppressed && job.kind === "comment" && job.commentId) {
       await this.options.store.markMetaCommentIssue({

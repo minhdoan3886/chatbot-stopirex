@@ -1150,6 +1150,8 @@ export class PostgresStore {
     signalTag?: string;
     humanStatus: "bot" | "human" | "paused";
     runtimeState: unknown;
+    /** Comment outbox writes must not refresh or advance the Messenger episode. */
+    preserveConversationState?: boolean;
     summary?: string;
     sourceEventIds: readonly string[];
     outbound: {
@@ -1159,8 +1161,15 @@ export class PostgresStore {
     };
   }): Promise<{ stateVersion: number; outbound: ConversationOutboundPlan }> {
     return this.withTenant(input.tenantId, async (client) => {
-      const updated = await client.query(
-        `UPDATE conversations
+      const updated = input.preserveConversationState
+        ? await client.query(
+            `SELECT state_version::int FROM conversations
+             WHERE tenant_id = $1 AND id = $2 AND state_version = $3
+             FOR UPDATE`,
+            [input.tenantId, input.conversationId, input.expectedStateVersion],
+          )
+        : await client.query(
+            `UPDATE conversations
          SET consultation_stage = $2,
              pipeline_tag = $3,
              signal_tag = $4,
@@ -1171,17 +1180,17 @@ export class PostgresStore {
              updated_at = now()
          WHERE id = $1 AND state_version = $8
          RETURNING state_version::int`,
-        [
-          input.conversationId,
-          input.consultationStage,
-          input.pipelineTag,
-          input.signalTag ?? null,
-          input.humanStatus,
-          JSON.stringify(input.runtimeState),
-          input.summary ?? null,
-          input.expectedStateVersion,
-        ],
-      );
+            [
+              input.conversationId,
+              input.consultationStage,
+              input.pipelineTag,
+              input.signalTag ?? null,
+              input.humanStatus,
+              JSON.stringify(input.runtimeState),
+              input.summary ?? null,
+              input.expectedStateVersion,
+            ],
+          );
       if (updated.rowCount !== 1) throw conversationStateConflict();
       const payload = {
         pageId: input.pageId,

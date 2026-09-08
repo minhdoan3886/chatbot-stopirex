@@ -32,6 +32,7 @@ function fixture(options: {
   attribution?: boolean;
   forceBrainReply?: string;
   stateConflictOnce?: boolean;
+  failOutboundAuditOnce?: boolean;
   runtimeState?: unknown;
   updatedAt?: string;
   conversationContextTtlHours?: number;
@@ -44,6 +45,7 @@ function fixture(options: {
   const commentWorkflowUpdates: Array<Record<string, unknown>> = [];
   const processed: string[] = [];
   const runtimeUpdates: Array<Record<string, unknown>> = [];
+  const persistedMessages: Array<Record<string, unknown>> = [];
   const outbox = new Map<
     string,
     {
@@ -66,6 +68,7 @@ function fixture(options: {
   let cachedDisplayName: string | undefined;
   let profileRequests = 0;
   let commitAttempts = 0;
+  let outboundAuditFailures = 0;
   const profileName = options.profileName;
   const store: MetaInboundStore = {
     async ensureMessengerConversation(input) {
@@ -81,7 +84,13 @@ function fixture(options: {
         updatedAt: options.updatedAt ?? new Date().toISOString(),
       };
     },
-    async persistConversationMessage() {},
+    async persistConversationMessage(input) {
+      persistedMessages.push(input);
+      if (options.failOutboundAuditOnce && input.direction === "outbound" && outboundAuditFailures === 0) {
+        outboundAuditFailures += 1;
+        throw new Error("outbound_audit_failure");
+      }
+    },
     async hasNewerInboundContent() {
       return newerInbound;
     },
@@ -277,6 +286,7 @@ function fixture(options: {
     commentDispatchOrder,
     commentVisibilityChanges,
     commentWorkflowUpdates,
+    persistedMessages,
     get commitAttempts() {
       return commitAttempts;
     },
@@ -343,7 +353,12 @@ test("Meta comment dùng episode riêng và không ghi đè memory Messenger đa
   seededChat.chat("seed", "Mình lấy 1 lọ");
   const messengerRuntime = seededChat.exportSession("seed");
   assert.ok(messengerRuntime);
-  const context = fixture({ live: true, runtimeState: messengerRuntime });
+  const context = fixture({
+    live: true,
+    runtimeState: messengerRuntime,
+    followups: true,
+    newerInbound: true,
+  });
 
   await context.processor.processBatch([
     job({
@@ -356,6 +371,11 @@ test("Meta comment dùng episode riêng và không ghi đè memory Messenger đa
 
   const committed = context.runtimeUpdates.at(-1)?.runtimeState;
   assert.deepEqual(committed, messengerRuntime);
+  assert.equal(context.runtimeUpdates.at(-1)?.preserveConversationState, true);
+  assert.equal(context.persistedMessages.filter((message) => message.direction === "inbound").length, 0);
+  assert.equal(context.followupCancellations.length, 0);
+  assert.equal(context.inboxPushes.length, 0);
+  assert.equal(context.publicCommentReplies.length, 1);
 });
 
 test("Meta comment có SĐT được tự ẩn để bảo vệ khách", async () => {
@@ -1446,6 +1466,35 @@ test("outbox gửi tiếp bubble còn thiếu mà không lặp bubble đã gửi
   assert.equal(context.runtimeUpdates.length, 1);
   assert.equal(context.sent.length, 2);
   assert.equal(context.sent.filter((item) => item === firstBubble).length, 1);
+});
+
+test("outbox không gửi trùng khi Meta thành công nhưng ghi audit lỗi", async () => {
+  const context = fixture({ live: true, failOutboundAuditOnce: true });
+  await assert.rejects(() => context.processor.processBatch([job()]), /outbound_audit_failure/u);
+  assert.equal(context.sent.length, 1);
+
+  const retried = await context.processor.processBatch([job()]);
+  assert.equal(retried.replyCount, 1);
+  assert.equal(context.sent.length, 2);
+  assert.equal(new Set(context.sent).size, 2);
+});
+
+test("mất conversation lease chặn commit và outbound", async () => {
+  const context = fixture({ live: true });
+  let checks = 0;
+  await assert.rejects(
+    () =>
+      context.processor.processBatch([job()], async () => {
+        checks += 1;
+        const error = new Error("conversation_lease_lost");
+        error.name = "ConversationLeaseLostError";
+        throw error;
+      }),
+    (error: unknown) => error instanceof Error && error.name === "ConversationLeaseLostError",
+  );
+  assert.ok(checks > 0);
+  assert.equal(context.runtimeUpdates.length, 0);
+  assert.equal(context.sent.length, 0);
 });
 
 test("Ảnh được chuyển người thật thay vì để LLM đoán nội dung", async () => {

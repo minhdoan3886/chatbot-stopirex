@@ -16,3 +16,30 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm run check
       - run: npm run format:check
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: stopirex_test
+          POSTGRES_USER: stopirex
+          POSTGRES_PASSWORD: integration-only
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U stopirex -d stopirex_test" --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      INTEGRATION: "1"
+      DATABASE_URL: postgres://stopirex:integration-only@127.0.0.1:5432/stopirex_test
+      REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - run: node --import tsx scripts/migrate.ts
+      - run: node --import tsx scripts/seed.ts
+      - run: node --import tsx --test test/integration.test.ts test/redisRecovery.test.ts

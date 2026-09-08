@@ -15,6 +15,7 @@ Mọi log JSON mang `traceId`, `tenantId`, `pageId`, `conversationId` khi có; P
 
 - `/ready` 503 liên tục 5 phút.
 - Webhook error >2%, queue lag >2 phút, follow-up overdue >10 phút.
+- Dead-letter >0 hoặc key DLQ sai kiểu dữ liệu: cảnh báo critical; không replay tự động.
 - Price conflict hoặc prohibited claim >0 trong outbound gate.
 - Provider 5xx >5%/5 phút; order partial failure >0.
 - Cross-tenant test/security scan thất bại: chặn deploy ngay.

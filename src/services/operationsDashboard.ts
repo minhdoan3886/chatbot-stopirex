@@ -76,6 +76,7 @@ export type OperationsSnapshot = {
     sessionsNeedAttention: number;
     pendingInboundEvents: number;
     queuePending: number;
+    queueDeadLetter: number;
     followupDue: number;
     followupFailed: number;
   };
@@ -230,7 +231,7 @@ export class OperationsDashboardService {
         : Promise.resolve(emptyFollowupSnapshot),
       redisReady && this.dependencies.redis
         ? this.dependencies.redis.queueSnapshot("inbound", "meta-inbound-v1")
-        : Promise.resolve({ streamLength: 0, pending: 0 }),
+        : Promise.resolve({ streamLength: 0, pending: 0, deadLetter: 0 }),
       redisReady && this.dependencies.redis
         ? this.dependencies.redis.getJson<WorkerHeartbeat>("health:worker:meta")
         : Promise.resolve(undefined),
@@ -379,9 +380,17 @@ export class OperationsDashboardService {
         id: "redis",
         name: "Redis Queue",
         endpoint: safeEndpoint(this.dependencies.env.redisUrl, "redis"),
-        status: redisReady ? (queue.pending > 0 ? "degraded" : "healthy") : "down",
+        status: redisReady
+          ? queue.deadLetter < 0
+            ? "down"
+            : queue.pending > 0 || queue.deadLetter > 0
+              ? "degraded"
+              : "healthy"
+          : "down",
         detail: redisReady
-          ? `${queue.pending} job đang chờ xử lý · ${queue.streamLength} event trong stream`
+          ? queue.deadLetter < 0
+            ? "Không đọc được dead-letter stream; kiểm tra kiểu dữ liệu Redis"
+            : `${queue.pending} job đang chờ xử lý · ${queue.deadLetter} job lỗi cần xem · ${queue.streamLength} event trong stream`
           : this.dependencies.redis
             ? "Không ping được Redis"
             : "Chưa cấu hình REDIS_URL",
@@ -513,6 +522,7 @@ export class OperationsDashboardService {
         sessionsNeedAttention: sessions.filter((session) => session.health !== "healthy").length,
         pendingInboundEvents: databaseSnapshot.pendingInboundEvents,
         queuePending: queue.pending,
+        queueDeadLetter: queue.deadLetter,
         followupDue: followup.due,
         followupFailed: followup.failed + followup.deliveryUnknown,
       },
@@ -745,6 +755,19 @@ function buildAlerts(input: {
       severity: "warning",
       title: `${input.queue.pending} job đang pending trong Redis`,
       detail: "Kiểm tra worker, retry và consumer group meta-inbound-v1",
+    });
+  }
+  if (input.queue.deadLetter < 0) {
+    alerts.push({
+      severity: "critical",
+      title: "Dead-letter stream không đọc được",
+      detail: "Kiểm tra sai kiểu dữ liệu hoặc hỏng key queue:inbound:dead-letter trong Redis.",
+    });
+  } else if (input.queue.deadLetter > 0) {
+    alerts.push({
+      severity: "critical",
+      title: `${input.queue.deadLetter} job nằm trong dead-letter`,
+      detail: "Đây là tin không thể xử lý tự động; cần kiểm tra nguyên nhân và replay có kiểm soát.",
     });
   }
   const criticalSessions = input.sessions.filter((session) => session.health === "critical").length;

@@ -8,6 +8,7 @@ export type RedisQueueMessage<T = unknown> = {
 export type RedisQueueSnapshot = {
   streamLength: number;
   pending: number;
+  deadLetter: number;
 };
 
 export type RedisDeadLetter<T = unknown> = {
@@ -56,12 +57,20 @@ export class RedisRuntime {
     await this.connect();
     const key = `queue:${topic}`;
     const streamLength = await this.client.xLen(key);
-    if (streamLength === 0) return { streamLength: 0, pending: 0 };
+    let deadLetter: number;
+    try {
+      deadLetter = await this.client.xLen(`${key}:dead-letter`);
+    } catch {
+      // -1 explicitly surfaces a corrupt/wrong-type DLQ without making the
+      // whole operations snapshot fail closed and disappear.
+      deadLetter = -1;
+    }
+    if (streamLength === 0) return { streamLength: 0, pending: 0, deadLetter };
     try {
       const pending = await this.client.xPending(key, group);
-      return { streamLength, pending: Number(pending.pending) };
+      return { streamLength, pending: Number(pending.pending), deadLetter };
     } catch {
-      return { streamLength, pending: 0 };
+      return { streamLength, pending: 0, deadLetter };
     }
   }
 
@@ -100,7 +109,7 @@ export class RedisRuntime {
     message: RedisQueueMessage<T>;
     reason: string;
     failedAt?: Date;
-  }): Promise<string> {
+  }): Promise<string | undefined> {
     await this.connect();
     const record: RedisDeadLetter<T> = {
       originalId: input.message.id,
@@ -109,13 +118,79 @@ export class RedisRuntime {
       payload: input.message.payload,
     };
     const result = await this.client.eval(
-      "local id = redis.call('xadd', KEYS[2], '*', 'payload', ARGV[3]); redis.call('xack', KEYS[1], ARGV[1], ARGV[2]); return id",
+      "if #redis.call('xpending', KEYS[1], ARGV[1], ARGV[2], ARGV[2], 1) == 0 then return false end; local id = redis.call('xadd', KEYS[2], '*', 'payload', ARGV[3]); redis.call('xack', KEYS[1], ARGV[1], ARGV[2]); return id",
       {
         keys: [`queue:${input.topic}`, `queue:${input.topic}:dead-letter`],
         arguments: [input.group, input.message.id, JSON.stringify(record)],
       },
     );
-    return String(result);
+    return result === null ? undefined : String(result);
+  }
+
+  /** A lost Redis response may be retried without appending the retry twice. */
+  async retryPending(input: {
+    topic: string;
+    group: string;
+    originalId: string;
+    payload: unknown;
+  }): Promise<string | undefined> {
+    await this.connect();
+    const result = await this.client.eval(
+      "if #redis.call('xpending', KEYS[1], ARGV[1], ARGV[2], ARGV[2], 1) == 0 then return false end; local id = redis.call('xadd', KEYS[1], '*', 'payload', ARGV[3]); redis.call('xack', KEYS[1], ARGV[1], ARGV[2]); return id",
+      {
+        keys: [`queue:${input.topic}`],
+        arguments: [input.group, input.originalId, JSON.stringify(input.payload)],
+      },
+    );
+    return result === null ? undefined : String(result);
+  }
+
+  async reclaimPending<T>(input: {
+    topic: string;
+    group: string;
+    consumer: string;
+    minIdleMs: number;
+    cursor?: string;
+    count?: number;
+  }): Promise<{ cursor: string; messages: Array<RedisQueueMessage<T>> }> {
+    await this.connect();
+    const claimed = await this.client.xAutoClaim(
+      `queue:${input.topic}`,
+      input.group,
+      input.consumer,
+      input.minIdleMs,
+      input.cursor ?? "0-0",
+      { COUNT: input.count ?? 100 },
+    );
+    const messages: Array<RedisQueueMessage<T>> = [];
+    for (const item of claimed.messages) {
+      if (!item) continue;
+      const decoded = await this.decodeQueueMessage<T>(input.topic, input.group, item);
+      if (decoded) messages.push(decoded);
+    }
+    return { cursor: claimed.nextId, messages };
+  }
+
+  private async decodeQueueMessage<T>(
+    topic: string,
+    group: string,
+    item: { id: string; message: Record<string, string> },
+  ): Promise<RedisQueueMessage<T> | undefined> {
+    const raw = item.message.payload;
+    if (typeof raw === "string") {
+      try {
+        return { id: item.id, payload: JSON.parse(raw) as T };
+      } catch {
+        // Preserve the original bytes below so an operator can investigate/replay.
+      }
+    }
+    await this.deadLetter({
+      topic,
+      group,
+      message: { id: item.id, payload: { fields: item.message } },
+      reason: typeof raw === "string" ? "invalid_queue_json" : "missing_queue_payload",
+    });
+    return undefined;
   }
 
   async ensureConsumerGroup(topic: string, group: string): Promise<void> {
@@ -156,13 +231,8 @@ export class RedisRuntime {
     const output: Array<RedisQueueMessage<T>> = [];
     for (const stream of streams) {
       for (const item of stream.messages) {
-        const raw = item.message.payload;
-        if (typeof raw !== "string") continue;
-        try {
-          output.push({ id: item.id, payload: JSON.parse(raw) as T });
-        } catch {
-          await this.client.xAck(`queue:${input.topic}`, input.group, item.id);
-        }
+        const decoded = await this.decodeQueueMessage<T>(input.topic, input.group, item);
+        if (decoded) output.push(decoded);
       }
     }
     return output;

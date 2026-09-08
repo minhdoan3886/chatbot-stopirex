@@ -33,6 +33,27 @@ and readiness. `--apply` backs up nginx configuration and routes the existing
 Tailscale proxy directly to that API using Docker DNS. This avoids the failed
 host-port-443 dependency. Run it after a release changes the API container name.
 
+Product releases now use one controlled command from a clean, synchronized
+`main` checkout:
+
+```sh
+npm run deploy:product
+```
+
+The release controller refuses a SHA that is not the current `origin/main` and
+requires successful `verify`, `integration` and `scan` GitHub checks. It enables
+Coolify readiness checks, queues the exact commit, waits for the new API to become
+ready, switches the stable Tailscale proxy, and atomically rolls the Meta worker
+and follow-up worker to the same image. Worker environment is copied through
+mode-0600 temporary files, which are deleted automatically. Failed worker startup
+restores both previous containers.
+
+Coolify source auto-deploy is disabled by the controller because the native
+Dockerfile deployment only replaces the API container and would leave the two
+workers on an older image. The controlled command is the supported path from
+GitHub to product until all three processes are managed by one Coolify Compose
+resource.
+
 ## Queue/channel hardening completed by this change set
 
 - Malformed or incomplete Redis jobs move atomically to a dead-letter stream;

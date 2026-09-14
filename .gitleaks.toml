@@ -1,0 +1,15 @@
+title = "Stopirex Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+# These are literal documentation placeholders from the example environment
+# files, including their historical commits. Restrict the exception to the
+# complete assignment so a real encryption key is still reported.
+[allowlist]
+description = "Ignore only the documented ENCRYPTION_KEY placeholders"
+regexTarget = "match"
+regexes = [
+  '''ENCRYPTION_KEY=replace-with-32-byte-secret''',
+  '''ENCRYPTION_KEY=replace-with-32-byte-test-secret''',
+]

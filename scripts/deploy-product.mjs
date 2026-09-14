@@ -73,6 +73,23 @@ function event(phase, detail = {}) {
   console.log(JSON.stringify({ phase, ...detail }));
 }
 
+function latestChecksByName(checks) {
+  const latest = new Map();
+  for (const check of checks) {
+    const previous = latest.get(check.name);
+    const checkStartedAt = Date.parse(check.started_at ?? "") || 0;
+    const previousStartedAt = Date.parse(previous?.started_at ?? "") || 0;
+    if (
+      !previous ||
+      checkStartedAt > previousStartedAt ||
+      (checkStartedAt === previousStartedAt && check.id > previous.id)
+    ) {
+      latest.set(check.name, check);
+    }
+  }
+  return latest;
+}
+
 function assertReleaseSource(requestedCommit) {
   if (run("git", ["status", "--porcelain"])) throw new Error("Working tree must be clean");
   if (run("git", ["branch", "--show-current"]) !== "main")
@@ -87,9 +104,9 @@ function assertReleaseSource(requestedCommit) {
   const checks = JSON.parse(
     run("gh", ["api", `repos/${repository}/commits/${commit}/check-runs`]),
   ).check_runs;
-  const results = Object.fromEntries(checks.map((check) => [check.name, check]));
+  const results = latestChecksByName(checks);
   for (const name of requiredChecks) {
-    const check = results[name];
+    const check = results.get(name);
     if (!check || check.status !== "completed" || check.conclusion !== "success") {
       throw new Error(`Required GitHub check is not successful: ${name}`);
     }

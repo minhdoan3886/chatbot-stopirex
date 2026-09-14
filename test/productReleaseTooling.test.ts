@@ -22,6 +22,32 @@ test("product release is gated and keeps every runtime on one image", () => {
   assert.match(deploymentScript, /is_auto_deploy_enabled=false/u);
   assert.match(deploymentScript, /roll-product-workers\.sh/u);
   assert.match(deploymentScript, /product-proxy\.mjs/u);
+  assert.match(deploymentScript, /latestChecksByName/u);
+  assert.match(deploymentScript, /check\.started_at/u);
+  assert.match(deploymentScript, /results\.get\(name\)/u);
+});
+
+test("product release gate uses the newest result when a check name is repeated", () => {
+  const source = deploymentScript.match(/function latestChecksByName\(checks\) \{[\s\S]*?\n\}/u)?.[0];
+  assert.ok(source);
+  const latestChecksByName = new Function(`${source}; return latestChecksByName;`)() as (
+    checks: Array<{ id: number; name: string; started_at: string; conclusion: string }>,
+  ) => Map<string, { conclusion: string }>;
+  const newestFailure = {
+    id: 20,
+    name: "scan",
+    started_at: "2026-09-14T07:28:44Z",
+    conclusion: "failure",
+  };
+  const olderSuccess = {
+    id: 10,
+    name: "scan",
+    started_at: "2026-09-14T06:27:27Z",
+    conclusion: "success",
+  };
+
+  assert.equal(latestChecksByName([newestFailure, olderSuccess]).get("scan")?.conclusion, "failure");
+  assert.equal(latestChecksByName([olderSuccess, newestFailure]).get("scan")?.conclusion, "failure");
 });
 
 test("worker rollout has an all-or-none rollback path", () => {

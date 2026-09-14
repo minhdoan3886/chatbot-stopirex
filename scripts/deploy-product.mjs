@@ -220,7 +220,7 @@ function finalizeRelease(host, commit, image, api) {
   event("proxy", { api });
   console.log(remote(host, "node", "/tmp/stopirex-product-proxy.mjs", "--apply", "--api-container", api));
   event("workers", { image });
-  console.log(remote(host, "sh", "/tmp/stopirex-roll-product-workers.sh", image));
+  console.log(remote(host, "sh", "/tmp/stopirex-roll-product-workers.sh", image, api));
 
   const metadataCode = [
     `$app=\\App\\Models\\Application::findOrFail(${applicationId})`,

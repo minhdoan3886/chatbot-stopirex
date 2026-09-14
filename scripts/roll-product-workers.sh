@@ -2,10 +2,18 @@
 set -eu
 
 image="${1:-}"
+api="${2:-}"
 case "$image" in
   2cenq94k4kvxfmlfgmkmjrbn:[0-9a-f]*) ;;
   *)
     echo "Invalid product image: $image" >&2
+    exit 2
+    ;;
+esac
+case "$api" in
+  2cenq94k4kvxfmlfgmkmjrbn-*) ;;
+  *)
+    echo "Invalid product API container: $api" >&2
     exit 2
     ;;
 esac
@@ -18,27 +26,31 @@ release_short="$(printf '%s' "$release" | cut -c1-8)"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 worker_backup="${worker}-backup-${release_short}-${stamp}"
 followup_backup="${followup}-backup-${release_short}-${stamp}"
+runtime_env="$(mktemp "/tmp/stopirex-runtime-${release_short}.XXXXXX.env")"
+expected_env="$(mktemp "/tmp/stopirex-expected-${release_short}.XXXXXX.env")"
 worker_env="$(mktemp "/tmp/${worker}-${release_short}.XXXXXX.env")"
 followup_env="$(mktemp "/tmp/${followup}-${release_short}.XXXXXX.env")"
 
 cleanup() {
-  rm -f "$worker_env" "$followup_env"
+  rm -f "$runtime_env" "$expected_env" "$worker_env" "$followup_env"
 }
 trap cleanup EXIT HUP INT TERM
 
 docker image inspect "$image" >/dev/null
-docker inspect "$worker" "$followup" >/dev/null
+docker inspect "$api" "$worker" "$followup" >/dev/null
 
-worker_current="$(docker inspect "$worker" --format '{{.Config.Image}}|{{.State.Running}}')"
-followup_current="$(docker inspect "$followup" --format '{{.Config.Image}}|{{.State.Running}}')"
-if [ "$worker_current" = "$image|true" ] && [ "$followup_current" = "$image|true" ]; then
-  echo "CURRENT|$worker|$followup|$image"
-  exit 0
+api_runtime="$(docker inspect "$api" --format '{{.Config.Image}}|{{.State.Running}}')"
+if [ "$api_runtime" != "$image|true" ]; then
+  echo "Product API is not running the requested image: $api_runtime" >&2
+  exit 1
 fi
 
-chmod 600 "$worker_env" "$followup_env"
-docker inspect "$worker" --format '{{range .Config.Env}}{{println .}}{{end}}' > "$worker_env"
-docker inspect "$followup" --format '{{range .Config.Env}}{{println .}}{{end}}' > "$followup_env"
+chmod 600 "$runtime_env" "$expected_env" "$worker_env" "$followup_env"
+# The newly healthy API is the release source of truth for runtime configuration.
+# Container identity fields are generated separately for each Docker container.
+docker inspect "$api" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | grep -Ev '^(HOST|HOSTNAME|COOLIFY_CONTAINER_NAME)=' > "$runtime_env"
+sort "$runtime_env" > "$expected_env"
 
 rollback() {
   docker rm -f "$worker" "$followup" >/dev/null 2>&1 || true
@@ -61,7 +73,7 @@ if ! docker create \
   --name "$worker" \
   --restart unless-stopped \
   --network "$network" \
-  --env-file "$worker_env" \
+  --env-file "$runtime_env" \
   "$image" sh -c "node dist/src/worker.js" >/dev/null; then
   rollback
   exit 1
@@ -71,13 +83,23 @@ if ! docker create \
   --name "$followup" \
   --restart unless-stopped \
   --network "$network" \
-  --env-file "$followup_env" \
+  --env-file "$runtime_env" \
   "$image" sh -c "node dist/src/followupWorker.js" >/dev/null; then
   rollback
   exit 1
 fi
 
 if ! docker start "$worker" "$followup" >/dev/null; then
+  rollback
+  exit 1
+fi
+
+docker inspect "$worker" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | grep -Ev '^(HOST|HOSTNAME|COOLIFY_CONTAINER_NAME)=' | sort > "$worker_env"
+docker inspect "$followup" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | grep -Ev '^(HOST|HOSTNAME|COOLIFY_CONTAINER_NAME)=' | sort > "$followup_env"
+if ! cmp -s "$expected_env" "$worker_env" || ! cmp -s "$expected_env" "$followup_env"; then
+  echo "Worker runtime environment does not match the released API" >&2
   rollback
   exit 1
 fi

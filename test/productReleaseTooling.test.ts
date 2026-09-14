@@ -55,6 +55,12 @@ test("worker rollout has an all-or-none rollback path", () => {
   assert.match(workerRollScript, /rollback\(\)/u);
   assert.match(workerRollScript, /stopirex-worker/u);
   assert.match(workerRollScript, /stopirex-followup-worker/u);
+  assert.match(workerRollScript, /Invalid product API container/u);
+  assert.match(workerRollScript, /docker inspect "\$api"/u);
+  assert.match(workerRollScript, /env-file "\$runtime_env"/u);
+  assert.match(workerRollScript, /cmp -s "\$expected_env" "\$worker_env"/u);
+  assert.doesNotMatch(workerRollScript, /CURRENT\|\$worker/u);
+  assert.doesNotMatch(workerRollScript, /docker inspect "\$worker" --format[^\n]+> "\$worker_env"/u);
   assert.match(workerRollScript, /docker rename "\$worker_backup" "\$worker"/u);
   assert.match(workerRollScript, /docker rename "\$followup_backup" "\$followup"/u);
 });

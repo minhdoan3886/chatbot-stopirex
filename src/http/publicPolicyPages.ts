@@ -8,13 +8,20 @@ const policyStyles = `
   a { color: #6f1d9b; }
   .meta { color: #5f6368; }
   .notice { padding: 16px 18px; border-left: 4px solid #7a174b; background: #fff6fa; }
+  .success { padding: 16px 18px; border-left: 4px solid #16794d; background: #f1fbf6; }
+  .button { display: inline-block; margin: 8px 0; padding: 12px 18px; border-radius: 10px; color: #fff; background: #6f1d9b; font-weight: 700; text-decoration: none; }
+  .steps li { margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th, td { padding: 11px 12px; border: 1px solid #dfe3e8; text-align: left; vertical-align: top; }
+  th { background: #f4f0f7; color: #4a1833; }
+  code { padding: 2px 5px; border-radius: 5px; background: #f0f2f5; font-size: .92em; }
   footer { margin-top: 36px; padding-top: 20px; border-top: 1px solid #e4e7eb; color: #5f6368; }
-  @media (max-width: 640px) { main { margin: 16px auto; padding: 24px 20px; } }
+  @media (max-width: 640px) { main { margin: 16px auto; padding: 24px 20px; } table { display: block; overflow-x: auto; } }
 `;
 
-function page(title: string, body: string): string {
+function page(title: string, body: string, language = "vi"): string {
   return `<!doctype html>
-<html lang="vi">
+<html lang="${language}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,19 +42,46 @@ const pageContact = `Nếu cần hỗ trợ hoặc thực hiện quyền đối 
 export const appReviewPage = page(
   "Facebook App Review",
   `<h1>Stopirex Facebook Customer Care</h1>
-  <p class="meta">Official application information for Meta App Review.</p>
-  <p>Stopirex is a customer-care and commerce application used by authorized staff to manage conversations and comments on Facebook Pages that they administer.</p>
-  <h2>How the application uses Meta products</h2>
+  <p class="meta">Reviewer walkthrough for Meta App ID 1606697693399457.</p>
+  <p class="success"><strong>Authentication model:</strong> this application uses the visible Facebook Login flow. It does not use a System User token for the reviewer path. Page access tokens are encrypted before storage and never displayed in the interface.</p>
+  <p>Stopirex is a customer-care and commerce application used by authorized staff to manage customer-initiated Messenger conversations and comments on Facebook Pages they administer.</p>
+  <a class="button" href="/pages?review=1">Open Page administration</a>
+
+  <h2>Complete reviewer path</h2>
+  <ol class="steps">
+    <li>Open <strong>Page administration</strong> using the application credentials supplied in the review submission.</li>
+    <li>Select <strong>Connect with Facebook</strong>. Complete the entire Facebook Login flow and grant all requested Page permissions.</li>
+    <li>Select the supplied review Page. The application lists only Pages managed by the signed-in administrator.</li>
+    <li>Confirm that the Page card shows an encrypted credential and the <code>messages</code> + <code>feed</code> webhook subscription, then enable automation for that Page.</li>
+    <li>From the supplied customer test account, send a Messenger message to the Page. Show the inbound customer message and the relevant customer-care reply.</li>
+    <li>Add a comment to the supplied review post. Show the public reply, the single private follow-up and the same event in <strong>Comment operations</strong>.</li>
+    <li>Add a second comment containing dummy contact information. Show the privacy recommendation and use <strong>Hide comment</strong>, then <strong>Unhide comment</strong>. A genuine complaint without personal information remains visible.</li>
+  </ol>
+
+  <h2>Permission-to-action evidence</h2>
+  <table>
+    <thead><tr><th>Permission</th><th>Visible action in the recording</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>pages_show_list</code></td><td>Complete Facebook Login and return to Page administration.</td><td>Only Pages managed by the administrator are listed for explicit selection.</td></tr>
+      <tr><td><code>pages_manage_metadata</code></td><td>Connect the selected Page.</td><td>The application subscribes that Page to <code>messages</code>, <code>feed</code>, message echoes, deliveries and reads.</td></tr>
+      <tr><td><code>pages_messaging</code></td><td>Send a customer-initiated Messenger message and show the reply.</td><td>The application sends a relevant support reply; staff takeover stops automation.</td></tr>
+      <tr><td><code>pages_read_user_content</code></td><td>Post a new comment from the customer account.</td><td>The comment text and author context appear in Comment operations.</td></tr>
+      <tr><td><code>pages_read_engagement</code></td><td>Open the comment record in the Page/post context.</td><td>The event is associated with the correct connected Page and post.</td></tr>
+      <tr><td><code>pages_manage_engagement</code></td><td>Show the public reply and use Hide/Unhide on the dummy-PII comment.</td><td>The reply and moderation state are visible both on Facebook and in Comment operations.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Screen-recording requirements</h2>
   <ul>
-    <li>Facebook Login lets a Page administrator select which managed Page to connect.</li>
-    <li>Messenger Webhooks deliver customer-initiated messages for customer-care replies.</li>
-    <li>Page comment events support public replies, one private follow-up and protection of phone numbers or emails posted publicly.</li>
-    <li>Each connected Page can be enabled or disabled independently.</li>
+    <li>Record the full browser window in English, including the application URL and the Facebook Login permission screen.</li>
+    <li>Do not cut between login, permission grant, Page selection and the resulting Page card.</li>
+    <li>Use callouts to name each requested permission when its corresponding action is demonstrated.</li>
+    <li>Do not display passwords, Page tokens, customer phone numbers or real personal information.</li>
   </ul>
+
   <h2>Policies</h2>
-  <ul><li><a href="/privacy-policy">Privacy Policy</a></li><li><a href="/terms">Terms of Service</a></li><li><a href="/data-deletion">Data Deletion Instructions</a></li></ul>
-  <h2>Reviewer test path</h2>
-  <p>Sign in through the Fanpage administration screen, grant the requested Page permissions, select the supplied test Page, then test Messenger and a new Page comment.</p>`,
+  <ul><li><a href="/privacy-policy">Privacy Policy</a></li><li><a href="/terms">Terms of Service</a></li><li><a href="/data-deletion">Data Deletion Instructions</a></li></ul>`,
+  "en",
 );
 
 export const privacyPolicyPage = page(

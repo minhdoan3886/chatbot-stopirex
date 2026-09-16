@@ -96,13 +96,14 @@ export function selectCanonicalRequiredFacts(input: {
 }): RequiredResponseFact[] {
   const query = normalizeComparable(input.customerMessage);
   const asksPrice = /\b(?:gia|combo|bao nhieu tien|tong tien|thanh toan)\b/u.test(query);
+  const asksCombo = /\bcombo\b/u.test(query);
   const asksShipping = /\b(?:ship|giao|van chuyen|freeship|free ship|mien phi giao)\b/u.test(query);
   const asksDuration = /\b(?:bao lau|may ngay|khi nao|bao gio|tan suat|may lan|thang|gio)\b/u.test(query);
   const safetyTurn = /\b(?:rat|ngua|do da|kich ung|kho tho|sung moi|sung mat|choang|cap cuu)\b/u.test(query);
   const requestedQuantity = query.match(
     /(?:combo|lay|mua|gia|chot|cho|dat|gui)\s*(?:m|minh|anh|chi|em)?\s*(\d)\s*(?:lo|chai)?/u,
   )?.[1];
-  const asksGift = /\b(?:qua|tang|uu dai|khuyen mai)\b/u.test(query) || (asksPrice && !requestedQuantity);
+  const asksGift = /\b(?:qua|tang|uu dai|khuyen mai)\b/u.test(query);
   const specificBundle = /body wash|sua tam/u.test(query);
   const selected: RequiredResponseFact[] = [];
   const add = (fact: RequiredResponseFact) => {
@@ -112,7 +113,13 @@ export function selectCanonicalRequiredFacts(input: {
   for (const fact of input.canonicalFacts) {
     if (fact.kind === "price" && asksPrice) {
       if (specificBundle && !/bodywash_bundle/u.test(fact.key)) continue;
-      if (!requestedQuantity && !specificBundle && /\.4_units$|\.5_units$/u.test(fact.key)) continue;
+      if (!requestedQuantity && !specificBundle) {
+        if (asksCombo) {
+          if (/\.4_units$|\.5_units$/u.test(fact.key)) continue;
+        } else if (!fact.key.endsWith(".1_unit")) {
+          continue;
+        }
+      }
       if (
         requestedQuantity &&
         !fact.key.endsWith(`.${requestedQuantity}_unit`) &&
@@ -123,7 +130,7 @@ export function selectCanonicalRequiredFacts(input: {
       if (typeof fact.value === "number") {
         add({ id: fact.id, kind: "money", text: `${fact.value.toLocaleString("vi-VN")}đ` });
       }
-    } else if (fact.kind === "shipping" && (asksShipping || asksPrice)) {
+    } else if (fact.kind === "shipping" && (asksShipping || (asksPrice && !asksCombo))) {
       if (
         /pricing-approved-options-2026-08:10/u.test(fact.key) &&
         !/mac ca|thuong luong|followup/u.test(query)
@@ -131,6 +138,17 @@ export function selectCanonicalRequiredFacts(input: {
         continue;
       if (/bodywash_bundle/u.test(fact.key) && !specificBundle) continue;
       if (specificBundle && !/bodywash_bundle/u.test(fact.key)) continue;
+      // A generic price request is scoped to the default one-bottle offer.
+      // Do not make the 2–5 bottle freeship policy mandatory unless the
+      // customer asks about shipping/combo or names a multi-bottle quantity.
+      if (
+        asksPrice &&
+        !asksShipping &&
+        !requestedQuantity &&
+        !specificBundle &&
+        !/\.standard_fee$/u.test(fact.key)
+      )
+        continue;
       if (requestedQuantity === "1" && /\.2_5_units$/u.test(fact.key)) continue;
       if (requestedQuantity && requestedQuantity !== "1" && /\.standard_fee$/u.test(fact.key)) continue;
       if (fact.value === true) add({ id: fact.id, kind: "shipping", text: "free_shipping" });
@@ -150,6 +168,7 @@ export function selectCanonicalRequiredFacts(input: {
     } else if (
       fact.kind === "claim" &&
       asksPrice &&
+      (asksCombo || specificBundle) &&
       (!requestedQuantity || specificBundle) &&
       /body wash hien chua ban le/u.test(normalizeComparable(fact.text))
     ) {

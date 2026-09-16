@@ -84,6 +84,11 @@ export type ConversationOutboundPlan = {
   sourceEventIds: string[];
   status: "pending" | "processing" | "sent" | "failed";
   lastMessageId?: string;
+  traceId?: string;
+  turnContextVersion?: number;
+  inboundRevision?: number;
+  responseRef?: string;
+  deliveryStatus?: "unknown";
 };
 
 export type MetaCommentWorkflowRecord = {
@@ -144,6 +149,13 @@ export type OperationalSessionRecord = {
   secondaryIntents?: string[];
   activeSkill?: string;
   selectedRoute?: string;
+  responseAttention?: {
+    status: "needs_attention";
+    severity: "attention" | "critical";
+    code: string;
+  };
+  draftResponseRef?: string;
+  finalResponseRef?: string;
 };
 
 export type PostgresOperationalSnapshot = {
@@ -294,7 +306,12 @@ export class PostgresStore {
            c.runtime_state->>'lastIntent' AS last_intent,
            c.runtime_state->'lastDecision'->'secondaryIntents' AS secondary_intents,
            c.runtime_state->>'activeSkill' AS active_skill,
-           c.runtime_state->'lastDecision'->>'selectedRoute' AS selected_route
+           c.runtime_state->'lastDecision'->>'selectedRoute' AS selected_route,
+           c.runtime_state->'responseAttention'->>'status' AS response_attention_status,
+           c.runtime_state->'responseAttention'->>'severity' AS response_attention_severity,
+           c.runtime_state->'responseAttention'->>'code' AS response_attention_code,
+           c.runtime_state->'responseTrace'->>'draftResponseRef' AS draft_response_ref,
+           c.runtime_state->'responseTrace'->>'finalResponseRef' AS final_response_ref
          FROM conversations c
          JOIN pages p ON p.id = c.page_id
          LEFT JOIN message_activity activity ON activity.conversation_id = c.id
@@ -339,6 +356,20 @@ export class PostgresStore {
           ? { secondaryIntents: item.secondary_intents.map(String) }
           : {}),
         ...stringField("activeSkill", item.active_skill),
+        ...(item.response_attention_status === "needs_attention"
+          ? {
+              responseAttention: {
+                status: "needs_attention" as const,
+                severity:
+                  item.response_attention_severity === "critical"
+                    ? ("critical" as const)
+                    : ("attention" as const),
+                code: String(item.response_attention_code || "response_validation_failed"),
+              },
+            }
+          : {}),
+        ...stringField("draftResponseRef", item.draft_response_ref),
+        ...stringField("finalResponseRef", item.final_response_ref),
         ...stringField("selectedRoute", item.selected_route),
       })),
     };
@@ -1028,7 +1059,7 @@ export class PostgresStore {
   }): Promise<boolean> {
     return this.withTenant(input.tenantId, async (client) => {
       const result = await client.query(
-        `SELECT state_version = $3 AS dispatch_current
+        `SELECT state_version = $3 AND human_status <> 'human' AS dispatch_current
          FROM conversations
          WHERE tenant_id = $1 AND id = $2`,
         [input.tenantId, input.conversationId, input.expectedStateVersion],
@@ -1158,6 +1189,10 @@ export class PostgresStore {
       idempotencyKey: string;
       recipientId: string;
       texts: readonly string[];
+      traceId?: string;
+      turnContextVersion?: number;
+      inboundRevision?: number;
+      responseRef?: string;
     };
   }): Promise<{ stateVersion: number; outbound: ConversationOutboundPlan }> {
     return this.withTenant(input.tenantId, async (client) => {
@@ -1199,6 +1234,14 @@ export class PostgresStore {
         texts: [...input.outbound.texts],
         sentCount: 0,
         sourceEventIds: [...input.sourceEventIds],
+        ...(input.outbound.traceId ? { traceId: input.outbound.traceId } : {}),
+        ...(input.outbound.turnContextVersion !== undefined
+          ? { turnContextVersion: input.outbound.turnContextVersion }
+          : {}),
+        ...(input.outbound.inboundRevision !== undefined
+          ? { inboundRevision: input.outbound.inboundRevision }
+          : {}),
+        ...(input.outbound.responseRef ? { responseRef: input.outbound.responseRef } : {}),
       };
       const inserted = await client.query(
         `INSERT INTO outbox (tenant_id, topic, idempotency_key, payload)
@@ -1258,6 +1301,30 @@ export class PostgresStore {
              END
          WHERE id = $1`,
         [input.outboxId, input.sentCount, input.messageId],
+      );
+    });
+  }
+
+  async markConversationTurnOutboundUnknown(input: {
+    tenantId: TenantId;
+    outboxId: string;
+    sentCount: number;
+    errorCode: string;
+  }): Promise<void> {
+    await this.withTenant(input.tenantId, async (client) => {
+      await client.query(
+        `UPDATE outbox
+         SET payload = jsonb_set(
+               jsonb_set(
+                 jsonb_set(payload, '{sentCount}', to_jsonb($2::int), true),
+                 '{deliveryStatus}', '"unknown"'::jsonb,
+                 true
+               ),
+               '{deliveryErrorCode}', to_jsonb($3::text), true
+             ),
+             status = 'failed'
+         WHERE tenant_id = $1 AND id = $4`,
+        [input.tenantId, input.sentCount, input.errorCode, input.outboxId],
       );
     });
   }
@@ -1647,6 +1714,15 @@ function mapOutboundPlan(row: Record<string, unknown>): ConversationOutboundPlan
       : [],
     status: row.status as ConversationOutboundPlan["status"],
     ...(typeof payload.lastMessageId === "string" ? { lastMessageId: payload.lastMessageId } : {}),
+    ...(typeof payload.traceId === "string" ? { traceId: payload.traceId } : {}),
+    ...(Number.isSafeInteger(payload.turnContextVersion)
+      ? { turnContextVersion: Number(payload.turnContextVersion) }
+      : {}),
+    ...(Number.isSafeInteger(payload.inboundRevision)
+      ? { inboundRevision: Number(payload.inboundRevision) }
+      : {}),
+    ...(typeof payload.responseRef === "string" ? { responseRef: payload.responseRef } : {}),
+    ...(payload.deliveryStatus === "unknown" ? { deliveryStatus: "unknown" as const } : {}),
   };
 }
 

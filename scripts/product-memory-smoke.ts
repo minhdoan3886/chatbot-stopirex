@@ -129,6 +129,9 @@ function stateSnapshot(state: DemoChatState): Record<string, unknown> {
     conversationMemory: state.conversationMemory,
     conversationFactReceipt: state.conversationFactReceipt,
     locationMemory: state.locationMemory,
+    responseDecision: state.responseDecision,
+    responseAttention: state.responseAttention,
+    responseTrace: state.responseTrace,
   };
 }
 

@@ -26,6 +26,7 @@ function fixture(options: {
   newerInbound?: boolean;
   failFirstSend?: boolean;
   failSendAttempt?: number;
+  ambiguousFirstSend?: boolean;
   followups?: boolean;
   dispatchCurrent?: boolean;
   profileName?: string;
@@ -55,8 +56,13 @@ function fixture(options: {
       texts: string[];
       sentCount: number;
       sourceEventIds: string[];
-      status: "pending" | "sent";
+      status: "pending" | "sent" | "failed";
       lastMessageId?: string;
+      traceId?: string;
+      turnContextVersion?: number;
+      inboundRevision?: number;
+      responseRef?: string;
+      deliveryStatus?: "unknown";
     }
   >();
   const followupSchedules: Array<Record<string, unknown>> = [];
@@ -117,6 +123,14 @@ function fixture(options: {
         sentCount: 0,
         sourceEventIds: [...input.sourceEventIds],
         status: "pending" as const,
+        ...(input.outbound.traceId ? { traceId: input.outbound.traceId } : {}),
+        ...(input.outbound.turnContextVersion !== undefined
+          ? { turnContextVersion: input.outbound.turnContextVersion }
+          : {}),
+        ...(input.outbound.inboundRevision !== undefined
+          ? { inboundRevision: input.outbound.inboundRevision }
+          : {}),
+        ...(input.outbound.responseRef ? { responseRef: input.outbound.responseRef } : {}),
       };
       outbox.set(plan.idempotencyKey, plan);
       processed.push(...input.sourceEventIds);
@@ -131,6 +145,14 @@ function fixture(options: {
         found.sentCount = input.sentCount;
         found.lastMessageId = input.messageId;
         found.status = found.sentCount >= found.texts.length ? "sent" : "pending";
+      }
+    },
+    async markConversationTurnOutboundUnknown(input) {
+      const found = [...outbox.values()].find((item) => item.outboxId === input.outboxId);
+      if (found) {
+        found.sentCount = input.sentCount;
+        found.status = "failed";
+        found.deliveryStatus = "unknown";
       }
     },
     async markInboundProcessed(input) {
@@ -186,6 +208,14 @@ function fixture(options: {
     },
     async sendText(input) {
       sendAttempts += 1;
+      if (options.ambiguousFirstSend && sendAttempts === 1) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "network_error",
+          message: "connection closed after request",
+        };
+      }
       if ((options.failFirstSend && sendAttempts === 1) || options.failSendAttempt === sendAttempts) {
         return {
           ok: false,
@@ -292,6 +322,9 @@ function fixture(options: {
     },
     get profileRequests() {
       return profileRequests;
+    },
+    get sendAttempts() {
+      return sendAttempts;
     },
     setNewerInbound(value: boolean) {
       newerInbound = value;
@@ -552,11 +585,23 @@ test("Meta inbound dùng brain để trả lời và lưu state khi đã bật g
   assert.equal(result.status, "replied");
   assert.ok(context.sent.some((reply) => /285\.000đ/u.test(reply)));
   assert.equal(context.runtimeUpdates.length, 1);
+  const commit = context.runtimeUpdates[0] as {
+    runtimeState?: { responseTrace?: { finalResponseRef?: string; logicalModelCalls?: number } };
+    outbound?: { responseRef?: string };
+  };
+  assert.match(commit.runtimeState?.responseTrace?.finalResponseRef ?? "", /^sha256:[a-f0-9]{16}$/u);
+  assert.equal(commit.runtimeState?.responseTrace?.logicalModelCalls, 0);
+  assert.equal(commit.outbound?.responseRef, commit.runtimeState?.responseTrace?.finalResponseRef);
+  const persistedOutbound = context.persistedMessages.find((message) => message.direction === "outbound");
+  assert.equal(
+    (persistedOutbound?.payload as { responseRef?: string } | undefined)?.responseRef,
+    commit.outbound?.responseRef,
+  );
   assert.deepEqual(context.processed, ["message-1"]);
   assert.equal(context.sent.length, 2);
 });
 
-test("Meta sửa câu clarification lạnh cho dấu chấm tại ranh giới outbound cuối", async () => {
+test("Meta outbound không âm thầm đổi nội dung sau khi brain đã trả final", async () => {
   const context = fixture({
     live: true,
     forceBrainReply:
@@ -569,10 +614,12 @@ test("Meta sửa câu clarification lạnh cho dấu chấm tại ranh giới ou
 
   assert.equal(result.status, "replied");
   assert.deepEqual(context.sent, [
-    "Dạ em chào mình ạ. Mình đang cần hỗ trợ về mồ hôi, mùi cơ thể, cách dùng, giá hay đơn hàng ạ?",
+    "Dạ em chưa hiểu chắc ý “.” trong ngữ cảnh hiện tại ạ. Mình diễn đạt rõ thêm chính câu này giúp em để em trả lời đúng nhé.",
   ]);
-  assert.equal((context.sent[0]?.match(/[?？]/gu) ?? []).length, 1);
-  assert.doesNotMatch(context.sent[0] ?? "", /chưa hiểu|diễn đạt|ngữ cảnh/iu);
+  assert.equal((context.sent[0]?.match(/[?？]/gu) ?? []).length, 0);
+  // Content-free safety is enforced inside MetaChatBrain. This fixture
+  // deliberately mutates its returned final to prove the transport layer no
+  // longer rewrites customer copy after validation.
 });
 
 test("nhân viên tiếp quản trong lúc LLM xử lý thì chặn outbound bot đã chuẩn bị", async () => {
@@ -929,7 +976,7 @@ test("Meta brain khóa luồng khiếu nại khi LLM chỉ trả handoff after-s
   );
 });
 
-test("Meta brain giữ đủ bảng giá khi khách hỏi lại sau một đơn đã tạo", async () => {
+test("Meta brain trả đúng phần giá được hỏi sau đơn cũ, không ép full catalog hoặc CTA", async () => {
   const chat = new DemoChatService();
   const sessionId = "completed-order-new-price-cycle";
   chat.chat(sessionId, "Giá bao nhiêu?");
@@ -981,13 +1028,9 @@ test("Meta brain giữ đủ bảng giá khi khách hỏi lại sau một đơn 
 
   assert.equal(response.state.pipeline, "3.Đã báo giá");
   assert.equal(response.state.selectedQuantity, undefined);
-  assert.equal(response.replies.length, 2);
-  assert.match(response.replies[0] ?? "", /Dạ giá hiện tại:/u);
-  assert.match(response.replies[0] ?? "", /Combo 3 lọ: 750\.000đ/iu);
-  assert.match(response.replies[0] ?? "", /Quà tặng/iu);
-  assert.match(response.replies[1] ?? "", /Herbal Body Wash 500ml: 525\.000đ/iu);
-  assert.match(response.replies[1] ?? "", /mồ hôi làm ướt hoặc ố áo, mùi cơ thể hay cả hai/iu);
-  assert.notEqual(response.reply, shortDraft);
+  assert.equal(response.replies.length, 1);
+  assert.equal(response.reply, shortDraft);
+  assert.doesNotMatch(response.reply, /Quà tặng|Herbal Body Wash|mấy lọ|mồ hôi làm/iu);
 });
 
 test("Meta brain không handoff câu địa phương hỏi cách dùng, bết và hoàn xèng", async () => {
@@ -1234,9 +1277,13 @@ test("Meta tiếp tục tư vấn khi khách trả lời tình trạng sau báo 
   });
 
   assert.equal(response.state.consultationStage, "S1.context");
-  assert.equal(response.state.pendingQuestionTopic, "work_context");
+  assert.equal(
+    response.state.pendingQuestionTopic,
+    "work_context",
+    JSON.stringify(response.state.decisionTrace),
+  );
   assert.equal(response.state.activeSkill, "need-discovery");
-  assert.match(response.reply, /ngồi điều hòa/iu);
+  assert.match(response.reply, /vận động|trời nóng|căng thẳng|ngồi điều hòa/iu);
   assert.doesNotMatch(response.reply, /chuyển bộ phận|chọn.*lọ/iu);
 });
 
@@ -1450,6 +1497,20 @@ test("outbox tiếp tục gửi kế hoạch đã commit khi Meta lỗi tạm th
   assert.equal(retried.status, "replied");
   assert.equal(context.runtimeUpdates.length, 1);
   assert.equal(context.sent.length, 2);
+});
+
+test("outbox không blind retry khi kết quả gửi qua mạng không xác định", async () => {
+  const context = fixture({ live: true, ambiguousFirstSend: true });
+  await assert.rejects(
+    () => context.processor.processBatch([job()]),
+    (error: unknown) => error instanceof Error && error.name === "UnknownMetaSendOutcomeError",
+  );
+  assert.equal(context.sendAttempts, 1);
+
+  const retried = await context.processor.processBatch([job()]);
+  assert.equal(retried.status, "paused");
+  assert.equal(retried.replyCount, 0);
+  assert.equal(context.sendAttempts, 1);
 });
 
 test("outbox gửi tiếp bubble còn thiếu mà không lặp bubble đã gửi", async () => {

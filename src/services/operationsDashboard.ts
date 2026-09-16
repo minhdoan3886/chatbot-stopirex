@@ -589,6 +589,13 @@ export function evaluateActionRolloutGate(snapshot: ActionRolloutSnapshot): {
 }
 
 export function diagnoseSession(session: OperationalSessionRecord, now = new Date()): OperationalSession {
+  if (session.responseAttention) {
+    return {
+      ...session,
+      health: session.responseAttention.severity,
+      issue: `Phản hồi cần kiểm tra: ${session.responseAttention.code}`,
+    };
+  }
   const inboundAt = session.lastInboundAt ? new Date(session.lastInboundAt).getTime() : undefined;
   const outboundAt = session.lastOutboundAt ? new Date(session.lastOutboundAt).getTime() : undefined;
   const unansweredAgeMs = inboundAt === undefined ? undefined : now.getTime() - inboundAt;

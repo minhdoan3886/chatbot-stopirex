@@ -37,6 +37,9 @@ export type ConversationFactClaim = {
 export type ConversationFact = ConversationFactClaim & {
   id: string;
   sourceTurn: number;
+  /** Additive ISO timestamps. Legacy facts can omit them and remain readable. */
+  recordedAt?: string;
+  eventAt?: string;
   status: "current" | "superseded";
   supersededBy?: string;
 };
@@ -178,6 +181,7 @@ export function reduceConversationFactLedger(input: {
   ledger: ConversationFactLedger;
   raw: string;
   turn: number;
+  occurredAt?: Date;
   semanticFacts?: ReadonlyArray<{
     field: string;
     value: string | number | boolean;
@@ -227,7 +231,18 @@ export function reduceConversationFactLedger(input: {
         }
       }
     }
-    ledger.facts.push({ ...claim, id, sourceTurn: input.turn, status: "current" });
+    const occurredAt = input.occurredAt ?? new Date();
+    ledger.facts.push({
+      ...claim,
+      id,
+      sourceTurn: input.turn,
+      recordedAt: occurredAt.toISOString(),
+      ...(claim.temporal === "today" ? { eventAt: occurredAt.toISOString() } : {}),
+      ...(claim.temporal === "yesterday"
+        ? { eventAt: new Date(occurredAt.getTime() - 24 * 60 * 60 * 1_000).toISOString() }
+        : {}),
+      status: "current",
+    });
     acceptedFactIds.push(id);
   }
   ledger.facts = ledger.facts.slice(-80);
@@ -301,24 +316,15 @@ function semanticEvidenceSupportsFact(
   value: string | number | boolean,
   evidence: string,
 ): boolean {
-  const text = normalize(evidence);
-  if (predicate === "product_reaction") {
-    if (value === "itching") return /\bngua\b/u.test(text);
-    if (value === "redness") return /\b(?:do da|da do)\b/u.test(text);
-    const explicitBurning =
-      /\brát\b/iu.test(evidence) || (!/\brất\b/iu.test(evidence) && /\brat\b/u.test(text));
-    return explicitBurning || /\b(?:kich ung|di ung|viem)\b/u.test(text);
-  }
-  if (predicate === "skin_type" && value === "sensitive") {
-    return /\b(?:nhay cam|sensitive)\b/u.test(text);
-  }
-  if (predicate === "sweat_concern") {
-    return /\b(?:mo hoi|uot|dam)\b/u.test(text);
-  }
-  if (predicate === "odor_severity") {
-    return /\b(?:mui|hoi nach)\b/u.test(text);
-  }
-  return true;
+  const evidenceValue = normalizeFactValue(predicate, evidence);
+  if (evidenceValue === value) return true;
+  // A generic irritation value may summarize a specific reaction, but a
+  // specific value (itching/redness) must still be present in the evidence.
+  return (
+    predicate === "product_reaction" &&
+    value === "irritation" &&
+    ["irritation", "itching", "redness"].includes(String(evidenceValue))
+  );
 }
 
 function deduplicateClaims(claims: readonly ConversationFactClaim[]): ConversationFactClaim[] {
@@ -406,7 +412,13 @@ function normalizeFactValue(
   if (predicate === "product_reaction") {
     if (/itch|ngua/.test(normalized)) return "itching";
     if (/red|do da/.test(normalized)) return "redness";
-    if (/irritation|rat|kich ung|di ung|viem/.test(normalized)) return "irritation";
+    // Accent folding turns Vietnamese `rất` (very) into `rat`, which must
+    // not be accepted as evidence of `rát` (burning/irritation).
+    const hasBurningEvidence =
+      /\brát\b/iu.test(value) || (!/\brất\b/iu.test(value) && /\brat\b/u.test(normalized));
+    if (/irritation|kich ung|di ung|viem/.test(normalized) || hasBurningEvidence) {
+      return "irritation";
+    }
     return undefined;
   }
   return undefined;
@@ -421,7 +433,9 @@ export function planConversationFactResponse(input: {
 }): ConversationFactResponsePlan | undefined {
   const text = normalize(input.raw);
   const descriptiveNotMuch =
-    /\b(?:k|ko|khong) bao nhieu\b|\bmui\b.{0,35}\b(?:k|ko|khong) (?:nang|nhieu)\b/.test(text);
+    /\b(?:k|ko|khong) bao nhieu\b|\bmui\b.{0,35}\b(?:k|ko|khong) (?:nang|nhieu)\b|\b(?:k|ko|khong) (?:bi )?mui (?:nang|nhieu)\b/.test(
+      text,
+    );
   const directQuestion =
     /[?？]/u.test(input.raw) ||
     (!descriptiveNotMuch &&
@@ -431,7 +445,9 @@ export function planConversationFactResponse(input: {
   const orderSupportQuestion =
     /\b(?:don hang|thong tin don|nguoi nhan|dia chi|sdt|so dien thoai|tong tien|tra hang|hoan tien|bao hanh)\b/.test(
       text,
-    ) || /\b(?:[1-5]|mot|hai|ba|bon|nam)\s+lo\b/.test(text);
+    ) ||
+    /\b(?:tong ket|tom tat|nhac lai|xem lai|kiem tra lai)\b.{0,40}\bdon\b/.test(text) ||
+    /\b(?:[1-5]|mot|hai|ba|bon|nam)\s+lo\b/.test(text);
   const ledger = sanitizeConversationFactLedger(input.ledger);
   const has = (predicate: ConversationFactPredicate, subjectId = "self") =>
     currentFact(ledger, predicate, subjectId);
@@ -715,7 +731,7 @@ function extractConversationFactClaims(
   }
   if (
     selfContext &&
-    /mui (?:thi )?(?:k|ko|khong) bao nhieu|mui (?:thi )?(?:binh thuong|bt)|mui (?:k|ko|khong) (?:nang|nhieu)|mui.{0,35}(?:k|ko|khong) (?:nang|nhieu)|mui it|thinh thoang (?:co )?mui|doi khi (?:co )?mui/.test(
+    /mui (?:thi )?(?:k|ko|khong) bao nhieu|mui (?:thi )?(?:binh thuong|bt)|mui (?:k|ko|khong) (?:nang|nhieu)|mui.{0,35}(?:k|ko|khong) (?:nang|nhieu)|(?:k|ko|khong) (?:bi )?mui (?:nang|nhieu)|mui it|thinh thoang (?:co )?mui|doi khi (?:co )?mui/.test(
       text,
     )
   ) {

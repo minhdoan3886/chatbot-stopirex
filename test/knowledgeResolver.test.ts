@@ -58,6 +58,25 @@ test("resolver tạo fact canonical có provenance và applicability", () => {
   assert.ok(resolved.facts.every((fact) => fact.applicable));
 });
 
+test("resolver không coi record thiếu metadata duyệt là nguồn current", () => {
+  const approved = match({ id: "unknown-metadata", content: "1 lọ 199.000đ" });
+  const entityWithoutApproval = { ...approved.entity };
+  delete entityWithoutApproval.status;
+  delete entityWithoutApproval.scope;
+  const resolved = resolveCanonicalKnowledge({
+    query: "giá 1 lọ",
+    matches: [
+      {
+        ...approved,
+        entity: entityWithoutApproval,
+      },
+    ],
+  });
+
+  assert.deepEqual(resolved.facts, []);
+  assert.deepEqual(resolved.sourceIds, []);
+});
+
 test("closed-world guard chỉ cho phép claim sản phẩm có canonical fact hỗ trợ", () => {
   const resolution = resolveCanonicalKnowledge({
     query: "sản phẩm có giảm mồ hôi không",
@@ -137,5 +156,39 @@ test("applicability guard chặn giá LLM tự thêm nhưng cho phép tổng do 
         resolution,
       }),
     /fact_applicability_guard/u,
+  );
+});
+
+test("closed-world guard không dùng workflow prose để chứng minh claim và chặn đảo phủ định", () => {
+  const resolution = resolveCanonicalKnowledge({
+    query: "có miễn phí giao không",
+    matches: [match({ id: "shipping-policy", content: "Stopirex không có miễn phí giao cho 1 lọ." })],
+  });
+
+  assert.throws(
+    () =>
+      assertCanonicalClaimsSupported({
+        reply: "Stopirex có miễn phí giao cho 1 lọ.",
+        authoritativeReply: "Stopirex có miễn phí giao cho 1 lọ.",
+        resolution,
+      }),
+    /unsupported_claim_guard/u,
+  );
+});
+
+test("applicability guard gắn mỗi số tiền với đúng vai trò", () => {
+  const resolution = resolveCanonicalKnowledge({
+    query: "giá 1 lọ và phí giao",
+    matches: [match({ id: "approved-role", content: "1 lọ 285.000đ và phí giao 30.000đ." })],
+  });
+
+  assert.throws(
+    () =>
+      assertCanonicalFactApplicability({
+        reply: "Tiền hàng 30.000đ, phí giao 285.000đ.",
+        authoritativeReply: "Tiền hàng 285.000đ, phí giao 30.000đ, tổng 315.000đ.",
+        resolution,
+      }),
+    /money_role_mismatch/u,
   );
 });

@@ -271,6 +271,46 @@ test("parser ưu tiên structured bubbles và giữ CTA hỏi bối cảnh", () 
   assert.equal(parsed.draftReply, parsed.draftBubbles?.join("\n\n"));
 });
 
+test("parser không cắt mù bubble dài ở ngưỡng style cũ", () => {
+  const longButTransportSafe = `${"Nội dung đầy đủ. ".repeat(45)}Điều kiện cuối phải được giữ.`;
+  const parsed = parseSemanticUnderstanding(
+    JSON.stringify({
+      intent: "consultation",
+      selectedCtaId: "none",
+      ctaText: "",
+      draftBubbles: [longButTransportSafe],
+      actions: [],
+      slots: {},
+      confidence: 0.98,
+      needsClarification: false,
+      evidence: ["tư vấn"],
+    }),
+  );
+
+  assert.equal(parsed.draftReply, longButTransportSafe);
+  assert.match(parsed.draftReply ?? "", /Điều kiện cuối phải được giữ\.$/u);
+});
+
+test("parser báo lỗi rõ nếu một bubble vượt giới hạn transport", () => {
+  assert.throws(
+    () =>
+      parseSemanticUnderstanding(
+        JSON.stringify({
+          intent: "consultation",
+          selectedCtaId: "none",
+          ctaText: "",
+          draftBubbles: ["x".repeat(2_001)],
+          actions: [],
+          slots: {},
+          confidence: 0.98,
+          needsClarification: false,
+          evidence: ["tư vấn"],
+        }),
+      ),
+    /messenger_bubble_exceeds_2000_characters/u,
+  );
+});
+
 test("parser không làm mất số lượng khi model trả quantity dưới dạng chuỗi", () => {
   const parsed = parseSemanticUnderstanding(
     JSON.stringify({

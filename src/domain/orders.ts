@@ -1,3 +1,5 @@
+import { formatVnd, type TransactionRenderReceipt } from "./transactionRenderer.js";
+
 export type OrderDraft = {
   recipientName?: string;
   phone?: string;
@@ -25,6 +27,7 @@ export type LegacyAddressComponent = "detail" | "ward" | "district" | "province"
 export type OrderPriceBreakdown = {
   productPriceVnd: number;
   shippingFeeVnd: number;
+  transaction?: TransactionRenderReceipt;
 };
 
 export function missingLegacyAddressComponents(address?: string): LegacyAddressComponent[] {
@@ -73,10 +76,11 @@ export function assertOrderReady(draft: OrderDraft): void {
 export function formatOrderConfirmation(draft: OrderDraft, price?: OrderPriceBreakdown): string {
   const missing = missingOrderFields(draft);
   if (missing.length > 0) throw new OrderNotReadyError(`Chưa thể tóm tắt đơn; thiếu ${missing.join(", ")}`);
+  assertOrderPriceBreakdown(draft, price);
   const priceLines = price
     ? [
-        `Tiền hàng: ${price.productPriceVnd.toLocaleString("vi-VN")}đ`,
-        `Phí giao: ${price.shippingFeeVnd === 0 ? "Miễn phí" : `${price.shippingFeeVnd.toLocaleString("vi-VN")}đ`}`,
+        `Tiền hàng: ${price.transaction?.money("subtotal") ?? formatVnd(price.productPriceVnd)}`,
+        `Phí giao: ${price.shippingFeeVnd === 0 ? "Miễn phí" : (price.transaction?.money("shipping") ?? formatVnd(price.shippingFeeVnd))}`,
       ]
     : [];
   return [
@@ -88,11 +92,39 @@ export function formatOrderConfirmation(draft: OrderDraft, price?: OrderPriceBre
     ...(draft.quantity !== undefined && draft.quantity >= 2
       ? ["Quà tặng: 1 túi đa năng vải dệt Stopirex (1 túi/đơn)"]
       : []),
-    `Tổng thanh toán: ${draft.totalVnd!.toLocaleString("vi-VN")}đ`,
+    `Tổng thanh toán: ${price?.transaction?.money("total") ?? formatVnd(draft.totalVnd!)}`,
     `Thanh toán: ${draft.paymentMethod === "cod" ? "COD" : "Chuyển khoản"}`,
     ...(draft.deliveryNote ? [`Ghi chú giao hàng: ${draft.deliveryNote}`] : []),
     "Anh/chị kiểm tra và phản hồi “ĐỒNG Ý” để em tạo đơn ạ.",
   ].join("\n");
+}
+
+function assertOrderPriceBreakdown(draft: OrderDraft, price?: OrderPriceBreakdown): void {
+  if (!price) return;
+  if (
+    !Number.isSafeInteger(price.productPriceVnd) ||
+    price.productPriceVnd < 0 ||
+    !Number.isSafeInteger(price.shippingFeeVnd) ||
+    price.shippingFeeVnd < 0
+  ) {
+    throw new OrderNotReadyError("Chi tiết tiền hàng hoặc phí giao không hợp lệ");
+  }
+  const expectedTotal = price.productPriceVnd + price.shippingFeeVnd;
+  if (draft.totalVnd !== expectedTotal) {
+    throw new OrderNotReadyError("Tổng tiền không khớp chi tiết giao dịch");
+  }
+  if (price.transaction) {
+    if (price.transaction.quantity !== draft.quantity) {
+      throw new OrderNotReadyError("Số lượng không khớp quote giao dịch");
+    }
+    if (
+      price.transaction.amount("subtotal") !== price.productPriceVnd ||
+      price.transaction.amount("shipping") !== price.shippingFeeVnd ||
+      price.transaction.amount("total") !== expectedTotal
+    ) {
+      throw new OrderNotReadyError("Vai trò tiền không khớp quote giao dịch");
+    }
+  }
 }
 
 export class OrderNotReadyError extends Error {

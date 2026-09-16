@@ -39,17 +39,15 @@ export function governCustomerResponse(input: ResponseGovernorInput): GovernedRe
     .map((block) => block.trim())
     .filter(Boolean);
 
-  const deduplicated = sourceBlocks.filter((block) => {
-    const topic = questionTopic(block);
-    if (!topic) return true;
-    if (!isDiagnosticTopic(topic) || !isMostlyQuestion(block)) return true;
-    if (answered.has(topic)) return false;
-    if (previouslyAsked.has(topic)) return false;
-    return true;
-  });
+  const deduplicated = sourceBlocks
+    .map((block) => removeRedundantDiagnosticQuestion({ block, answered, previouslyAsked }))
+    .filter(Boolean);
 
-  const withSingleQuestion = keepOnlyLastQuestion(deduplicated);
-  let replies = withSingleQuestion;
+  // Question count is a composition concern. Replacing an earlier question
+  // mark with a full stop changes the meaning of already-approved copy, while
+  // deleting a whole block can also delete an answer that shares that block.
+  // The governor now owns presentation only and preserves every remaining act.
+  let replies = deduplicated;
   let truncated = false;
 
   if (!input.preserveFullText) {
@@ -194,16 +192,26 @@ function normalizeCustomerPunctuation(value: string): string {
     .trim();
 }
 
-function keepOnlyLastQuestion(blocks: string[]): string[] {
-  const questionIndexes = blocks
-    .map((block, index) => (/[?？]/u.test(block) ? index : -1))
-    .filter((index) => index >= 0);
-  const lastQuestion = questionIndexes.at(-1);
-  if (lastQuestion === undefined) return blocks;
-  return blocks.map((block, index) => {
-    if (index === lastQuestion || !/[?？]/u.test(block)) return block;
-    return block.replace(/[?？]/gu, ".").trim();
+function removeRedundantDiagnosticQuestion(input: {
+  block: string;
+  answered: ReadonlySet<ConversationTopic>;
+  previouslyAsked: ReadonlySet<ConversationTopic>;
+}): string {
+  const sentences = input.block
+    .split(/(?<=[.!?？])(?:\s+|$)/u)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  if (sentences.length === 0) return input.block;
+  const kept = sentences.filter((sentence) => {
+    const topic = questionTopic(sentence);
+    if (!topic || !isDiagnosticTopic(topic) || !isMostlyQuestion(sentence)) return true;
+    // A broad topic marker has no subject identity. Preserve explicitly scoped
+    // questions so an earlier question about the customer cannot suppress a
+    // necessary question about their child or another person.
+    if (/\b(?:bé|con|em gái|em trai|vợ|chồng|mẹ|bố|ba)\b/iu.test(sentence)) return true;
+    return !input.answered.has(topic) && !input.previouslyAsked.has(topic);
   });
+  return kept.join(" ").trim();
 }
 
 function mergeToBubbleLimit(blocks: string[], maxBubbles: number): string[] {

@@ -15,6 +15,26 @@ export type ResponseGuardVerdict = {
   source: ResponseSource;
 };
 
+export type ResponseAttention = {
+  status: "needs_attention";
+  severity: "attention" | "critical";
+  code: string;
+  source: ResponseSource;
+  at: string;
+  traceId?: string;
+};
+
+export type ResponseTraceSummary = {
+  schemaVersion: 1;
+  turnId?: string;
+  turnContextVersion?: number;
+  workflowResponseRef: string;
+  draftResponseRef?: string;
+  finalResponseRef: string;
+  logicalModelCalls: number;
+  repairAttempts: number;
+};
+
 const hardFailurePrefixes = [
   "claim_guard",
   "unsupported_claim_guard",
@@ -46,5 +66,21 @@ export function responseGuardVerdict(input: {
     reason,
     hard,
     source: input.source,
+  };
+}
+
+export function responseAttentionForVerdict(
+  verdict: ResponseGuardVerdict,
+  input: { at?: Date; traceId?: string } = {},
+): ResponseAttention | undefined {
+  if (verdict.outcome === "allow") return undefined;
+  const code = verdict.reason.split(":", 1)[0]?.trim() || "response_validation_failed";
+  return {
+    status: "needs_attention",
+    severity: verdict.hard ? "critical" : "attention",
+    code,
+    source: verdict.source,
+    at: (input.at ?? new Date()).toISOString(),
+    ...(input.traceId ? { traceId: input.traceId } : {}),
   };
 }

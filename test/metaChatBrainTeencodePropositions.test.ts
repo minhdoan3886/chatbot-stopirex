@@ -244,6 +244,5 @@ test("product path: teencode turn 4–6 commits each proposition before composin
     ["t6-inspection"],
   );
   assert.equal(calls.filter((purpose) => purpose === "interpret").length, 3);
-  assert.ok(calls.filter((purpose) => purpose === "post_commit").length >= 3);
-  assert.ok(calls.filter((purpose) => purpose === "post_commit").length <= 6);
+  assert.equal(calls.filter((purpose) => purpose === "post_commit").length, 3);
 });

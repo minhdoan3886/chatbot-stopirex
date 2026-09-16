@@ -7,6 +7,22 @@ function run(chat: DemoChatService, sessionId: string, turns: readonly string[])
   return turns.map((turn) => chat.chat(sessionId, turn, {}, { actionExecutionMode: "multi_action" }));
 }
 
+test("episode mới giữ profile ổn định nhưng vô hiệu pending hội thoại cũ", () => {
+  const original = new DemoChatService();
+  original.chat("episode-profile", "Mình là nam, 33 tuổi và hay ra mồ hôi");
+  const snapshot = original.exportSession("episode-profile");
+
+  const restored = new DemoChatService();
+  assert.equal(restored.restoreSessionForNewEpisode("episode-profile", snapshot), true);
+  const state = restored.peek("episode-profile");
+
+  assert.equal(state.customerProfile?.gender, "male");
+  assert.equal(state.customerProfile?.age, 33);
+  assert.equal(state.pendingAction, undefined);
+  assert.equal(state.pendingQuestionTopic, undefined);
+  assert.deepEqual(state.recentTurns, []);
+});
+
 test("kịch bản miền Nam giữ correction và không gán phản ứng của bạn cho khách", () => {
   const responses = run(new DemoChatService(), "context-south", southContextTurns);
 

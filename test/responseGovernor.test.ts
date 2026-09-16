@@ -73,3 +73,34 @@ test("governor đổi dấu chấm phẩy trước khi gửi khách", () => {
   assert.match(reply, /hoàn toàn\. Nếu vừa cạo nách/u);
   assert.equal(result.truncated, false);
 });
+
+test("governor chỉ bỏ câu hỏi lặp và giữ phần trả lời trong cùng block", () => {
+  const result = governCustomerResponse({
+    replies: ["Em gửi hướng dẫn ở đây nhé. Mình đã dùng vào buổi tối chưa?"],
+    answeredTopics: ["usage"],
+    preserveFullText: true,
+  });
+
+  assert.deepEqual(result.replies, ["Em gửi hướng dẫn ở đây nhé."]);
+  assert.equal(result.truncated, false);
+});
+
+test("governor không dùng topic cũ để xóa câu hỏi cho chủ thể mới", () => {
+  const result = governCustomerResponse({
+    replies: ["Bé nhà mình bao nhiêu tuổi rồi ạ?"],
+    previouslyAskedTopics: ["child_age"],
+    preserveFullText: true,
+  });
+
+  assert.deepEqual(result.replies, ["Bé nhà mình bao nhiêu tuổi rồi ạ?"]);
+});
+
+test("governor không đổi câu hỏi đầu thành câu trần thuật", () => {
+  const result = governCustomerResponse({
+    replies: ["Mình muốn nhận ở đâu?", "Mình nhận giờ nào tiện?"],
+    preserveFullText: true,
+  });
+
+  assert.match(result.replies.join("\n"), /ở đâu\?/u);
+  assert.match(result.replies.join("\n"), /giờ nào tiện\?/u);
+});

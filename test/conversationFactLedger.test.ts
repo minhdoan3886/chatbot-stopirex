@@ -4,6 +4,7 @@ import {
   classifyConversationTurn,
   currentConversationFact,
   initialConversationFactLedger,
+  planConversationFactResponse,
   reduceConversationFactLedger,
 } from "../src/domain/conversationFacts.js";
 
@@ -22,6 +23,32 @@ test("Fact Ledger tách da của khách và em, rồi correction thay fact cũ",
   assert.equal(currentConversationFact(corrected.ledger, "skin_type", "self")?.value, "normal");
   assert.equal(currentConversationFact(corrected.ledger, "skin_type", "sibling-1")?.value, "sensitive");
   assert.equal(corrected.receipt.supersededFactIds.length, 1);
+});
+
+test("Fact Ledger hiểu phủ định đứng trước mùi là mức mùi nhẹ", () => {
+  const result = reduceConversationFactLedger({
+    ledger: initialConversationFactLedger(),
+    raw: "Nhưng mình không bị mùi nặng lắm",
+    turn: 1,
+  });
+
+  assert.equal(currentConversationFact(result.ledger, "odor_severity")?.value, "mild");
+});
+
+test("yêu cầu tổng kết đơn được nhường cho order renderer, không bị memory recap bắt trước", () => {
+  const result = reduceConversationFactLedger({
+    ledger: initialConversationFactLedger(),
+    raw: "Tổng kết đơn giúp mình",
+    turn: 1,
+  });
+  const plan = planConversationFactResponse({
+    ledger: result.ledger,
+    raw: "Tổng kết đơn giúp mình",
+    claims: result.claims,
+    attribution: result.receipt.attribution,
+  });
+
+  assert.equal(plan, undefined);
 });
 
 test("Fact Ledger gắn phản ứng của bạn và review vào đúng chủ thể", () => {

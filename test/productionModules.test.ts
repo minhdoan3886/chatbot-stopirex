@@ -99,6 +99,8 @@ test("knowledge tenant scoped, conflict gate và safe composer", () => {
       type: "faq" as const,
       title: "Cách dùng",
       content: "Dùng buổi tối trên da khô",
+      status: "active" as const,
+      scope: "current" as const,
       sourceRow: 2,
     },
     {
@@ -107,6 +109,8 @@ test("knowledge tenant scoped, conflict gate và safe composer", () => {
       type: "faq" as const,
       title: "Cách dùng",
       content: "bí mật tenant B",
+      status: "active" as const,
+      scope: "current" as const,
       sourceRow: 2,
     },
   ];
@@ -131,6 +135,8 @@ test("hybrid knowledge retrieval hiểu câu diễn đạt gần nghĩa và tr�
       type: "price" as const,
       title: "Ưu đãi mua số lượng",
       content: "Combo 2 lọ giá 510.000đ, miễn phí giao và tiết kiệm 60.000đ.",
+      status: "active" as const,
+      scope: "current" as const,
       sourceRow: 1,
     },
     {
@@ -139,6 +145,8 @@ test("hybrid knowledge retrieval hiểu câu diễn đạt gần nghĩa và tr�
       type: "script" as const,
       title: "Cách dùng buổi tối",
       content: "Dùng trên da sạch và khô hoàn toàn.",
+      status: "active" as const,
+      scope: "current" as const,
       sourceRow: 2,
     },
   ];

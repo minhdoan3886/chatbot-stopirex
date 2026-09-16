@@ -99,7 +99,7 @@ test("response contract tách fact bắt buộc khỏi phần lời văn LLM đ�
   assert.deepEqual(contract.flexibleSections, ["opening", "explanation", "transition", "cta"]);
 });
 
-test("báo giá chung lấy canonical 1–3 lọ, combo Body Wash và không ép 4–5 lọ", () => {
+test("báo giá chung chỉ bắt buộc giá 1 lọ, không ép catalog/quà/CTA", () => {
   const canonicalFacts = [
     ["price.stopirex.1_unit", "price", 285000, "1 lọ 285.000đ"],
     ["price.stopirex.2_units", "price", 510000, "Combo 2 lọ 510.000đ"],
@@ -107,13 +107,15 @@ test("báo giá chung lấy canonical 1–3 lọ, combo Body Wash và không ép
     ["price.stopirex.4_units", "price", 1000000, "Combo 4 lọ 1.000.000đ"],
     ["price.stopirex.5_units", "price", 1250000, "Combo 5 lọ 1.250.000đ"],
     ["price.stopirex.bodywash_bundle", "price", 525000, "Combo Body Wash 525.000đ"],
+    ["shipping.stopirex.standard_fee", "shipping", 30000, "Phí giao 30.000đ"],
+    ["shipping.stopirex.2_5_units", "shipping", true, "Từ 2 lọ được miễn phí giao"],
     ["gift.stopirex.order", "gift", "1 túi", "Đơn từ 2 lọ được tặng 1 túi"],
     ["claim:bodywash", "claim", "not_sold", "Herbal Body Wash hiện chưa bán lẻ."],
   ].map(([key, kind, value, text], index) => ({
     id: `fact-${index}`,
     key: String(key),
-    kind: kind as "price" | "gift" | "claim",
-    value: value as string | number,
+    kind: kind as "price" | "shipping" | "gift" | "claim",
+    value: value as string | number | boolean,
     text: String(text),
     sourceId: "pricing",
     sourceVersion: "v1",
@@ -129,9 +131,11 @@ test("báo giá chung lấy canonical 1–3 lọ, combo Body Wash và không ép
     canonicalFacts,
   });
   const money = contract.requiredFacts.filter((fact) => fact.kind === "money").map((fact) => fact.text);
-  assert.deepEqual(money, ["285.000đ", "510.000đ", "750.000đ", "525.000đ"]);
-  assert.ok(contract.requiredFacts.some((fact) => fact.kind === "gift"));
-  assert.ok(contract.requiredFacts.some((fact) => fact.kind === "claim"));
-  assert.ok(!money.includes("1.000.000đ"));
-  assert.ok(!money.includes("1.250.000đ"));
+  // Old behavior forced 1–3 bottles, Body Wash, a gift and a follow-up. The
+  // current-turn contract now makes only the directly requested fact mandatory.
+  assert.deepEqual(money, ["285.000đ", "30.000đ"]);
+  assert.ok(!contract.requiredFacts.some((fact) => fact.kind === "shipping"));
+  assert.ok(!contract.requiredFacts.some((fact) => fact.kind === "gift"));
+  assert.ok(!contract.requiredFacts.some((fact) => fact.kind === "claim"));
+  assert.ok(contract.allowedCtas.some((cta) => cta.id === "none"));
 });

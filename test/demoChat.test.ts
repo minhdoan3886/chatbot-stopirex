@@ -3773,6 +3773,39 @@ test("fallback vẫn trả cách dùng đơn giản và thời điểm sau cạo
   assert.doesNotMatch(shaving.reply, /chuyển bộ phận liên quan/iu);
 });
 
+test("câu hỏi hiện tại thắng memory triệu chứng cũ trong chuỗi tư vấn tự nhiên", () => {
+  const chat = new DemoChatService();
+  const sessionId = "current-question-over-stale-symptom-memory";
+  const ask = (message: string) => chat.chat(sessionId, message, { status: "fallback", slots: {} });
+
+  ask("Chào shop, mình bị ra mồ hôi nách khá nhiều");
+  ask("Nhất là lúc căng thẳng hoặc họp");
+  ask("Nhưng mình không bị mùi nặng lắm");
+
+  const usage = ask("Stopirex dùng kiểu gì vậy?");
+  assert.equal(usage.state.lastIntent, "usage_guidance");
+  assert.match(usage.reply, /buổi tối.*da sạch, khô.*2–3 lần\/tuần/isu);
+  assert.doesNotMatch(usage.reply, /theo dõi trong 2 tuần đầu/iu);
+
+  const sensitiveSkin = ask("Da mình hơi nhạy cảm thì sao?");
+  assert.equal(sensitiveSkin.state.lastIntent, "safety");
+  assert.match(sensitiveSkin.reply, /da.*nhạy cảm.*dùng Stopirex|phù hợp.*da nhạy cảm/isu);
+
+  const longevity = ask("Một lọ dùng được lâu không?");
+  assert.equal(longevity.state.lastIntent, "usage_frequency");
+  assert.match(longevity.reply, /3–4 tháng/iu);
+
+  const combos = ask("Có những combo nào?");
+  assert.equal(combos.state.lastIntent, "price_request");
+  assert.equal(combos.state.selectedQuantity, undefined);
+  assert.match(combos.reply, /Combo 2 lọ: 510\.000đ.*Combo 3 lọ: 750\.000đ/isu);
+
+  const deferral = ask("Ok để mình suy nghĩ");
+  assert.equal(deferral.state.lastIntent, "decline_purchase");
+  assert.match(deferral.reply, /cứ cân nhắc thoải mái/iu);
+  assert.doesNotMatch(deferral.reply, /mồ hôi|cách dùng|combo 2 lọ/iu);
+});
+
 test("fallback hiểu mồ hôi khi trời nóng là vấn đề chính", () => {
   const chat = new DemoChatService();
   const result = chat.chat(

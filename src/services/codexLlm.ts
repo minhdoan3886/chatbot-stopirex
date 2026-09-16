@@ -48,6 +48,8 @@ import type { CanonicalAnswerFact, CanonicalFactConflict } from "../domain/knowl
 import type { IssueType } from "../domain/customerCare.js";
 import type { FollowupContextSnapshot, FollowupStage } from "../domain/followup.js";
 import type { DemoChatState } from "./demoChat.js";
+import type { TurnContextSnapshot } from "../domain/turnContext.js";
+import { projectMemoryForTurn } from "../domain/memoryProjection.js";
 
 export type CodexLlmResult = {
   reply: string;
@@ -65,6 +67,11 @@ export type ApprovedKnowledgeContext = {
   title: string;
   content: string;
   responseGuidance?: string;
+  status?: "active" | "inactive";
+  scope?: "current" | "historical";
+  validFrom?: string;
+  validTo?: string;
+  sourceRow?: number;
 };
 
 export function isContentFreeCustomerMessage(value: string): boolean {
@@ -445,6 +452,7 @@ export class CodexLlmBridge {
     canonicalFacts?: readonly CanonicalAnswerFact[];
     canonicalConflicts?: readonly CanonicalFactConflict[];
     responseContract?: WorkflowResponseContract;
+    turnContext?: Readonly<TurnContextSnapshot>;
   }): Promise<CodexInterpretResult> {
     const startedAt = Date.now();
     if (!this.enabled) return this.interpretResult({ slots: {} }, "unavailable", startedAt, "disabled");
@@ -601,6 +609,7 @@ export class CodexLlmBridge {
     knowledgeGroundingRequired?: boolean;
     softStylePolicy?: "reject" | "warn";
     responseContract?: WorkflowResponseContract;
+    turnContext?: Readonly<TurnContextSnapshot>;
   }): CodexLlmResult {
     const startedAt = Date.now();
     if (!this.enabled) {
@@ -647,13 +656,13 @@ export class CodexLlmBridge {
         .map((entity) => entity.content)
         .join("\n");
       assertNoUnapprovedCommerceFacts([input.baseReply, citedKnowledge].filter(Boolean).join("\n"), reply);
-      assertCriticalDirectionsPreserved(input.customerMessage, input.baseReply, reply, input.state);
       if (input.responseContract) {
         assertRequiredResponseFactsPresent(input.responseContract.factPolicy.mustIncludeFacts, reply);
         if (questionTopic(input.baseReply) === "quantity") {
           assertConversationDirectionPreserved(input.baseReply, reply, input.state);
         }
       } else {
+        assertCriticalDirectionsPreserved(input.customerMessage, input.baseReply, reply, input.state);
         assertRequiredFactsForCustomerTurn(input.customerMessage, input.baseReply, reply, input.state);
       }
       assertCustomerAdvisorVoice(input.customerMessage, reply);
@@ -707,6 +716,7 @@ export class CodexLlmBridge {
     knowledge?: readonly ApprovedKnowledgeContext[];
     knowledgeIds?: readonly string[];
     responseContract?: WorkflowResponseContract;
+    turnContext?: Readonly<TurnContextSnapshot>;
   }): Promise<CodexLlmResult> {
     const startedAt = Date.now();
     if (!this.enabled) return this.result(input.baseReply, "unavailable", startedAt, "disabled");
@@ -753,6 +763,7 @@ export class CodexLlmBridge {
     knowledge?: readonly ApprovedKnowledgeContext[];
     knowledgeIds?: readonly string[];
     responseContract?: WorkflowResponseContract;
+    turnContext?: Readonly<TurnContextSnapshot>;
   }): Promise<CodexLlmResult> {
     const startedAt = Date.now();
     if (!this.enabled) return this.result(input.baseReply, "unavailable", startedAt, "disabled");
@@ -793,22 +804,7 @@ export class CodexLlmBridge {
       );
     }
     try {
-      let validated: ReturnType<typeof validate>;
-      try {
-        validated = validate(raw);
-      } catch (validationError) {
-        const feedback =
-          validationError instanceof Error
-            ? `${validationError.name}: ${validationError.message}`
-            : "post_commit_validation_failed";
-        raw = (
-          await this.run(
-            `${prompt}\nLẦN TRƯỚC KHÔNG ĐẠT HẬU KIỂM: ${feedback}. Tạo lại JSON, chỉ sửa flexible text; giữ đủ REQUIRED_FACTS và chỉ khai field đã commit.`,
-            "post_commit",
-          )
-        ).trim();
-        validated = validate(raw);
-      }
+      const validated = validate(raw);
       const { parsed, reply } = validated;
       return {
         ...this.result(reply, "enhanced", startedAt, "post_commit_structured_response", parsed.bubbles),
@@ -1538,8 +1534,8 @@ function buildPrompt(input: {
     "Chia thành 1–2 đoạn ngắn, ưu tiên tối đa 70 từ và chỉ hỏi một câu ở cuối nếu thật sự cần bước tiếp theo.",
     `Mã phong cách của phiên: ${JSON.stringify(input.styleSeed ?? "default")}. Chỉ dùng mã này để chọn cách diễn đạt; tuyệt đối không in mã ra.`,
     `Tin khách: ${JSON.stringify(input.customerMessage)}`,
-    `Các lượt chat gần nhất: ${JSON.stringify(promptConversationMemory(input.state))}`,
-    `Bộ nhớ luận điểm: ${JSON.stringify(promptArgumentMemory(input.state))}`,
+    `Các lượt chat gần nhất: ${JSON.stringify(promptConversationMemory(input.state, input.customerMessage))}`,
+    `Bộ nhớ luận điểm: ${JSON.stringify(promptArgumentMemory(input.state, input.customerMessage))}`,
     `Trạng thái: ${JSON.stringify({
       mode: input.state.mode,
       journeyStage: input.state.journeyStage,
@@ -1575,12 +1571,14 @@ function buildRepairPrompt(input: {
   knowledge?: readonly ApprovedKnowledgeContext[];
   knowledgeIds?: readonly string[];
   responseContract?: WorkflowResponseContract;
+  turnContext?: Readonly<TurnContextSnapshot>;
 }): string {
   const citedKnowledge = (input.knowledge ?? []).filter((entity) => input.knowledgeIds?.includes(entity.id));
   const requiredFacts =
     input.responseContract?.factPolicy.mustIncludeFacts ?? extractRequiredResponseFacts(input.baseReply);
   return [
     "Bạn là LLM quyết định câu trả lời cuối của chatbot Stopirex. Không dùng công cụ.",
+    `Response Style Policy: ${compactStopirexResponseStylePolicyForPrompt()}`,
     "Bản nháp của bạn vừa bị lớp hậu kiểm phát hiện vấn đề. Hãy tự sửa; chỉ xuất đúng tin nhắn cuối gửi khách bằng tiếng Việt, không JSON, không markdown và không giải thích lỗi nội bộ.",
     "Hậu kiểm không có quyền đổi intent. Chỉ sửa đúng vi phạm được nêu, giữ lại các phần hợp lệ và góc trả lời mà khách đang cần.",
     "Giữ đúng intent và ý khách ở MESSAGE mới nhất. Không quay lại pendingAction, CTA, số lượng hoặc luồng cũ nếu MESSAGE hiện tại không yêu cầu.",
@@ -1606,7 +1604,8 @@ function buildRepairPrompt(input: {
       pipeline: input.state.pipeline,
       skillId: input.skillId ?? null,
     })}`,
-    `ARGUMENT MEMORY: ${JSON.stringify(promptArgumentMemory(input.state))}`,
+    `VERIFIED TURN CONTEXT: ${JSON.stringify(input.turnContext ?? null)}`,
+    `ARGUMENT MEMORY: ${JSON.stringify(input.turnContext?.memoryFacts ?? [])}`,
     `SAFE EXECUTION SUMMARY: ${JSON.stringify(input.baseReply)}`,
     `REQUIRED_FACTS: ${JSON.stringify(requiredFacts)}`,
   ].join("\n");
@@ -1622,10 +1621,12 @@ function buildPostCommitPrompt(input: {
   knowledge?: readonly ApprovedKnowledgeContext[];
   knowledgeIds?: readonly string[];
   responseContract?: WorkflowResponseContract;
+  turnContext?: Readonly<TurnContextSnapshot>;
 }): string {
   const citedKnowledge = (input.knowledge ?? []).filter((entity) => input.knowledgeIds?.includes(entity.id));
   return [
     "Bạn là LLM soạn phản hồi cuối sau khi reducer đã commit state cho chatbot Stopirex.",
+    `Response Style Policy: ${compactStopirexResponseStylePolicyForPrompt()}`,
     "Chỉ xuất JSON đúng schema post-commit; không markdown, không giải thích và không lộ dữ liệu nội bộ.",
     "COMMIT_RECEIPT và POST_COMMIT_STATE là nguồn sự thật duy nhất về thay đổi đơn hàng.",
     "Chỉ nói đã ghi nhận/đã lưu/đã cập nhật một field khi mutation tương ứng nằm trong acceptedMutations. Mọi dữ liệu recap phải lấy nguyên giá trị từ POST_COMMIT_STATE.",
@@ -1644,6 +1645,7 @@ function buildPostCommitPrompt(input: {
       pipeline: input.state.pipeline,
       skillId: input.skillId ?? null,
     })}`,
+    `VERIFIED TURN CONTEXT: ${JSON.stringify(input.turnContext ?? null)}`,
     `APPROVED KNOWLEDGE: ${JSON.stringify(citedKnowledge)}`,
     `REQUIRED_FACTS: ${JSON.stringify(input.responseContract?.factPolicy.mustIncludeFacts ?? [])}`,
     `CTA_POLICY: ${JSON.stringify(input.responseContract?.ctaPolicy ?? null)}`,
@@ -1666,7 +1668,7 @@ export function parsePostCommitResponse(raw: string): {
   const bubbles = Array.isArray(value.bubbles)
     ? value.bubbles
         .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
-        .map((item) => item.trim().slice(0, 650))
+        .map((item) => assertTransportBubbleLength(item.trim()))
         .slice(0, 2)
     : [];
   if (bubbles.length === 0) throw new Error("post_commit_response_empty_bubbles");
@@ -1674,6 +1676,15 @@ export function parsePostCommitResponse(raw: string): {
     bubbles,
     claimedSavedFields: parseClaimedSavedFields(value.claimedSavedFields),
   };
+}
+
+function assertTransportBubbleLength(value: string): string {
+  if (value.length > 2_000) {
+    const error = new Error("messenger_bubble_exceeds_2000_characters");
+    error.name = "TransportBubbleLengthError";
+    throw error;
+  }
+  return value;
 }
 
 function buildSemanticContractRetryPrompt(originalPrompt: string, error: unknown): string {
@@ -1748,6 +1759,7 @@ function buildInterpretPrompt(input: {
   canonicalFacts?: readonly CanonicalAnswerFact[];
   canonicalConflicts?: readonly CanonicalFactConflict[];
   responseContract?: WorkflowResponseContract;
+  turnContext?: Readonly<TurnContextSnapshot>;
 }): string {
   return [
     "Bạn là Routing Agent trung tâm của chatbot Stopirex. Không dùng công cụ.",
@@ -1876,7 +1888,8 @@ function buildInterpretPrompt(input: {
     `Dữ kiện canonical áp dụng cho lượt này: ${JSON.stringify(input.canonicalFacts ?? [])}`,
     `Xung đột dữ kiện phải tránh tuyên bố: ${JSON.stringify(input.canonicalConflicts ?? [])}`,
     `Chính sách CTA của workflow: ${JSON.stringify(input.responseContract?.ctaPolicy ?? null)}`,
-    `Các lượt chat gần nhất: ${JSON.stringify(promptConversationMemory(input.state))}`,
+    `VERIFIED TURN CONTEXT: ${JSON.stringify(input.turnContext ?? null)}`,
+    `Các lượt chat gần nhất: ${JSON.stringify(promptConversationMemory(input.state, input.customerMessage))}`,
     `Tin khách: ${JSON.stringify(input.customerMessage)}`,
   ].join("\n");
 }
@@ -1889,6 +1902,7 @@ export function buildInterpretPromptForDiagnostics(
     canonicalFacts?: readonly CanonicalAnswerFact[];
     canonicalConflicts?: readonly CanonicalFactConflict[];
     responseContract?: WorkflowResponseContract;
+    turnContext?: Readonly<TurnContextSnapshot>;
   },
   profile: LlmPromptProfile = "legacy",
 ): string {
@@ -1902,6 +1916,7 @@ function buildCompactInterpretPrompt(input: {
   canonicalFacts?: readonly CanonicalAnswerFact[];
   canonicalConflicts?: readonly CanonicalFactConflict[];
   responseContract?: WorkflowResponseContract;
+  turnContext?: Readonly<TurnContextSnapshot>;
 }): string {
   const state = {
     stage: input.state.consultationStage,
@@ -1942,17 +1957,18 @@ function buildCompactInterpretPrompt(input: {
     "Tin sai/chưa xác nhận: ghi nhận trung tính → nêu dữ kiện đúng đã duyệt → giải đáp nỗi lo. Không tranh cãi, không nói khách sai, không tự dùng 'tùy cơ địa' nếu khách không hỏi cam kết tuyệt đối.",
     "OUTPUT đã được API ràng buộc bằng Structured Outputs. Điền đủ schema, không đổi tên trường. propositions[] là nguồn diễn giải chính; actions[] là cầu nối tương thích. claimedSavedFields chỉ liệt kê trường mà draftReply nói đã lưu/ghi nhận; để [] nếu không có. answeredQuestions/newAngle/rejectedArguments/nextStep là kế hoạch kiểm chứng ngắn, không phải chuỗi suy nghĩ. draftReply là toàn bộ lời khách sẽ thấy; draftBubbles là cùng nội dung đó được chia thành 1–2 tin Messenger hoàn chỉnh, không cắt giữa câu; mọi trường khác là dữ liệu nội bộ.",
     "CTA: workflow cung cấp ALLOWED_CTAS. Chọn đúng một selectedCtaId trong danh sách và tự diễn đạt ctaText đúng purpose. Với none, ctaText phải rỗng và draftReply/draftBubbles không có CTA. Không tự phát minh CTA ngoài danh sách. CTA là phần cuối bubble cuối và chỉ có tối đa một câu hỏi.",
-    "BÁO GIÁ CHUNG: nếu khách hỏi giá chung và không chỉ rõ một số lượng, draftReply phải giữ đầy đủ mọi phương án được responseGuidance cho phép, quà tặng và combo sản phẩm liên quan trong KNOWLEDGE. Trình bày từng phương án trên một dòng, chia tối đa hai khối dễ đọc và kết thúc bằng đúng một câu hỏi nối tiếp phù hợp ngữ cảnh. Không nén bảng giá thành một đoạn văn; riêng trường hợp này được vượt ngân sách direct-answer đến 650 ký tự.",
+    "BÁO GIÁ: chỉ trả phương án khách đang hỏi. Hỏi giá chung có thể báo giá 1 lọ trước; chỉ mở combo/quà khi khách hỏi combo, ưu đãi hoặc muốn xem thêm. responseGuidance không có quyền ép kể toàn catalog hoặc ép CTA. CTA none hợp lệ khi đã trả lời đủ.",
     "Ví dụ liên quan tới tin hiện tại:",
     ...compactExamplesFor(input.customerMessage, input.state),
     `STATE: ${JSON.stringify(state)}`,
-    `CONVERSATION_MEMORY: ${JSON.stringify(promptArgumentMemory(input.state))}`,
+    `VERIFIED TURN CONTEXT: ${JSON.stringify(input.turnContext ?? null)}`,
+    `CONVERSATION_MEMORY: ${JSON.stringify(promptArgumentMemory(input.state, input.customerMessage))}`,
     `CTA_POLICY: ${JSON.stringify(input.responseContract?.ctaPolicy ?? null)}`,
     `ALLOWED_CTAS: ${JSON.stringify(input.responseContract?.ctaPolicy.allowed ?? allowedConversationCtas(input.state))}`,
     `CANONICAL_FACTS: ${JSON.stringify(input.canonicalFacts ?? [])}`,
     `CANONICAL_CONFLICTS: ${JSON.stringify(input.canonicalConflicts ?? [])}`,
     `KNOWLEDGE: ${JSON.stringify(input.knowledge ?? [])}`,
-    `HISTORY: ${JSON.stringify(promptConversationMemory(input.state))}`,
+    `HISTORY: ${JSON.stringify(promptConversationMemory(input.state, input.customerMessage))}`,
     `MESSAGE: ${JSON.stringify(input.customerMessage)}`,
   ].join("\n");
 }
@@ -1980,7 +1996,7 @@ function buildPendingOrderFieldReinterpretPrompt(
       pendingAction: input.state.pendingAction ?? null,
       pipeline: input.state.pipeline,
     })}`,
-    `HISTORY: ${JSON.stringify(promptConversationMemory(input.state))}`,
+    `HISTORY: ${JSON.stringify(promptConversationMemory(input.state, input.customerMessage))}`,
     `PREVIOUS_INTERPRETATION: ${JSON.stringify({
       intent: previous.intent ?? null,
       topic: previous.topic ?? null,
@@ -2044,13 +2060,17 @@ function isGroundedPendingOrderFieldInterpretation(
   });
 }
 
-function promptConversationMemory(state: DemoChatState): Array<{
+function promptConversationMemory(
+  state: DemoChatState,
+  customerMessage: string,
+): Array<{
   user: string;
   assistant: string[];
 }> {
+  if (isStandaloneGreeting(customerMessage)) return [];
   const exchanges: Array<{ user: string; assistant: string[] }> = [];
   for (const turn of state.recentTurns.slice(-36)) {
-    const text = redactPromptPii(turn.text).slice(0, 600);
+    const text = boundedPromptText(redactPromptPii(turn.text), 1_200);
     if (turn.role === "user") {
       exchanges.push({ user: text, assistant: [] });
       continue;
@@ -2058,13 +2078,31 @@ function promptConversationMemory(state: DemoChatState): Array<{
     const exchange = exchanges.at(-1);
     if (exchange) exchange.assistant.push(text);
   }
-  return exchanges.slice(-6);
+  if (isContextualContinuation(customerMessage)) return exchanges.slice(-6);
+  const recent = exchanges.slice(-4);
+  const recentSet = new Set(recent);
+  const queryTokens = promptSelectionTokens(customerMessage);
+  const relevant = exchanges
+    .slice(0, -4)
+    .map((exchange, index) => ({
+      exchange,
+      index,
+      score: promptMemoryRelevance(exchange, queryTokens),
+    }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score || right.index - left.index)
+    .slice(0, 2)
+    .map((candidate) => candidate.exchange);
+  return exchanges.filter((exchange) => recentSet.has(exchange) || relevant.includes(exchange)).slice(-6);
 }
 
 type PromptArgumentId =
   "duration_or_cost" | "mechanism" | "usage" | "evidence" | "authenticity" | "after_sales";
 
-function promptArgumentMemory(state: DemoChatState): {
+function promptArgumentMemory(
+  state: DemoChatState,
+  customerMessage: string,
+): {
   currentGoal: string | null;
   activeSubject: string | null;
   activeBeneficiaryId: string | null;
@@ -2126,6 +2164,14 @@ function promptArgumentMemory(state: DemoChatState): {
   };
   latestAssistantTurn: string | null;
 } {
+  const standaloneGreeting = isStandaloneGreeting(customerMessage);
+  const orderContextAvailable = !standaloneGreeting;
+  const orderPiiRelevant = isOrderMemoryRelevant(customerMessage);
+  const projected = projectMemoryForTurn({
+    ...(state.conversationMemory?.factLedger ? { ledger: state.conversationMemory.factLedger } : {}),
+    customerMessage,
+  });
+  const hasFactLedger = (state.conversationMemory?.factLedger?.facts.length ?? 0) > 0;
   const recent = state.recentTurns.slice(-36);
   const assistantText = recent
     .filter((turn) => turn.role === "assistant")
@@ -2164,69 +2210,90 @@ function promptArgumentMemory(state: DemoChatState): {
 
   const latestAssistantTurn = recent.filter((turn) => turn.role === "assistant").at(-1)?.text ?? null;
   return {
-    currentGoal:
-      state.conversationMemory?.currentGoal ??
-      state.pendingAction ??
-      state.pendingQuestionTopic ??
-      state.consultationStage ??
-      null,
-    activeSubject: state.conversationMemory?.activeSubject ?? null,
-    activeBeneficiaryId: state.conversationMemory?.activeBeneficiaryId ?? null,
-    beneficiaries: (state.conversationMemory?.beneficiaries ?? []).map((item) => ({
-      id: item.id,
-      type: item.type,
-      label: item.label,
-      age: item.age ?? null,
-      ageGroup: item.ageGroup,
-      confirmed: item.confirmed,
-      evidence: redactPromptPii(item.evidence).slice(0, 180),
-    })),
-    usedArguments: [...usedArguments],
-    rejectedArguments: [...rejectedArguments],
-    answeredQuestions: [
-      ...new Set([...(state.conversationMemory?.answeredQuestions ?? []), ...state.answeredTopics]),
-    ].slice(-12),
-    openQuestions: [
-      ...new Set([
-        ...(state.conversationMemory?.openQuestions ?? []),
-        ...(state.pendingQuestionTopic ? [state.pendingQuestionTopic] : []),
-      ]),
-    ].slice(-8),
+    currentGoal: standaloneGreeting
+      ? null
+      : (state.conversationMemory?.currentGoal ??
+        state.pendingAction ??
+        state.pendingQuestionTopic ??
+        state.consultationStage ??
+        null),
+    activeSubject: standaloneGreeting ? null : (state.conversationMemory?.activeSubject ?? null),
+    activeBeneficiaryId: standaloneGreeting ? null : (state.conversationMemory?.activeBeneficiaryId ?? null),
+    beneficiaries: (standaloneGreeting ? [] : (state.conversationMemory?.beneficiaries ?? [])).map(
+      (item) => ({
+        id: item.id,
+        type: item.type,
+        label: item.label,
+        age: item.age ?? null,
+        ageGroup: item.ageGroup,
+        confirmed: item.confirmed,
+        evidence: boundedPromptText(redactPromptPii(item.evidence), 240),
+      }),
+    ),
+    usedArguments: standaloneGreeting ? [] : [...usedArguments],
+    rejectedArguments: standaloneGreeting ? [] : [...rejectedArguments],
+    answeredQuestions: standaloneGreeting
+      ? []
+      : [...new Set([...(state.conversationMemory?.answeredQuestions ?? []), ...state.answeredTopics])].slice(
+          -12,
+        ),
+    openQuestions: standaloneGreeting
+      ? []
+      : [
+          ...new Set([
+            ...(state.conversationMemory?.openQuestions ?? []),
+            ...(state.pendingQuestionTopic ? [state.pendingQuestionTopic] : []),
+          ]),
+        ].slice(-8),
     orderDraft: {
-      selectedQuantity: state.selectedQuantity ?? null,
-      recipientName: state.orderDraft?.recipientName ?? null,
-      phone: state.orderDraft?.phone ?? null,
-      legacyAddress: state.orderDraft?.legacyAddress ?? null,
-      deliveryNote: state.orderDraft?.deliveryNote ?? null,
-      phoneHistory: (state.conversationMemory?.phoneHistory ?? []).map((item) => ({
+      selectedQuantity: orderContextAvailable ? (state.selectedQuantity ?? null) : null,
+      recipientName: orderPiiRelevant ? (state.orderDraft?.recipientName ?? null) : null,
+      phone: orderPiiRelevant ? (state.orderDraft?.phone ?? null) : null,
+      legacyAddress: orderPiiRelevant ? (state.orderDraft?.legacyAddress ?? null) : null,
+      deliveryNote: orderPiiRelevant ? (state.orderDraft?.deliveryNote ?? null) : null,
+      phoneHistory: (orderPiiRelevant ? (state.conversationMemory?.phoneHistory ?? []) : []).map((item) => ({
         value: item.value,
         status: item.status,
-        evidence: redactPromptPii(item.evidence).slice(0, 120),
+        evidence: boundedPromptText(redactPromptPii(item.evidence), 180),
         sourceTurn: item.sourceTurn,
       })),
-      missingFields: [...state.orderMissing],
-      flowStatus: state.orderFlowStatus ?? null,
-      lastChangedFields: [...(state.orderTransactionTrace?.changedFields ?? [])],
+      missingFields: orderContextAvailable ? [...state.orderMissing] : [],
+      flowStatus: orderContextAvailable ? (state.orderFlowStatus ?? null) : null,
+      lastChangedFields: orderContextAvailable ? [...(state.orderTransactionTrace?.changedFields ?? [])] : [],
     },
     consultationFacts: {
-      sweatConcern: state.conversationMemory?.consultationFacts.sweatConcern ?? null,
-      odorSeverity: state.conversationMemory?.consultationFacts.odorSeverity ?? null,
-      triggers: [...(state.conversationMemory?.consultationFacts.triggers ?? [])],
-      sensitiveSkin: state.conversationMemory?.consultationFacts.sensitiveSkin ?? null,
-      recommendedQuantity: state.conversationMemory?.consultationFacts.recommendedQuantity ?? null,
+      sweatConcern:
+        standaloneGreeting || hasFactLedger
+          ? null
+          : (state.conversationMemory?.consultationFacts.sweatConcern ?? null),
+      odorSeverity:
+        standaloneGreeting || hasFactLedger
+          ? null
+          : (state.conversationMemory?.consultationFacts.odorSeverity ?? null),
+      triggers:
+        standaloneGreeting || hasFactLedger
+          ? []
+          : [...(state.conversationMemory?.consultationFacts.triggers ?? [])],
+      sensitiveSkin:
+        standaloneGreeting || hasFactLedger
+          ? null
+          : (state.conversationMemory?.consultationFacts.sensitiveSkin ?? null),
+      recommendedQuantity:
+        standaloneGreeting || hasFactLedger
+          ? null
+          : (state.conversationMemory?.consultationFacts.recommendedQuantity ?? null),
     },
-    conversationFacts: (state.conversationMemory?.factLedger?.facts ?? [])
-      .filter((fact) => fact.status === "current")
-      .slice(-24)
+    conversationFacts: (standaloneGreeting ? [] : projected.facts)
+      .filter((fact) => fact.usage !== "context_only" && fact.usage !== "disallowed")
       .map((fact) => ({
         subjectId: fact.subjectId,
-        predicate: fact.predicate,
+        predicate: fact.key,
         value: fact.value,
-        product: fact.product ?? null,
+        product: null,
         temporal: fact.temporal,
         scenario: fact.scenario,
         source: fact.source,
-        evidence: redactPromptPii(fact.evidence).slice(0, 180),
+        evidence: fact.evidenceRef,
         sourceTurn: fact.sourceTurn,
       })),
     salesContext: {
@@ -2234,12 +2301,65 @@ function promptArgumentMemory(state: DemoChatState): {
         type: item.type,
         comparedWith: item.comparedWith ?? null,
         status: item.status,
-        evidence: redactPromptPii(item.evidence).slice(0, 180),
+        evidence: boundedPromptText(redactPromptPii(item.evidence), 240),
         sourceTurn: item.sourceTurn,
       })),
     },
-    latestAssistantTurn: latestAssistantTurn ? redactPromptPii(latestAssistantTurn).slice(0, 300) : null,
+    latestAssistantTurn:
+      standaloneGreeting || !latestAssistantTurn
+        ? null
+        : boundedPromptText(redactPromptPii(latestAssistantTurn), 480),
   };
+}
+
+function isStandaloneGreeting(value: string): boolean {
+  const text = normalizePromptText(value)
+    .replace(/[^a-z0-9\s]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return /^(?:hi|hello|alo|chao|xin chao|chao shop|shop oi|hi e|hi em|hello shop)(?:\s+(?:a|nha|nhe))*$/u.test(
+    text,
+  );
+}
+
+function isContextualContinuation(value: string): boolean {
+  const text = normalizePromptText(value);
+  return (
+    text.length <= 48 &&
+    /^(?:ok|oke|uh|u|ừ|duoc|gui di|cai do|cai nay|vay|the|con no|roi sao|tiep di)\b/u.test(text)
+  );
+}
+
+function isOrderMemoryRelevant(value: string): boolean {
+  const text = normalizePromptText(value);
+  return /\b(?:don|dat hang|chot|lay|mua|giao|ship|dia chi|sdt|so dien thoai|nguoi nhan|tong tien|thanh toan|van don)\b/u.test(
+    text,
+  );
+}
+
+function boundedPromptText(value: string, maxCharacters: number): string {
+  if (value.length <= maxCharacters) return value;
+  const marker = " …[đã rút gọn phần giữa]… ";
+  const available = maxCharacters - marker.length;
+  const headLength = Math.ceil(available / 2);
+  return `${value.slice(0, headLength)}${marker}${value.slice(-(available - headLength))}`;
+}
+
+function promptSelectionTokens(value: string): Set<string> {
+  return new Set(
+    normalizePromptText(value)
+      .split(/[^a-z0-9]+/u)
+      .filter((token) => token.length >= 3 && !["minh", "shop", "cho", "khong", "duoc"].includes(token)),
+  );
+}
+
+function promptMemoryRelevance(
+  exchange: { user: string; assistant: string[] },
+  queryTokens: ReadonlySet<string>,
+): number {
+  if (queryTokens.size === 0) return 0;
+  const haystack = promptSelectionTokens(`${exchange.user} ${exchange.assistant.join(" ")}`);
+  return [...queryTokens].filter((token) => haystack.has(token)).length;
 }
 
 function normalizePromptText(value: string): string {
@@ -2492,15 +2612,15 @@ export function parseSemanticUnderstanding(
   const draftBubbles = Array.isArray(parsed.draftBubbles)
     ? parsed.draftBubbles
         .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
-        .map((value) => value.trim().slice(0, 650))
+        .map((value) => assertTransportBubbleLength(value.trim()))
         .slice(0, 2)
     : [];
   if (draftBubbles.length > 0) {
     result.draftBubbles = draftBubbles;
-    result.draftReply = draftBubbles.join("\n\n").slice(0, 1_000);
+    result.draftReply = draftBubbles.join("\n\n");
   }
   if (draftBubbles.length === 0 && typeof parsed.draftReply === "string" && parsed.draftReply.trim()) {
-    result.draftReply = parsed.draftReply.trim().slice(0, 1_000);
+    result.draftReply = assertTransportBubbleLength(parsed.draftReply.trim());
   }
 
   const intents: readonly CustomerIntent[] = [

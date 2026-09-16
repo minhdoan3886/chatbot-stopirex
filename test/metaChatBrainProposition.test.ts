@@ -231,7 +231,7 @@ test("post-commit composer lỗi vẫn giữ draft LLM đã được kiểm tra 
         draftBubbles: [
           "Dạ shop giao được Quận 1 ạ. Phí giao 30.000đ; cùng tỉnh/thành phố dự kiến 1–2 ngày, nội miền 2–3 ngày và liên miền Bắc–Nam 3–5 ngày. Em đã ghi nhận mình chọn 1 lọ.",
         ],
-        knowledgeIds: ["online-only-standard-carrier-policy"],
+        knowledgeIds: ["online-only-standard-carrier-policy", "domestic-delivery-inspection-policy"],
         unsupportedQuestions: [],
         groundingConfidence: 1,
         asksDirectAnswer: true,
@@ -250,7 +250,7 @@ test("post-commit composer lỗi vẫn giữ draft LLM đã được kiểm tra 
   });
 
   assert.equal(response.state.selectedQuantity, 1);
-  assert.match(response.reply, /giao được Quận 1/iu);
+  assert.match(response.reply, /giao được Quận 1/iu, response.state.responseDecision?.reason);
   assert.match(response.reply, /đã ghi nhận.*1 lọ/iu);
   assert.match(
     response.state.responseDecision?.reason ?? "",

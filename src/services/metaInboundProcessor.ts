@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { TenantId } from "../domain/types.js";
 import type { OpeningVariantId } from "../domain/sales.js";
 import type { MetaMessenger } from "../integrations/contracts.js";
@@ -7,9 +8,8 @@ import type {
   ConversationOutboundPlan,
 } from "../infrastructure/postgres.js";
 import { batchMessages } from "./messageBatcher.js";
-import type { DemoChatService } from "./demoChat.js";
+import type { DemoChatService, DemoChatState } from "./demoChat.js";
 import { MetaChatBrain } from "./metaChatBrain.js";
-import { isContentFreeCustomerMessage, isHelpfulContentFreeReply } from "./codexLlm.js";
 import type { StructuredLogger } from "./logger.js";
 import type { FollowupContextSnapshot } from "../domain/followup.js";
 import type { FollowupCycleSchedule } from "./followupRepository.js";
@@ -63,7 +63,7 @@ export type MetaInboundStore = Pick<
   | "markMetaCommentIssue"
   | "markMetaCommentVisibilityByExternal"
 > &
-  Partial<Pick<PostgresStore, "recordMarketingAttribution">>;
+  Partial<Pick<PostgresStore, "recordMarketingAttribution" | "markConversationTurnOutboundUnknown">>;
 
 export class MetaInboundProcessor {
   constructor(
@@ -252,7 +252,7 @@ export class MetaInboundProcessor {
           state: conversation.runtimeState,
         });
       }
-      if (existingOutbound.status !== "sent") {
+      if (existingOutbound.status !== "sent" && existingOutbound.deliveryStatus !== "unknown") {
         const dispatched = await this.dispatchOutbound(
           first,
           conversation,
@@ -264,6 +264,13 @@ export class MetaInboundProcessor {
         replyCount = dispatched.count;
         suppressed = dispatched.suppressed;
         lastMessageId = dispatched.lastMessageId ?? lastMessageId;
+      } else if (existingOutbound.deliveryStatus === "unknown") {
+        suppressed = true;
+        this.options.logger.log("warn", "meta_outbound_delivery_unknown_not_retried", {
+          traceId: first.traceId,
+          conversationId: conversation.conversationId,
+          outboxId: existingOutbound.outboxId,
+        });
       }
       if (!isCommentTurn && lastMessageId && isFollowupEligiblePipeline(conversation.pipelineTag)) {
         await assertLease();
@@ -313,6 +320,10 @@ export class MetaInboundProcessor {
           idempotencyKey: turnIdempotencyKey,
           recipientId: first.senderId,
           texts: [reply],
+          traceId: first.traceId,
+          turnContextVersion: 1,
+          inboundRevision: conversation.stateVersion + 1,
+          responseRef: responseReference(reply),
         },
       });
       const dispatched = await this.dispatchOutbound(
@@ -379,15 +390,19 @@ export class MetaInboundProcessor {
     }
     const orderEditable = await this.options.orderInbox?.canEditPending?.(sessionId);
     const chatContext = this.context(conversation.displayName, profileFirstName, orderEditable);
-    if (!contextExpired && !isCommentTurn) {
-      this.options.chat.restoreSession(sessionId, conversation.runtimeState, chatContext);
+    if (!isCommentTurn) {
+      if (contextExpired) {
+        this.options.chat.restoreSessionForNewEpisode(sessionId, conversation.runtimeState, chatContext);
+      } else {
+        this.options.chat.restoreSession(sessionId, conversation.runtimeState, chatContext);
+      }
     }
 
     if (!isCommentTurn) {
       void messenger.sendTyping(first.senderId).catch(() => undefined);
     }
     const lowInformationComment = isCommentTurn && isLowInformationComment(text);
-    let result = lowInformationComment
+    const result = lowInformationComment
       ? this.options.chat.chat(
           sessionId,
           text,
@@ -414,20 +429,12 @@ export class MetaInboundProcessor {
           traceId: first.traceId,
           tenantId: first.tenantId,
           pageId: first.pageId,
+          customerId: conversation.customerId,
           conversationId: conversation.conversationId,
+          inboundRevision: conversation.stateVersion + 1,
+          occurredAt: latestInboundAt,
           ...chatContext,
         });
-    if (isContentFreeCustomerMessage(text) && !isHelpfulContentFreeReply(text, result.reply)) {
-      const reply =
-        "Dạ em chào mình ạ. Mình đang cần hỗ trợ về mồ hôi, mùi cơ thể, cách dùng, giá hay đơn hàng ạ?";
-      const replies = [reply];
-      const state = this.options.chat.replaceLatestAssistantTurns(sessionId, result.replies, replies);
-      this.options.logger.log("warn", "content_free_message_outbound_corrected", {
-        traceId: first.traceId,
-        rejectedReply: result.reply,
-      });
-      result = { ...result, reply, replies, state };
-    }
     const hasNewerInbound =
       !isCommentTurn &&
       (await this.options.store.hasNewerInboundContent({
@@ -479,7 +486,7 @@ export class MetaInboundProcessor {
       humanStatus: isCommentTurn ? conversation.humanStatus : result.state.botPaused ? "paused" : "bot",
       runtimeState: isCommentTurn
         ? conversation.runtimeState
-        : (this.options.chat.exportSession(sessionId) ?? {}),
+        : responseRuntimeState(this.options.chat.exportSession(sessionId), result.state),
       preserveConversationState: isCommentTurn,
       summary: `${result.state.pipeline} · ${result.state.breakpoint}`.slice(0, 800),
       sourceEventIds: contentJobs.map((job) => job.eventId),
@@ -487,6 +494,10 @@ export class MetaInboundProcessor {
         idempotencyKey: turnIdempotencyKey,
         recipientId: first.senderId,
         texts: commentPlan ? [commentPlan.publicReply, commentPlan.privateReply] : result.replies.slice(0, 2),
+        traceId: first.traceId,
+        turnContextVersion: 1,
+        inboundRevision: conversation.stateVersion + 1,
+        responseRef: result.state.responseTrace?.finalResponseRef ?? responseReference(result.reply),
       },
     });
     await assertLease();
@@ -702,6 +713,25 @@ export class MetaInboundProcessor {
               idempotencyKey: `${plan.idempotencyKey}:part:${index + 1}`,
             });
       if (!outbound.ok) {
+        if (isAmbiguousMetaSendFailure(outbound.code)) {
+          await this.options.store.markConversationTurnOutboundUnknown?.({
+            tenantId: job.tenantId,
+            outboxId: plan.outboxId,
+            sentCount: index,
+            errorCode: outbound.code,
+          });
+          this.options.logger.log("warn", "meta_outbound_delivery_unknown", {
+            traceId: job.traceId,
+            conversationId: conversation.conversationId,
+            outboxId: plan.outboxId,
+            part: index + 1,
+            errorCode: outbound.code,
+            responseRef: plan.responseRef,
+          });
+          const error = new Error(outbound.message);
+          error.name = "UnknownMetaSendOutcomeError";
+          throw error;
+        }
         if (job.kind === "comment" && job.commentId) {
           await this.options.store.markMetaCommentIssue({
             tenantId: job.tenantId,
@@ -723,6 +753,15 @@ export class MetaInboundProcessor {
         sentCount: index + 1,
         messageId: outbound.value.messageId,
       });
+      this.options.logger.log("info", "meta_outbound_part_sent", {
+        traceId: plan.traceId ?? job.traceId,
+        conversationId: conversation.conversationId,
+        outboxId: plan.outboxId,
+        responseRef: plan.responseRef,
+        part: index + 1,
+        totalParts: plan.texts.length,
+        providerMessageId: outbound.value.messageId,
+      });
       await this.options.store.persistConversationMessage({
         tenantId: job.tenantId,
         pageId: job.pageId,
@@ -733,6 +772,7 @@ export class MetaInboundProcessor {
         text,
         payload: {
           sourceEventIds: plan.sourceEventIds,
+          ...(plan.responseRef ? { responseRef: plan.responseRef } : {}),
           part: index + 1,
           totalParts: plan.texts.length,
           channel:
@@ -827,6 +867,25 @@ export class MetaInboundProcessor {
       });
     }
   }
+}
+
+function isAmbiguousMetaSendFailure(code: string): boolean {
+  return code === "network_error" || code === "invalid_response" || code === "request_timeout";
+}
+
+function responseReference(value: string): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`;
+}
+
+function responseRuntimeState(snapshot: unknown, state: DemoChatState): Record<string, unknown> {
+  const runtimeState = { ...asObject(snapshot) };
+  if (state.responseDecision) runtimeState.responseDecision = state.responseDecision;
+  else delete runtimeState.responseDecision;
+  if (state.responseAttention) runtimeState.responseAttention = state.responseAttention;
+  else delete runtimeState.responseAttention;
+  if (state.responseTrace) runtimeState.responseTrace = state.responseTrace;
+  else delete runtimeState.responseTrace;
+  return runtimeState;
 }
 
 export function isConversationContextExpired(input: {

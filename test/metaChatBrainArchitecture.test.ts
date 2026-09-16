@@ -25,6 +25,13 @@ test("mỗi turn phát audit về state, action và nguồn câu trả lời cu�
   assert.equal(audit?.finalResponseSource, "llm_disabled");
   assert.equal(audit?.responseOutcome, "allow");
   assert.equal(audit?.stateVersionAfter, result.state.stateVersion);
+  assert.equal(result.state.responseTrace?.logicalModelCalls, 0);
+  assert.equal(result.state.responseTrace?.repairAttempts, 0);
+  assert.match(result.state.responseTrace?.workflowResponseRef ?? "", /^sha256:[a-f0-9]{16}$/u);
+  assert.match(result.state.responseTrace?.finalResponseRef ?? "", /^sha256:[a-f0-9]{16}$/u);
+  assert.equal(audit?.finalResponseRef, result.state.responseTrace?.finalResponseRef);
+  assert.equal(audit?.logicalModelCalls, 0);
+  assert.notEqual(result.state.responseTrace?.finalResponseRef, result.reply);
 });
 
 test("audit transaction luôn có mutation receipt khi order fields thay đổi", async () => {

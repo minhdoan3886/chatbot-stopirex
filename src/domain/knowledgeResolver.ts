@@ -60,16 +60,20 @@ export function assertCanonicalClaimsSupported(input: {
   authoritativeReply: string;
   resolution: CanonicalKnowledgeResolution;
 }): void {
-  const support = [...input.resolution.facts.map((fact) => fact.text), input.authoritativeReply].filter(
-    Boolean,
-  );
+  // Workflow prose and earlier assistant copy are not product evidence. They
+  // may describe an executed transaction, but only applicable canonical facts
+  // can authorize a product/policy claim.
+  const support = input.resolution.facts.map((fact) => fact.text).filter(Boolean);
   for (const sentence of input.reply.split(/(?<=[.!?])\s+|\n+/u).map((item) => item.trim())) {
     if (!isProductClaimSentence(sentence)) continue;
     const claimTokens = materialClaimTokens(sentence);
     if (claimTokens.length < 2) continue;
     const supported = support.some((source) => {
       const sourceTokens = new Set(materialClaimTokens(source));
-      return claimTokens.filter((token) => sourceTokens.has(token)).length >= 2;
+      return (
+        claimTokens.filter((token) => sourceTokens.has(token)).length >= 2 &&
+        sameClaimPolarity(sentence, source)
+      );
     });
     if (!supported) throw new UnsupportedCanonicalClaimError(sentence);
   }
@@ -82,6 +86,7 @@ export function assertCanonicalFactApplicability(input: {
   resolution: CanonicalKnowledgeResolution;
 }): void {
   const replyAmounts = vndAmounts(input.reply);
+  assertMoneyRolesMatch(input.reply, input.authoritativeReply, input.resolution);
   if (input.resolution.unresolvedFacts.includes("price") && replyAmounts.length > 0) {
     throw new FactApplicabilityError("fact_applicability_guard:price_unresolved");
   }
@@ -111,6 +116,74 @@ export function assertCanonicalFactApplicability(input: {
   if (unsupported.length > 0) {
     throw new FactApplicabilityError(`fact_applicability_guard:unsupported_money:${unsupported.join(",")}`);
   }
+}
+
+function assertMoneyRolesMatch(
+  reply: string,
+  executionSummary: string,
+  resolution: CanonicalKnowledgeResolution,
+): void {
+  const allowed = new Map<"unit_price" | "shipping" | "total" | "discount", Set<number>>([
+    ["unit_price", new Set()],
+    ["shipping", new Set()],
+    ["total", new Set()],
+    ["discount", new Set()],
+  ]);
+  for (const fact of resolution.facts) {
+    if (typeof fact.value !== "number") continue;
+    if (fact.kind === "price") allowed.get("unit_price")!.add(fact.value);
+    if (fact.kind === "shipping") allowed.get("shipping")!.add(fact.value);
+  }
+  for (const value of labeledMoney(executionSummary)) allowed.get(value.role)!.add(value.amount);
+  for (const value of labeledMoney(reply)) {
+    if (!allowed.get(value.role)?.has(value.amount)) {
+      throw new FactApplicabilityError(
+        `fact_applicability_guard:money_role_mismatch:${value.role}:${value.amount}`,
+      );
+    }
+  }
+}
+
+function labeledMoney(
+  value: string,
+): Array<{ role: "unit_price" | "shipping" | "total" | "discount"; amount: number }> {
+  const patterns: Array<{
+    role: "unit_price" | "shipping" | "total" | "discount";
+    pattern: RegExp;
+  }> = [
+    {
+      role: "shipping",
+      pattern: /(?:phí\s*(?:giao|ship)|tiền\s*(?:giao|ship))\s*[:：]?\s*(\d{1,3}(?:[.,]\d{3})+)\s*đ/giu,
+    },
+    {
+      role: "shipping",
+      pattern: /(\d{1,3}(?:[.,]\d{3})+)\s*đ\s*(?:phí\s*(?:giao|ship)|tiền\s*(?:giao|ship))/giu,
+    },
+    {
+      role: "total",
+      pattern: /(?:tổng(?:\s*(?:tiền|thanh toán))?)\s*[:：]?\s*(\d{1,3}(?:[.,]\d{3})+)\s*đ/giu,
+    },
+    { role: "discount", pattern: /(?:giảm|tiết kiệm)\s*[:：]?\s*(\d{1,3}(?:[.,]\d{3})+)\s*đ/giu },
+    {
+      role: "unit_price",
+      pattern: /(?:tiền\s*hàng|giá(?:\s*(?:hiện tại|bán))?)\s*[:：]?\s*(\d{1,3}(?:[.,]\d{3})+)\s*đ/giu,
+    },
+  ];
+  return patterns.flatMap(({ role, pattern }) =>
+    [...value.matchAll(pattern)].map((match) => ({
+      role,
+      amount: Number((match[1] ?? "").replace(/[.,]/gu, "")),
+    })),
+  );
+}
+
+function sameClaimPolarity(claim: string, source: string): boolean {
+  return claimPolarity(claim) === claimPolarity(source);
+}
+
+function claimPolarity(value: string): "positive" | "negative" {
+  const normalized = normalize(value);
+  return /\b(?:khong|chua|chang|khong the|khong phai)\b/u.test(normalized) ? "negative" : "positive";
 }
 
 /**
@@ -268,7 +341,8 @@ function compareAuthority(left: CanonicalAnswerFact, right: CanonicalAnswerFact)
 }
 
 function isApplicable(entity: KnowledgeEntity, intent: CustomerIntent | undefined, at: Date): boolean {
-  if (entity.status === "inactive") return false;
+  if (entity.status !== "active") return false;
+  if (entity.scope !== "current" && entity.scope !== "historical") return false;
   const atMs = at.getTime();
   const from = entity.validFrom ? Date.parse(entity.validFrom) : Number.NEGATIVE_INFINITY;
   const to = entity.validTo ? Date.parse(entity.validTo) : Number.POSITIVE_INFINITY;

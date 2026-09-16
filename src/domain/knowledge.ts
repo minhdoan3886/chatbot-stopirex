@@ -79,6 +79,8 @@ export async function importKnowledgeXlsx(input: {
           type,
           title,
           content,
+          status: "active",
+          scope: "current",
           sourceRow: index + 1,
         });
       }
@@ -280,7 +282,8 @@ export function retrieveKnowledgeMatches(input: {
     .filter(
       (entity) =>
         entity.tenantId === input.tenantId &&
-        entity.status !== "inactive" &&
+        entity.status === "active" &&
+        (entity.scope === "current" || entity.scope === "historical") &&
         isEntityEffective(entity, now) &&
         (!input.intent || !entity.allowedIntents || entity.allowedIntents.includes(input.intent)) &&
         (!input.intent || !entity.excludedIntents?.includes(input.intent)) &&

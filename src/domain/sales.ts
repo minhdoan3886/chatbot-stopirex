@@ -1,4 +1,5 @@
 import type { PriceQuote } from "./products.js";
+import { renderPriceQuote } from "./transactionRenderer.js";
 
 export type OpeningVariantId = "AUTO.dynamic" | "A.choice" | "B.context" | "C.prior" | "D.pain" | "E.number";
 
@@ -103,16 +104,16 @@ export function formatPriceOffer(
   bulk: readonly PriceQuote[] = [],
   nextQuestion = "Anh/chị muốn chọn phương án mấy lọ ạ?",
 ): string {
-  const money = (value: number) => `${value.toLocaleString("vi-VN")}đ`;
-  const saved = single.productPrice.amount * 2 - combo.productPrice.amount;
+  const singleRender = renderPriceQuote(single);
+  const comboRender = renderPriceQuote(combo, { comparisonUnitQuote: single });
   return [
     "Dạ giá hiện tại:",
-    `• 1 lọ: ${money(single.productPrice.amount)}${single.shippingFee.amount ? ` + ${money(single.shippingFee.amount)} phí giao` : ", miễn phí giao"}.`,
-    `• Combo 2 lọ: ${money(combo.total.amount)}${combo.shippingFee.amount === 0 ? ", miễn phí giao" : `, phí giao ${money(combo.shippingFee.amount)}`}${saved > 0 ? `, tiết kiệm ${money(saved)}` : ""}.`,
-    ...bulk.map(
-      (offer) =>
-        `• Combo ${offer.quantity} lọ: ${money(offer.total.amount)}${offer.shippingFee.amount === 0 ? ", miễn phí giao" : `, phí giao ${money(offer.shippingFee.amount)}`}.`,
-    ),
+    `• 1 lọ: ${singleRender.money("unit_price")}${singleRender.amount("shipping") ? ` + ${singleRender.money("shipping")} phí giao` : ", miễn phí giao"}.`,
+    `• Combo 2 lọ: ${comboRender.money("total")}${comboRender.amount("shipping") === 0 ? ", miễn phí giao" : `, phí giao ${comboRender.money("shipping")}`}${comboRender.amount("discount") > 0 ? `, tiết kiệm ${comboRender.money("discount")}` : ""}.`,
+    ...bulk.map((offer) => {
+      const rendered = renderPriceQuote(offer);
+      return `• Combo ${offer.quantity} lọ: ${rendered.money("total")}${rendered.amount("shipping") === 0 ? ", miễn phí giao" : `, phí giao ${rendered.money("shipping")}`}.`;
+    }),
     "• Quà tặng: đơn từ 2 lọ trở lên được tặng 1 túi đa năng vải dệt Stopirex (1 túi/đơn).",
     ...(nextQuestion.trim() ? [nextQuestion] : []),
   ].join("\n");

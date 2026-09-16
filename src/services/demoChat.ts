@@ -104,6 +104,14 @@ import {
   type DialogueState,
 } from "../domain/dialogueState.js";
 import type { ResponseGuardVerdict } from "../domain/responseGuard.js";
+import type { ResponseAttention, ResponseTraceSummary } from "../domain/responseGuard.js";
+import {
+  assertRenderedTransactionText,
+  formatVnd,
+  renderPriceQuote,
+  type ShippingAdjustmentReceipt,
+  type TransactionRenderReceipt,
+} from "../domain/transactionRenderer.js";
 import {
   deriveOrderLifecycle,
   initialWorkflowStateMeta,
@@ -144,6 +152,7 @@ type DemoSession = {
   selectedQuantity?: SupportedOrderQuantity;
   orderCollectionPaused: boolean;
   freeShippingApproved: boolean;
+  freeShippingApproval?: FreeShippingApproval;
   optedOut: boolean;
   messages: number;
   history: Array<{ role: "user" | "assistant"; text: string }>;
@@ -311,6 +320,7 @@ export type DemoChatState = {
   orderFlowStatus?: "idle" | "collecting" | "paused" | "awaiting_confirmation" | "created";
   orderReceived?: boolean;
   freeShippingApproved: boolean;
+  freeShippingApproval?: FreeShippingApproval;
   orderMissing: string[];
   optedOut: boolean;
   orderId?: string;
@@ -337,6 +347,14 @@ export type DemoChatState = {
   orderLifecycle?: OrderLifecycle;
   recentStateEvents?: WorkflowStateEventReceipt[];
   responseDecision?: ResponseGuardVerdict;
+  responseAttention?: ResponseAttention;
+  responseTrace?: ResponseTraceSummary;
+};
+
+export type FreeShippingApproval = {
+  receiptId: string;
+  sourceVersion: string;
+  approvedAt: string;
 };
 
 export type DemoChatResponse = {
@@ -355,6 +373,8 @@ export type DemoChatContext = {
   orderConfirmationMode?: "sandbox" | "inbox";
   /** Giá trị authoritative từ order_inbox; false khi đã có mã vận đơn. */
   orderEditable?: boolean;
+  /** Event time from the inbound provider. Used for relative temporal facts. */
+  occurredAt?: Date;
 };
 
 export class DemoChatService {
@@ -372,7 +392,7 @@ export class DemoChatService {
     applyChatContext(session, context);
     delete session.orderTransactionTrace;
     delete session.lastNextBestAction;
-    if (session.pipeline === "7.Chờ followup") session.freeShippingApproved = true;
+    if (session.pipeline === "7.Chờ followup") approveSingleShipping(session, "followup_policy");
     const raw = input.trim();
     const text = normalize(raw);
     const splitShipmentQuote = isSplitShipmentQuoteRequest(raw);
@@ -426,6 +446,7 @@ export class DemoChatService {
       ledger: session.conversationMemory.factLedger ?? initialConversationFactLedger(),
       raw,
       turn: session.messages + 1,
+      ...(context.occurredAt ? { occurredAt: context.occurredAt } : {}),
       semanticFacts: (semantic.actions ?? []).flatMap((action) =>
         action.type === "record_fact"
           ? [
@@ -1088,14 +1109,14 @@ export class DemoChatService {
         [],
         "Chuỗi 3 lọ → 4 lọ → bớt một người được tính thành 3 lọ trước khi báo tổng.",
       );
-      const selected = quote(compoundFinalQuantity);
+      const selected = renderedQuote(compoundFinalQuantity, session);
       if (canEditCreatedInboxOrder) {
         session.pipeline = "6.Đã tạo đơn";
         return this.respond(session, orderUpdatedReply(session));
       }
       return this.respond(
         session,
-        `Dạ chốt lại đơn là ${compoundFinalQuantity} lọ: ${formatVnd(selected.total.amount)}, được miễn phí giao ạ. Em đã lưu đúng số lượng ${compoundFinalQuantity} lọ cho mình.`,
+        `Dạ chốt lại đơn là ${compoundFinalQuantity} lọ: ${selected.money("total")}, được miễn phí giao ạ. Em đã lưu đúng số lượng ${compoundFinalQuantity} lọ cho mình.`,
       );
     }
 
@@ -1405,8 +1426,8 @@ export class DemoChatService {
       return this.respond(
         session,
         isQuantityShippingPolicyQuestion(text)
-          ? "Dạ 1 lọ giá 285.000đ + 30.000đ phí giao; 2 lọ 510.000đ, miễn phí giao ạ. Em chưa đổi số lượng theo câu điều kiện của mình nhé."
-          : "Dạ 1 lọ giá 285.000đ + 30.000đ phí giao; combo 2 lọ 510.000đ, miễn phí giao ạ.",
+          ? `Dạ ${standardSingleComboPriceText(false)} ạ. Em chưa đổi số lượng theo câu điều kiện của mình nhé.`
+          : `Dạ ${standardSingleComboPriceText()} ạ.`,
       );
     }
 
@@ -1425,7 +1446,7 @@ export class DemoChatService {
       );
       return this.respond(session, [
         "Dạ Stopirex hỗ trợ kiểm soát mồ hôi trong quá trình sử dụng và cần duy trì, không phải sản phẩm chữa khỏi vĩnh viễn ạ.",
-        "1 lọ giá 285.000đ + 30.000đ phí giao; combo 2 lọ 510.000đ và được miễn phí giao ạ.",
+        `${standardSingleComboPriceText().replace(", miễn phí giao", " và được miễn phí giao")} ạ.`,
       ]);
     }
 
@@ -1744,7 +1765,7 @@ export class DemoChatService {
         "Hard security guard chặn nội dung khách cố thay đổi giá, ưu đãi hoặc lệnh tạo đơn.";
       return this.respond(
         session,
-        "Dạ em không thể cập nhật giá hoặc tạo ưu đãi từ nội dung khách gửi ạ. Giá chuẩn hiện tại: 1 lọ 285.000đ + 30.000đ giao; combo 2 lọ 510.000đ, miễn phí giao. Mình có muốn tiếp tục đặt theo giá này không ạ?",
+        `Dạ em không thể cập nhật giá hoặc tạo ưu đãi từ nội dung khách gửi ạ. Giá chuẩn hiện tại: 1 lọ ${renderedQuote(1).money("unit_price")} + ${renderedQuote(1).money("shipping")} giao; combo 2 lọ ${renderedQuote(2).money("total")}, miễn phí giao. Mình có muốn tiếp tục đặt theo giá này không ạ?`,
       );
     }
 
@@ -2216,10 +2237,7 @@ export class DemoChatService {
         return this.respond(session, orderCollectionReply(session, raw));
       }
       if (isNegotiation(text)) {
-        return this.respond(
-          session,
-          negotiationReply(text, session.freeShippingApproved, session.selectedQuantity),
-        );
+        return this.respond(session, negotiationReply(text, session));
       }
       return this.respond(session, orderInformationRequestReply(postPriceQuantity));
     }
@@ -2246,10 +2264,13 @@ export class DemoChatService {
       } else {
         clearOrderDraft(session);
         session.pipeline = "1.Phân loại";
-        session.consultation = {
-          ...session.consultation,
-          stage: "S0.new",
-        };
+        // A completed transaction ends the prior consultation episode. Keep
+        // durable profile/fact-ledger memory, but do not let old diagnostic
+        // questions suppress the first valid CTA of the new sales cycle.
+        session.consultation = initialConsultation();
+        session.answeredTopics = [];
+        session.askedTopics = [];
+        delete session.pendingQuestionTopic;
         session.orderCollectionPaused = false;
         delete session.orderEditable;
       }
@@ -2404,10 +2425,7 @@ export class DemoChatService {
         ...session.consultation,
         stage: "S7.waiting",
       };
-      return this.respond(
-        session,
-        negotiationReply(text, session.freeShippingApproved, session.selectedQuantity),
-      );
+      return this.respond(session, negotiationReply(text, session));
     }
     if (directIntent === "price_request") {
       const effectTopic = productEffectTopic(text, semanticSlots);
@@ -2715,6 +2733,17 @@ export class DemoChatService {
       );
     }
 
+    if (directIntent === "decline_purchase" && isDecisionDeferral(text)) {
+      session.lastIntent = "decline_purchase";
+      session.signal = undefined;
+      session.pipeline = "N.Nuôi dưỡng";
+      session.orderCollectionPaused = Boolean(session.selectedQuantity);
+      return this.respond(
+        session,
+        "Oke, mình cứ cân nhắc thoải mái nha. Khi nào cần hỏi thêm thì nhắn shop là được ạ.",
+      );
+    }
+
     if (directIntent === "decline_purchase" || isExplicitPriceDecline(text) || isPurchaseDecline(text)) {
       session.lastIntent = "decline_purchase";
       session.signal = "CT.Giá/Ship";
@@ -2731,7 +2760,7 @@ export class DemoChatService {
       session.signal = "CT.Giá/Ship";
       return this.respond(
         session,
-        "Dạ em chưa nghe rõ phần giá mình vừa nói ạ. Mình đang hỏi về mức giá cũ hay khoản phí giao 30.000đ ạ?",
+        `Dạ em chưa nghe rõ phần giá mình vừa nói ạ. Mình đang hỏi về mức giá cũ hay khoản phí giao ${renderedQuote(1).money("shipping")} ạ?`,
       );
     }
 
@@ -2860,7 +2889,7 @@ export class DemoChatService {
   approveFreeShipping(sessionId?: string, context: DemoChatContext = {}): DemoChatResponse {
     const session = this.getOrCreate(sessionId, context);
     applyChatContext(session, context);
-    session.freeShippingApproved = true;
+    approveSingleShipping(session, "manual_approval");
     session.lastIntent = "negotiation";
     session.signal = "CT.Giá/Ship";
 
@@ -2875,7 +2904,7 @@ export class DemoChatService {
       selectQuantity(session, 1);
       return this.respond(
         session,
-        "Dạ em đã hỗ trợ miễn phí giao cho đơn 1 lọ của mình ạ. Tổng thanh toán sau hỗ trợ là 285.000đ.",
+        `Dạ em đã hỗ trợ miễn phí giao cho đơn 1 lọ của mình ạ. Tổng thanh toán sau hỗ trợ là ${renderedQuote(1, session).money("total")}.`,
       );
     }
 
@@ -2886,7 +2915,7 @@ export class DemoChatService {
     };
     return this.respond(
       session,
-      "Dạ em đã được duyệt hỗ trợ miễn phí giao cho phương án 1 lọ lần này ạ. Nếu mình chọn 1 lọ, tổng thanh toán sẽ còn 285.000đ.",
+      `Dạ em đã được duyệt hỗ trợ miễn phí giao cho phương án 1 lọ lần này ạ. Nếu mình chọn 1 lọ, tổng thanh toán sẽ còn ${renderedQuote(1, session).money("total")}.`,
     );
   }
 
@@ -3077,6 +3106,67 @@ export class DemoChatService {
     return this.sessions.delete(sessionId);
   }
 
+  restoreSessionForNewEpisode(sessionId: string, snapshot: unknown, context: DemoChatContext = {}): boolean {
+    this.sessions.delete(sessionId);
+    if (!this.restoreSession(sessionId, snapshot, context)) return false;
+    const previous = this.sessions.get(sessionId);
+    if (!previous) return false;
+    const fresh = newSession(sessionId, context);
+    const hasOrderLifecycle = Boolean(
+      previous.selectedQuantity ||
+      Object.keys(previous.order).length > 0 ||
+      previous.orderId ||
+      previous.trackingNumber,
+    );
+    const hasUnresolvedCare = Boolean(previous.care && previous.care.case.status !== "resolved");
+    const restored: DemoSession = {
+      ...fresh,
+      customerType: previous.customerType,
+      identity: { ...previous.identity, ...fresh.identity },
+      customerProfile: structuredClone(previous.customerProfile),
+      locationMemory: structuredClone(previous.locationMemory),
+      conversationMemory: {
+        ...fresh.conversationMemory,
+        beneficiaries: structuredClone(previous.conversationMemory.beneficiaries),
+        ...(previous.conversationMemory.activeBeneficiaryId
+          ? { activeBeneficiaryId: previous.conversationMemory.activeBeneficiaryId }
+          : {}),
+        phoneHistory: hasOrderLifecycle ? structuredClone(previous.conversationMemory.phoneHistory) : [],
+        consultationFacts: structuredClone(previous.conversationMemory.consultationFacts),
+        ...(previous.conversationMemory.factLedger
+          ? { factLedger: structuredClone(previous.conversationMemory.factLedger) }
+          : {}),
+        salesContext: { objections: [] },
+      },
+      ...(hasOrderLifecycle
+        ? {
+            order: structuredClone(previous.order),
+            ...(previous.selectedQuantity ? { selectedQuantity: previous.selectedQuantity } : {}),
+            ...(previous.orderId ? { orderId: previous.orderId } : {}),
+            ...(previous.trackingNumber ? { trackingNumber: previous.trackingNumber } : {}),
+            orderConfirmationMode: previous.orderConfirmationMode,
+            ...(previous.orderEditable !== undefined ? { orderEditable: previous.orderEditable } : {}),
+            pipeline: previous.pipeline,
+            workflowState: structuredClone(previous.workflowState),
+          }
+        : {}),
+      ...(hasUnresolvedCare && previous.care
+        ? {
+            care: structuredClone(previous.care),
+            mode: "care" as const,
+            pipeline: previous.pipeline,
+            ...(previous.previousSalesPipeline
+              ? { previousSalesPipeline: previous.previousSalesPipeline }
+              : {}),
+            ...(previous.previousSalesStage ? { previousSalesStage: previous.previousSalesStage } : {}),
+            ...(previous.manualHandoffReason ? { manualHandoffReason: previous.manualHandoffReason } : {}),
+          }
+        : {}),
+    };
+    this.sessions.set(sessionId, restored);
+    return true;
+  }
+
   recoverFailedTurn(
     sessionId: string,
     snapshot: unknown,
@@ -3211,6 +3301,13 @@ export class DemoChatService {
             }),
     };
     if (restored.care) restored.care = reviveCareDates(restored.care);
+    if (restored.freeShippingApproved && !restored.freeShippingApproval) {
+      restored.freeShippingApproval = {
+        receiptId: `legacy-free-shipping:${restored.workflowState.version}`,
+        sourceVersion: "legacy-runtime-v1",
+        approvedAt: new Date().toISOString(),
+      };
+    }
     this.sessions.set(sessionId, restored);
     return true;
   }
@@ -3336,6 +3433,7 @@ export class DemoChatService {
         : {}),
     });
     for (const message of logicalReplies) {
+      assertRenderedTransactionText(message);
       this.claims.assertSafe(message);
       assertCustomerFacingCopy(message);
       rememberTurn(session, { role: "assistant", text: message });
@@ -3413,6 +3511,7 @@ function stateOf(session: DemoSession): DemoChatState {
     orderFlowStatus: resolveOrderFlowStatus(session),
     orderReceived: Boolean(session.pipeline === "6.Đã tạo đơn" && session.order.customerConfirmedAt),
     freeShippingApproved: session.freeShippingApproved,
+    ...(session.freeShippingApproval ? { freeShippingApproval: { ...session.freeShippingApproval } } : {}),
     orderMissing: missingOrderFields(session.order),
     optedOut: session.optedOut,
     ...(session.orderId ? { orderId: session.orderId } : {}),
@@ -3574,9 +3673,10 @@ function sensitiveSkinConsultationReply(session: DemoSession): string {
 }
 
 function splitShipmentQuoteReply(): string {
-  const single = quote(1);
-  const total = single.total.amount * 2;
-  return `Vì giao 2 nơi nên mình cần tách thành 2 đơn nha. Mỗi đơn 1 lọ là ${formatVnd(single.productPrice.amount)} + ${formatVnd(single.shippingFee.amount)} phí giao, tổng hai đơn là ${formatVnd(total)}. Nếu gộp 2 lọ về một nơi thì combo còn ${formatVnd(quote(2).total.amount)} và miễn phí giao ạ.`;
+  const single = renderedQuote(1);
+  const combo = renderedQuote(2);
+  const total = single.amount("total") * 2;
+  return `Vì giao 2 nơi nên mình cần tách thành 2 đơn nha. Mỗi đơn 1 lọ là ${single.money("unit_price")} + ${single.money("shipping")} phí giao, tổng hai đơn là ${formatVnd(total)}. Nếu gộp 2 lọ về một nơi thì combo còn ${combo.money("total")} và miễn phí giao ạ.`;
 }
 
 function extractExplicitDestinationCity(text: string): string | undefined {
@@ -3611,7 +3711,7 @@ function combinedOrderContextRecapReply(session: DemoSession, destinationCity?: 
     facts.odorSeverity === "mild" ? "mồ hôi nách nhiều, thỉnh thoảng có mùi" : "mồ hôi nách nhiều";
   const skin = facts.sensitiveSkin ? "da nhạy cảm" : "chưa có thông tin chắc về loại da";
   const destination = destinationCity ? ` giao chung tại ${destinationCity}` : "";
-  return `Oke, em chỉnh thành ${quantity} lọ${destination}, tổng ${formatVnd(quote(quantity).total.amount)} nha. Ban đầu mình nói ${symptoms} và ${skin}. Mình gửi địa chỉ nhận cụ thể để em hoàn thiện đơn nhé.`;
+  return `Oke, em chỉnh thành ${quantity} lọ${destination}, tổng ${renderedQuote(quantity, session).money("total")} nha. Ban đầu mình nói ${symptoms} và ${skin}. Mình gửi địa chỉ nhận cụ thể để em hoàn thiện đơn nhé.`;
 }
 
 function newSession(id: string, context: DemoChatContext = {}): DemoSession {
@@ -4433,6 +4533,7 @@ function detectDirectIntent(text: string): CustomerIntent | undefined {
   if (isWholesaleDealerInquiry(text)) return "order_support";
   if (isReturnsPolicyQuestion(text)) return "order_support";
   if (isKnownAluminumSaltAllergy(text)) return "safety";
+  if (isSensitiveSkinAudienceQuestion(text)) return "safety";
   if (isBulkPurchaseBenefitQuestion(text)) return "negotiation";
   if (isPromotionInquiry(text)) return "promotion_inquiry";
   if (
@@ -4460,6 +4561,7 @@ function detectDirectIntent(text: string): CustomerIntent | undefined {
   if (isConditionalEfficacyObjection(text)) return "efficacy_objection";
   if (isProductComparison(text)) return "product_comparison";
   if (isNegotiation(text)) return "negotiation";
+  if (isDecisionDeferral(text)) return "decline_purchase";
   if (isPurchaseDecline(text)) return "decline_purchase";
   if (isExplicitPriceDecline(text)) return "decline_purchase";
   if (isPriceConcern(text)) return "price_objection";
@@ -4983,8 +5085,10 @@ function promotionVerificationReply(
     "Anh/chị gửi em ảnh hoặc đường link nhé. Em chuyển bộ phận liên quan kiểm tra đúng kênh, điều kiện áp dụng và phản hồi lại mình ạ.",
   ];
   if (!priceAlreadySent) {
+    const single = renderedQuote(1);
+    const combo = renderedQuote(2);
     messages.unshift(
-      "Dạ hiện bên em đang áp dụng mức 285.000đ cho 1 lọ, phí giao 30.000đ; combo 2 lọ là 510.000đ và được miễn phí giao.",
+      `Dạ hiện bên em đang áp dụng mức ${single.money("unit_price")} cho 1 lọ, phí giao ${single.money("shipping")}; combo 2 lọ là ${combo.money("total")} và được miễn phí giao.`,
     );
   }
   return messages.join("\n\n");
@@ -5029,13 +5133,13 @@ function resumeAfterSoftHandoff(session: DemoSession): void {
 
 function negotiationReply(
   text: string,
-  freeShippingApproved: boolean,
-  selectedQuantity?: SupportedOrderQuantity,
+  session: Pick<DemoSession, "freeShippingApproved" | "freeShippingApproval" | "selectedQuantity">,
 ): string {
+  const selectedQuantity = session.selectedQuantity;
   if (isBulkPurchaseBenefitQuestion(text)) {
     const quantity = detectQuantity(text);
     if (quantity && quantity >= 3) {
-      return `Dạ combo ${quantity} lọ hiện là ${formatVnd(quote(quantity).total.amount)}, đã miễn phí giao và được tặng ${stopirexGiftForQuantity(quantity)} ạ. Mình muốn em giữ phương án này không ạ?`;
+      return `Dạ combo ${quantity} lọ hiện là ${renderedQuote(quantity).money("total")}, đã miễn phí giao và được tặng ${stopirexGiftForQuantity(quantity)} ạ. Mình muốn em giữ phương án này không ạ?`;
     }
   }
   if (/free\s*ship|freeship|mien phi (?:ship|giao)|bao ship|ho tro (?:ship|phi giao)/.test(text)) {
@@ -5044,47 +5148,47 @@ function negotiationReply(
       ? `Dạ hiện bên em chưa thể giảm ${requestedDiscount}% theo đề nghị của mình ạ. `
       : "";
     if (selectedQuantity && selectedQuantity >= 2) {
-      return `${discountReply}Combo ${selectedQuantity} lọ giá ${formatVnd(quote(selectedQuantity).total.amount)}, đã miễn phí giao và được tặng ${stopirexGiftForQuantity(selectedQuantity)} ạ.\n\nMình tiếp tục đơn combo này nhé ạ?`;
+      return `${discountReply}Combo ${selectedQuantity} lọ giá ${renderedQuote(selectedQuantity).money("total")}, đã miễn phí giao và được tặng ${stopirexGiftForQuantity(selectedQuantity)} ạ.\n\nMình tiếp tục đơn combo này nhé ạ?`;
     }
-    if (freeShippingApproved) {
-      return `${discountReply}Bên em đã duyệt miễn phí giao cho phương án 1 lọ lần này. Tổng thanh toán còn 285.000đ ạ.\n\nMình muốn em giữ đơn 1 lọ theo mức đã hỗ trợ không ạ?`;
+    if (session.freeShippingApproved) {
+      return `${discountReply}Bên em đã duyệt miễn phí giao cho phương án 1 lọ lần này. Tổng thanh toán còn ${renderedQuote(1, session).money("total")} ạ.\n\nMình muốn em giữ đơn 1 lọ theo mức đã hỗ trợ không ạ?`;
     }
-    return `${discountReply}Bên em đã duyệt miễn phí giao cho phương án 1 lọ lần này, tổng thanh toán còn 285.000đ ạ.\n\nMình muốn giữ phương án 1 lọ không ạ?`;
+    return `${discountReply}Bên em đã duyệt miễn phí giao cho phương án 1 lọ lần này, tổng thanh toán còn ${renderedQuote(1, session).money("total")} ạ.\n\nMình muốn giữ phương án 1 lọ không ạ?`;
   }
   if (selectedQuantity === 1) {
-    return "Dạ mức đang áp dụng là 285.000đ cho 1 lọ và 30.000đ phí giao; hiện bên em chưa thể giảm thêm ạ.\n\nNếu mình vẫn tiếp tục đơn 1 lọ, em xin lại thông tin người nhận để lên đơn cho mình nhé ạ?";
+    const single = renderedQuote(1);
+    return `Dạ mức đang áp dụng là ${single.money("unit_price")} cho 1 lọ và ${single.money("shipping")} phí giao; hiện bên em chưa thể giảm thêm ạ.\n\nNếu mình vẫn tiếp tục đơn 1 lọ, em xin lại thông tin người nhận để lên đơn cho mình nhé ạ?`;
   }
   if (selectedQuantity && selectedQuantity >= 2) {
-    return `Dạ combo ${selectedQuantity} lọ đang là ${formatVnd(quote(selectedQuantity).total.amount)}, đã miễn phí giao và được tặng ${stopirexGiftForQuantity(selectedQuantity)} ạ.\n\nNếu mình tiếp tục đơn này, em xin thông tin người nhận để lên đơn nhé ạ?`;
+    return `Dạ combo ${selectedQuantity} lọ đang là ${renderedQuote(selectedQuantity).money("total")}, đã miễn phí giao và được tặng ${stopirexGiftForQuantity(selectedQuantity)} ạ.\n\nNếu mình tiếp tục đơn này, em xin thông tin người nhận để lên đơn nhé ạ?`;
   }
-  return "Dạ em hiểu mình muốn bên em hỗ trợ thêm về giá ạ. Lần này bên em duyệt miễn phí giao cho 1 lọ, tổng còn 285.000đ. Đơn từ 2 lọ trở lên được miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex cho mỗi đơn ạ.\n\nMình muốn lấy mấy lọ ạ?";
+  return `Dạ em hiểu mình muốn bên em hỗ trợ thêm về giá ạ. Lần này bên em duyệt miễn phí giao cho 1 lọ, tổng còn ${renderedQuote(1, session).money("total")}. Đơn từ 2 lọ trở lên được miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex cho mỗi đơn ạ.\n\nMình muốn lấy mấy lọ ạ?`;
 }
 
 function priceObjectionReply(session: DemoSession, customerText = ""): string {
-  const single = quote(1);
-  const money = (amount: number): string => `${amount.toLocaleString("vi-VN")}đ`;
+  const single = renderedQuote(1);
   const value =
     "Stopirex là sản phẩm nhập khẩu từ Pháp, thuộc dòng ngăn tiết mồ hôi chuyên sâu; sau giai đoạn làm quen thường dùng giãn cách 2–3 ngày/lần tùy tình trạng.";
 
   if (isNamedCompetitorPriceObjection(customerText)) {
     const lastSentence = session.conversationMemory.consultationFacts.sensitiveSkin
-      ? "Với da nhạy cảm như mình đã chia sẻ, mình thử vùng nhỏ và chỉ lăn mỏng khi da lành, khô. Giá 1 lọ là 285.000đ, combo 2 lọ 510.000đ và miễn phí giao ạ."
-      : "Giá 1 lọ là 285.000đ, combo 2 lọ 510.000đ và miễn phí giao ạ.";
+      ? `Với da nhạy cảm như mình đã chia sẻ, mình thử vùng nhỏ và chỉ lăn mỏng khi da lành, khô. Giá 1 lọ là ${single.money("unit_price")}, combo 2 lọ ${renderedQuote(2).money("total")} và miễn phí giao ạ.`
+      : `Giá 1 lọ là ${single.money("unit_price")}, combo 2 lọ ${renderedQuote(2).money("total")} và miễn phí giao ạ.`;
     return `Dạ em hiểu mình đang cân nhắc giữa các sản phẩm, bên em không nhận xét xấu về Perspirex hay Etiaxil ạ. Stopirex là dòng ngăn tiết mồ hôi chuyên sâu nhập khẩu từ Pháp, dùng giãn cách 2–3 ngày/lần khi đã ổn định và mẫu thử ghi nhận mức kích ứng da không đáng kể. ${lastSentence}`;
   }
 
   if (session.selectedQuantity && session.selectedQuantity >= 2) {
-    const selected = quote(session.selectedQuantity);
+    const selected = renderPriceQuote(quote(session.selectedQuantity), {
+      comparisonUnitQuote: quote(1),
+    });
     const saving =
-      session.selectedQuantity === 2
-        ? `, tiết kiệm ${money(single.productPrice.amount * 2 - selected.productPrice.amount)} so với mua lẻ`
-        : "";
-    return `Dạ em hiểu băn khoăn của mình ạ. ${value}\n\nCombo ${session.selectedQuantity} lọ hiện là ${money(selected.total.amount)}, miễn phí giao${saving} và được tặng ${stopirexGiftForQuantity(session.selectedQuantity)}. Mình muốn giữ phương án đang chọn hay điều chỉnh số lượng ạ?`;
+      session.selectedQuantity === 2 ? `, tiết kiệm ${selected.money("discount")} so với mua lẻ` : "";
+    return `Dạ em hiểu băn khoăn của mình ạ. ${value}\n\nCombo ${session.selectedQuantity} lọ hiện là ${selected.money("total")}, miễn phí giao${saving} và được tặng ${stopirexGiftForQuantity(session.selectedQuantity)}. Mình muốn giữ phương án đang chọn hay điều chỉnh số lượng ạ?`;
   }
 
   if (session.selectedQuantity === 1) {
-    const shipping = `cộng ${money(single.shippingFee.amount)} phí giao`;
-    return `Dạ em hiểu băn khoăn của mình ạ. ${value}\n\nPhương án 1 lọ hiện là ${money(single.productPrice.amount)}, ${shipping}. Mình muốn giữ 1 lọ hay xem phương án combo tiết kiệm hơn ạ?`;
+    const shipping = `cộng ${single.money("shipping")} phí giao`;
+    return `Dạ em hiểu băn khoăn của mình ạ. ${value}\n\nPhương án 1 lọ hiện là ${single.money("unit_price")}, ${shipping}. Mình muốn giữ 1 lọ hay xem phương án combo tiết kiệm hơn ạ?`;
   }
 
   if (isBottleLongevityQuestion(customerText) || isDetailedMechanismComparisonQuestion(customerText)) {
@@ -5095,7 +5199,7 @@ function priceObjectionReply(session: DemoSession, customerText = ""): string {
     ].join("\n\n");
   }
 
-  return `Dạ em hiểu mình cân nhắc về giá ạ. ${value}\n\n1 lọ hiện là ${money(single.productPrice.amount)} + ${money(single.shippingFee.amount)} phí giao; combo 2 lọ ${money(quote(2).total.amount)}, miễn phí giao. Điều mình lăn tăn nhất là mức giá hay hiệu quả kiểm soát mồ hôi ạ?`;
+  return `Dạ em hiểu mình cân nhắc về giá ạ. ${value}\n\n1 lọ hiện là ${single.money("unit_price")} + ${single.money("shipping")} phí giao; combo 2 lọ ${renderedQuote(2).money("total")}, miễn phí giao. Điều mình lăn tăn nhất là mức giá hay hiệu quả kiểm soát mồ hôi ạ?`;
 }
 
 function productEffectTopic(text: string, semanticSlots: ConsultationSlots): PrimarySymptom | undefined {
@@ -5184,7 +5288,7 @@ function productComparisonReply(priceAlreadySent: boolean, customerText = ""): s
     if (isConditionalNoIrritationPurchase(customerText)) {
       return [
         "Dạ em hiểu chị lo vì loại trước gây ngứa/rát. Stopirex có công thức dịu nhẹ, phù hợp da nhạy cảm khi dùng đúng hướng dẫn nên mình có thể yên tâm hơn ạ.",
-        "Dùng khi da lành, thật khô, lăn mỏng để hạn chế khó chịu. Theo dõi 2 tuần; nếu khó chịu thì ngưng và nhắn bên em. 1 lọ 285.000đ + 30.000đ giao; combo 2 lọ 510.000đ miễn phí giao. Chị vẫn chọn 1 lọ nhé?",
+        `Dùng khi da lành, thật khô, lăn mỏng để hạn chế khó chịu. Theo dõi 2 tuần; nếu khó chịu thì ngưng và nhắn bên em. 1 lọ ${renderedQuote(1).money("unit_price")} + ${renderedQuote(1).money("shipping")} giao; combo 2 lọ ${renderedQuote(2).money("total")} miễn phí giao. Chị vẫn chọn 1 lọ nhé?`,
       ].join("\n\n");
     }
     if (/\bviem\b/.test(customerText)) {
@@ -5491,13 +5595,12 @@ function priceChangeReply(raw: string, semantic: SemanticUnderstanding): Grounde
   if (!explicitlyHistorical) {
     const entity = demoKnowledge.find((candidate) => candidate.id === "pricing-approved-options-2026-08");
     return {
-      reply:
-        "Dạ giá hiện tại chưa có thay đổi mới ạ: 1 lọ Stopirex 285.000đ + 30.000đ phí giao; combo 2 lọ 510.000đ và combo 3 lọ 750.000đ, đều miễn phí giao.",
+      reply: `Dạ giá hiện tại chưa có thay đổi mới ạ: ${standardThreeTierPriceText()}.`,
       knowledgeEntityIds: entity ? [entity.id] : [],
     };
   }
   const from = semantic.priceFromVnd ?? mentioned[0];
-  const to = semantic.priceToVnd ?? mentioned[1] ?? 285_000;
+  const to = semantic.priceToVnd ?? mentioned[1] ?? renderedQuote(1).amount("unit_price");
   const comparison = from
     ? `giá từ ${formatVnd(from)} lên ${formatVnd(to)}`
     : `mức giá ${formatVnd(to)} hiện tại`;
@@ -5540,7 +5643,7 @@ function audienceSafetyReply(
       /\b(?:tre|te)\s*(?:em|e|nho)?\b|\bbe\b|duoi 12|12 tuoi/.test(text));
   const asksSensitiveSkin =
     semantic.topic === "sensitive_skin" ||
-    /da (?:minh )?mong|da nhay cam|nhay cam|da yeu|de kich ung/.test(text);
+    /\bda\b.{0,22}\b(?:mong|nhay cam|yeu|de kich ung)\b|\bnhay cam\b|\bde kich ung\b/.test(text);
   const asksHypotheticalIrritation =
     (semantic.topic === "irritation" && semantic.scenario === "hypothetical") ||
     isHypotheticalIrritationQuestion(text);
@@ -5605,10 +5708,8 @@ function audienceSafetyReply(
     });
   } else if (asksSensitiveSkin) {
     answers.push({
-      reply: knowledgeContent(
-        "audience-sensitive-skin",
-        "Dạ với da mỏng hoặc nhạy cảm, mình vẫn có thể dùng Stopirex khi da đang lành và sử dụng đúng hướng dẫn ạ. Sản phẩm có công thức dịu nhẹ, phù hợp với làn da nhạy cảm.",
-      ),
+      reply:
+        "Dạ Stopirex có công thức dịu nhẹ, phù hợp da nhạy cảm khi sử dụng đúng hướng dẫn ạ. Mình chỉ dùng khi da đang lành, lăn thử một lớp thật mỏng trên da sạch, khô; nếu khó chịu thì tạm ngưng và nhắn shop nhé.",
       knowledgeEntityIds: ["audience-sensitive-skin"],
     });
   }
@@ -5772,10 +5873,6 @@ function authenticityLegalSummaryReply(): string {
   return "Dạ, thông tin pháp lý tóm tắt của Stopirex: Phiếu công bố sản phẩm mỹ phẩm số 181339/22/CBMP-QLD, tiếp nhận ngày 12/09/2022 và có giá trị 5 năm kể từ ngày cấp. Hồ sơ ghi sản phẩm được sản xuất, đóng gói và xuất khẩu từ Pháp bởi PREVOST LABORATORY CONCEPT. Sản phẩm có Phiếu kết quả thử nghiệm VNTEST mã DV142210268/01 ngày 17/09/2025 ạ.";
 }
 
-function formatVnd(amount: number): string {
-  return `${new Intl.NumberFormat("vi-VN").format(amount)}đ`;
-}
-
 function signalForIssue(issue: IssueType): SignalTag {
   if (issue === "irritation") return "CT.An toàn";
   if (issue === "ineffective") return "CT.Hiệu quả";
@@ -5872,7 +5969,7 @@ export function isBottleLongevityQuestion(value: string): boolean {
   const text = normalize(value);
   const mentionsOneContainer = /\b(?:mot|1|moi) (?:lo|chai)\b|\b(?:lo|chai) nay\b/.test(text);
   const asksLongevity =
-    /\b(?:dung|xai|boi|lan)\b.*\b(?:duoc )?(?:bao lau|may thang)\b|\b(?:bao lau|may thang)\b.*\b(?:dung|xai|boi|lan|can)\b/.test(
+    /\b(?:dung|xai|boi|lan)\b.*\b(?:duoc )?(?:bao lau|may thang)\b|\b(?:bao lau|may thang)\b.*\b(?:dung|xai|boi|lan|can)\b|\b(?:dung|xai)\b.{0,12}\bduoc lau\b.{0,8}\b(?:khong|ko|k)\b/.test(
       text,
     );
   return mentionsOneContainer && asksLongevity;
@@ -5901,6 +5998,12 @@ function isPurchaseDecline(text: string): boolean {
     /^(?:thoi\s+)?(?:khong|ko|k)\s+(?:mua|lay|chot)(?:\s+(?:nua|dau|a))?|^(?:thoi|bo|huy)(?:\s+(?:don|mua|lay))?(?:\s+nua)?$/.test(
       text,
     )
+  );
+}
+
+function isDecisionDeferral(text: string): boolean {
+  return /^(?:(?:ok|okay|oke|uh|u|de|thoi)\s+)*(?:de\s+)?(?:minh|toi|tui|anh|chi|em)\s+(?:suy nghi|can nhac|xem them|quyet dinh sau)(?:\s+(?:da|nhe|nha|a))?$/.test(
+    text,
   );
 }
 
@@ -5940,16 +6043,35 @@ function isOrderTotalQuestion(text: string): boolean {
 
 function isSimpleUsageQuestion(value: string): boolean {
   const text = normalize(value);
-  return /\b(?:dung|xai|su dung)\b.{0,25}\b(?:co )?(?:kho|phuc tap|de)\b.{0,10}\b(?:khong|ko|k)\b/.test(text);
+  const asksDifficulty =
+    /\b(?:dung|xai|su dung)\b.{0,25}\b(?:co )?(?:kho|phuc tap|de)\b.{0,10}\b(?:khong|ko|k)\b/.test(text);
+  const asksMethod =
+    /\b(?:dung|xai|su dung)(?: stopirex| san pham| loai nay)?\b.{0,20}\b(?:kieu gi|the nao|ra sao|lam sao|sao)\b/.test(
+      text,
+    ) || /\b(?:cach dung|huong dan (?:dung|su dung))\b/.test(text);
+  return asksDifficulty || asksMethod;
 }
 
 function isComboSavingsQuestion(value: string): boolean {
   const text = normalize(value);
-  return (
-    /\bcombo\b/.test(text) &&
+  if (!/\bcombo\b/.test(text)) return false;
+  const asksSavings =
     /\b(?:tiet kiem|loi hon|re hon|uu dai|gia tot|kinh te)\b/.test(text) &&
-    /[?？]|\b(?:co|khong|ko|k|nao)\b/u.test(value)
-  );
+    /[?？]|\b(?:co|khong|ko|k|nao)\b/u.test(value);
+  const asksCatalog =
+    /\b(?:co|cac|nhung)\b.{0,18}\bcombo\b.{0,12}\b(?:nao|gi|khong|ko|k)\b/.test(text) ||
+    /\bcombo\b.{0,15}\b(?:nao|gi|bao nhieu|gia sao|the nao)\b/.test(text);
+  return asksSavings || asksCatalog;
+}
+
+function isSensitiveSkinAudienceQuestion(value: string): boolean {
+  const text = normalize(value);
+  const mentionsSensitiveSkin =
+    /\bda\b.{0,22}\b(?:nhay cam|mong|yeu|de kich ung)\b/.test(text) ||
+    /\b(?:da nhay cam|de kich ung)\b/.test(text);
+  const asksSuitability =
+    /[?？]/u.test(value) || /\b(?:thi sao|dung duoc|co sao|on khong|hop khong|phu hop|an toan)\b/.test(text);
+  return mentionsSensitiveSkin && asksSuitability;
 }
 
 function isOrderPhoneUpdatePreparation(text: string): boolean {
@@ -6051,12 +6173,12 @@ function recommendationReply(session: DemoSession): string {
     facts.odorSeverity === "mild" ? "mùi không phải vấn đề chính" : undefined,
     facts.sensitiveSkin ? "da hơi nhạy cảm nên cần bắt đầu mỏng và theo dõi" : undefined,
   ].filter((item): item is string => Boolean(item));
-  return `Dạ với ${reasons.join(", ") || "nhu cầu mình đã chia sẻ"}, em nghiêng về combo 2 lọ 510.000đ, miễn phí giao và tặng 1 túi đa năng ạ. Hai lọ cùng một sản phẩm; combo phù hợp nếu mình muốn dùng ổn định và tiết kiệm hơn, còn muốn thử trước thì 1 lọ vẫn được ạ.`;
+  return `Dạ với ${reasons.join(", ") || "nhu cầu mình đã chia sẻ"}, em nghiêng về combo 2 lọ ${renderedQuote(2).money("total")}, miễn phí giao và tặng 1 túi đa năng ạ. Hai lọ cùng một sản phẩm; combo phù hợp nếu mình muốn dùng ổn định và tiết kiệm hơn, còn muốn thử trước thì 1 lọ vẫn được ạ.`;
 }
 
 function recommendedOfferReferenceReply(quantity: SupportedOrderQuantity): string {
-  const selected = quote(quantity);
-  return `Dạ combo em vừa khuyên là ${quantityLabel(quantity)} giá ${formatVnd(selected.total.amount)}, miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex ạ.`;
+  const selected = renderedQuote(quantity);
+  return `Dạ combo em vừa khuyên là ${quantityLabel(quantity)} giá ${selected.money("total")}, miễn phí giao và tặng 1 túi đa năng vải dệt Stopirex ạ.`;
 }
 
 function recommendationSuitabilityReply(session: DemoSession): string {
@@ -6227,10 +6349,10 @@ function applyQuantityOperation(
 }
 
 function quantityUpdatePriceReply(quantity: SupportedOrderQuantity): string {
-  const selected = quote(quantity);
+  const selected = renderedQuote(quantity);
   return quantity === 1
-    ? "Dạ em đã đổi đơn còn 1 lọ: 285.000đ + 30.000đ phí giao ạ."
-    : `Dạ em đã cập nhật đơn thành ${quantity} lọ: ${formatVnd(selected.total.amount)}, miễn phí giao ạ.`;
+    ? `Dạ em đã đổi đơn còn 1 lọ: ${selected.money("unit_price")} + ${selected.money("shipping")} phí giao ạ.`
+    : `Dạ em đã cập nhật đơn thành ${quantity} lọ: ${selected.money("total")}, miễn phí giao ạ.`;
 }
 
 function detectQuantity(text: string): SupportedOrderQuantity | undefined {
@@ -6280,12 +6402,12 @@ function orderInformationRequestReply(quantity: SupportedOrderQuantity): string 
 }
 
 function multiActionOrderInformationRequestReply(quantity: SupportedOrderQuantity): string {
-  const selected = quote(quantity);
+  const selected = renderedQuote(quantity);
   const gift = stopirexGiftForQuantity(quantity);
   const price =
     quantity === 1
-      ? `${formatVnd(selected.productPrice.amount)} + ${formatVnd(selected.shippingFee.amount)} phí giao`
-      : `${formatVnd(selected.total.amount)}, miễn phí giao`;
+      ? `${selected.money("unit_price")} + ${selected.money("shipping")} phí giao`
+      : `${selected.money("total")}, miễn phí giao`;
   return `Dạ, em ghi nhận mình lấy ${quantityLabel(quantity)} ạ. Đơn hiện là ${price}${gift ? ` và được tặng ${gift}` : ""}. Mình gửi giúp em tên người nhận, SĐT và địa chỉ trước sáp nhập đầy đủ để em lên đơn; SĐT gồm 10 số và mình có thể gửi từng phần ạ.`;
 }
 
@@ -6374,7 +6496,7 @@ function multiActionAnswer(
   if (uniqueTopics.includes("price") || uniqueTopics.includes("shipping")) {
     const requested = detectQuantity(text);
     if (requested) {
-      const selected = quote(requested);
+      const selected = renderedQuote(requested);
       const deliveryContext = resolveDeliveryContext(raw).normalized;
       const destination = deliveryContext
         ? [deliveryContext.district, deliveryContext.city].filter(Boolean).join(", ")
@@ -6383,8 +6505,8 @@ function multiActionAnswer(
         uniqueTopics.includes("shipping") && destination ? `Dạ bên em giao được đến ${destination}. ` : "";
       answers.push(
         requested === 1
-          ? `${destinationReply || "Dạ "}1 lọ giá 285.000đ + 30.000đ phí giao ạ.`
-          : `${destinationReply || "Dạ "}${quantityLabel(requested)} giá ${formatVnd(selected.total.amount)}, miễn phí giao và tặng ${stopirexGiftForQuantity(requested)} ạ.`,
+          ? `${destinationReply || "Dạ "}1 lọ giá ${selected.money("unit_price")} + ${selected.money("shipping")} phí giao ạ.`
+          : `${destinationReply || "Dạ "}${quantityLabel(requested)} giá ${selected.money("total")}, miễn phí giao và tặng ${stopirexGiftForQuantity(requested)} ạ.`,
       );
     } else {
       // Multi-action turns use the same approved catalog renderer as the
@@ -6470,7 +6592,7 @@ function llmFailureKnowledgeAnswer(
     return {
       reply: [
         "Dạ em hiểu mình đang cân nhắc về giá ạ. Stopirex là dòng ngăn tiết mồ hôi chuyên sâu, dùng buổi tối và sau giai đoạn làm quen thường dùng giãn cách 2–3 ngày/lần tùy tình trạng.",
-        "1 lọ hiện là 285.000đ + 30.000đ phí giao; combo 2 lọ 510.000đ, miễn phí giao. Mình muốn cân nhắc 1 lọ hay combo 2 lọ ạ?",
+        `${standardSingleComboPriceText().replace("1 lọ giá", "1 lọ hiện là")}. Mình muốn cân nhắc 1 lọ hay combo 2 lọ ạ?`,
       ].join("\n\n"),
       knowledgeIds: [
         "pricing-approved-options-2026-08",
@@ -7053,9 +7175,18 @@ function priceReply(nextQuestion = continuationQuestion("choose_quantity")): str
   const combo = quote(2);
   const visibleAdditionalOffers = [quote(3)];
   const rollOnOffer = formatPriceOffer(single, combo, visibleAdditionalOffers, "");
+  const bodyCare = renderPriceQuote(
+    demoCatalog.quote({
+      tenantId: demoTenant,
+      channel: "facebook",
+      sku: "STOPIREX-BODY-CARE-BUNDLE",
+      quantity: 1,
+      at: demoCommerceEffectiveAt,
+    }),
+  );
   const bodyCareOffer = [
     "Combo chăm sóc mùi cơ thể:",
-    "• 1 lăn Stopirex + 1 chai Herbal Body Wash 500ml: 525.000đ, miễn phí giao.",
+    `• 1 lăn Stopirex + 1 chai Herbal Body Wash 500ml: ${bodyCare.money("total")}, miễn phí giao.`,
     "• Herbal Body Wash hiện chưa bán lẻ.",
     nextQuestion,
   ].join("\n");
@@ -7077,6 +7208,19 @@ function quote(quantity: SupportedOrderQuantity) {
     quantity,
     at: demoCommerceEffectiveAt,
   });
+}
+
+function standardSingleComboPriceText(comboLabel = true): string {
+  const single = renderedQuote(1);
+  const combo = renderedQuote(2);
+  return `1 lọ giá ${single.money("unit_price")} + ${single.money("shipping")} phí giao; ${comboLabel ? "combo " : ""}2 lọ ${combo.money("total")}, miễn phí giao`;
+}
+
+function standardThreeTierPriceText(): string {
+  const single = renderedQuote(1);
+  const comboTwo = renderedQuote(2);
+  const comboThree = renderedQuote(3);
+  return `1 lọ Stopirex ${single.money("unit_price")} + ${single.money("shipping")} phí giao; combo 2 lọ ${comboTwo.money("total")} và combo 3 lọ ${comboThree.money("total")}, đều miễn phí giao`;
 }
 
 function selectQuantity(
@@ -7113,10 +7257,7 @@ function commitOrderMutations(
       sku: "STOPIREX",
       paymentMethod: "cod",
       totalForQuantity: (quantity) => {
-        const selected = quote(quantity);
-        return quantity === 1 && session.freeShippingApproved
-          ? selected.productPrice.amount
-          : selected.total.amount;
+        return renderedQuote(quantity, session).amount("total");
       },
     },
   );
@@ -7268,11 +7409,31 @@ function maskedOrderMutationValue(
   }
 }
 
-function approveSingleShipping(session: DemoSession): void {
+function approveSingleShipping(session: DemoSession, reason = "approved_single_shipping"): void {
   session.freeShippingApproved = true;
+  session.freeShippingApproval ??= {
+    receiptId: workflowEvidenceRef(`${session.id}:${session.messages}:${reason}`),
+    sourceVersion: "single-shipping-support-v1",
+    approvedAt: new Date().toISOString(),
+  };
   if (session.selectedQuantity === 1) {
     selectQuantity(session, 1);
   }
+}
+
+function renderedQuote(
+  quantity: SupportedOrderQuantity,
+  session?: Pick<DemoSession, "freeShippingApproved" | "freeShippingApproval">,
+): TransactionRenderReceipt {
+  const shippingAdjustment: ShippingAdjustmentReceipt | undefined =
+    quantity === 1 && session?.freeShippingApproved
+      ? {
+          shippingFeeVnd: 0,
+          receiptId: session.freeShippingApproval?.receiptId ?? "legacy-free-shipping:unversioned",
+          sourceVersion: session.freeShippingApproval?.sourceVersion ?? "legacy-runtime-v1",
+        }
+      : undefined;
+  return renderPriceQuote(quote(quantity), shippingAdjustment ? { shippingAdjustment } : {});
 }
 
 function quantityLabel(quantity: SupportedOrderQuantity): string {
@@ -7280,11 +7441,11 @@ function quantityLabel(quantity: SupportedOrderQuantity): string {
 }
 
 function selectedOrderPriceReply(quantity: SupportedOrderQuantity): string {
-  const selected = quote(quantity);
+  const selected = renderedQuote(quantity);
   const gift = stopirexGiftForQuantity(quantity);
   return quantity === 1
-    ? `Dạ giá 1 lọ là ${formatVnd(selected.productPrice.amount)} + ${formatVnd(selected.shippingFee.amount)} phí giao, tổng ${formatVnd(selected.total.amount)} ạ.`
-    : `Dạ combo ${quantity} lọ là ${formatVnd(selected.total.amount)}, được miễn phí giao và tặng ${gift} ạ.`;
+    ? `Dạ giá 1 lọ là ${selected.money("unit_price")} + ${selected.money("shipping")} phí giao, tổng ${selected.money("total")} ạ.`
+    : `Dạ combo ${quantity} lọ là ${selected.money("total")}, được miễn phí giao và tặng ${gift} ạ.`;
 }
 
 function clearOrderDraft(session: DemoSession): void {
@@ -7302,6 +7463,7 @@ function clearOrderDraft(session: DemoSession): void {
   delete session.trackingNumber;
   delete session.pendingAction;
   session.freeShippingApproved = false;
+  delete session.freeShippingApproval;
   if (hadOrderState) {
     session.workflowState = reduceWorkflowStateMeta(
       session.workflowState,
@@ -8635,10 +8797,8 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
   applyProfileRecipientFallback(session, raw);
   if (orderHasAllFields(session.order)) {
     if (raw && isOrderTotalQuestion(normalize(raw)) && session.selectedQuantity) {
-      const selected = quote(session.selectedQuantity);
-      const shippingFeeVnd =
-        session.selectedQuantity === 1 && session.freeShippingApproved ? 0 : selected.shippingFee.amount;
-      return `Dạ đơn mình gồm ${quantityLabel(session.selectedQuantity)} Stopirex, tiền hàng ${formatVnd(selected.productPrice.amount)}, phí giao ${formatVnd(shippingFeeVnd)}, tổng thanh toán ${formatVnd(selected.productPrice.amount + shippingFeeVnd)} nha.`;
+      const selected = renderedQuote(session.selectedQuantity, session);
+      return `Dạ đơn mình gồm ${quantityLabel(session.selectedQuantity)} Stopirex, tiền hàng ${selected.money("subtotal")}, phí giao ${selected.money("shipping")}, tổng thanh toán ${selected.money("total")} nha.`;
     }
     const changedFields = new Set(session.orderTransactionTrace?.changedFields ?? []);
     if (
@@ -8655,20 +8815,22 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
       session.orderEditable === true &&
       Boolean(session.order.customerConfirmedAt) &&
       hasOrderTransactionChanges(session);
-    const selected = quote(session.selectedQuantity ?? 1);
-    const shippingFeeVnd =
-      session.selectedQuantity === 1 && session.freeShippingApproved ? 0 : selected.shippingFee.amount;
+    const selected = renderedQuote(session.selectedQuantity ?? 1, session);
+    const productPriceVnd = selected.amount("subtotal");
+    const shippingFeeVnd = selected.amount("shipping");
     if (session.orderConfirmationMode === "inbox") {
       receiveCompleteInboxOrder(session, raw);
       if (updatingExistingOrder) return orderUpdatedReply(session);
       return formatInboxOrderReceipt(session.order, {
-        productPriceVnd: selected.productPrice.amount,
+        productPriceVnd,
         shippingFeeVnd,
+        transaction: selected,
       });
     }
     return `Dạ em tổng hợp đơn hàng như sau:\n${formatOrderConfirmation(session.order, {
-      productPriceVnd: selected.productPrice.amount,
+      productPriceVnd,
       shippingFeeVnd,
+      transaction: selected,
     })}`;
   }
   const labels: Record<string, string> = {
@@ -8724,13 +8886,11 @@ function orderCollectionReply(session: DemoSession, raw = ""): string {
     return `Oke, em có tên ${session.order.recipientName} và SĐT ${session.order.phone} rồi nha. Mình gửi em địa chỉ trước sáp nhập để nhận hàng nữa là được ạ.`;
   }
   if (raw && isOrderRecapRequest(normalize(raw)) && session.selectedQuantity) {
-    const selected = quote(session.selectedQuantity);
-    const shippingFeeVnd =
-      session.selectedQuantity === 1 && session.freeShippingApproved ? 0 : selected.shippingFee.amount;
-    const totalVnd = selected.productPrice.amount + shippingFeeVnd;
+    const selected = renderedQuote(session.selectedQuantity, session);
+    const shippingFeeVnd = selected.amount("shipping");
     const recap = [
-      `Dạ em đọc lại đơn: ${quantityLabel(session.selectedQuantity)}, tổng ${formatVnd(totalVnd)}${
-        shippingFeeVnd > 0 ? ` (đã gồm ${formatVnd(shippingFeeVnd)} phí giao)` : ", miễn phí giao"
+      `Dạ em đọc lại đơn: ${quantityLabel(session.selectedQuantity)}, tổng ${selected.money("total")}${
+        shippingFeeVnd > 0 ? ` (đã gồm ${selected.money("shipping")} phí giao)` : ", miễn phí giao"
       } ạ.`,
       session.order.phone ? `SĐT: ${session.order.phone}.` : undefined,
       session.order.legacyAddress ? `Giao tới: ${session.order.legacyAddress}.` : undefined,
@@ -8787,17 +8947,21 @@ function receiveCompleteInboxOrder(session: DemoSession, evidence: string): void
 }
 
 function formatInboxOrderReceipt(order: OrderDraft, price: OrderPriceBreakdown): string {
+  const transaction = price.transaction;
+  const subtotal = transaction?.money("subtotal") ?? formatVnd(price.productPriceVnd);
+  const shipping = transaction?.money("shipping") ?? formatVnd(price.shippingFeeVnd);
+  const total = transaction?.money("total") ?? formatVnd(order.totalVnd ?? 0);
   return [
     "Dạ em đã nhận đủ thông tin và ghi nhận đơn của mình rồi ạ ✅",
     `Người nhận: ${order.recipientName} – ${order.phone}`,
     `Địa chỉ: ${order.legacyAddress}`,
     `Sản phẩm: ${order.sku} × ${order.quantity}`,
-    `Tiền hàng: ${price.productPriceVnd.toLocaleString("vi-VN")}đ`,
-    `Phí giao: ${price.shippingFeeVnd === 0 ? "Miễn phí" : `${price.shippingFeeVnd.toLocaleString("vi-VN")}đ`}`,
+    `Tiền hàng: ${subtotal}`,
+    `Phí giao: ${price.shippingFeeVnd === 0 ? "Miễn phí" : shipping}`,
     ...(order.quantity !== undefined && order.quantity >= 2
       ? ["Quà tặng: 1 túi đa năng vải dệt Stopirex (1 túi/đơn)"]
       : []),
-    `Tổng thanh toán: ${order.totalVnd?.toLocaleString("vi-VN")}đ (${order.paymentMethod === "bank_transfer" ? "Chuyển khoản" : "COD"})`,
+    `Tổng thanh toán: ${total} (${order.paymentMethod === "bank_transfer" ? "Chuyển khoản" : "COD"})`,
     "Khi có mã vận đơn, bên em sẽ gửi lại để mình theo dõi ạ.",
   ].join("\n");
 }
@@ -8919,7 +9083,7 @@ function orderCreatedReply(session: DemoSession): string {
   if (session.orderConfirmationMode === "inbox") {
     return "Oke, em chốt đơn và chuyển bộ phận bán hàng xử lý rồi nha ✅ Khi có mã vận đơn, bên em gửi mình theo dõi ạ.";
   }
-  return `Oke, em chốt đơn ${order.quantity} lọ, tổng ${order.totalVnd?.toLocaleString("vi-VN")}đ cho mình rồi nha ✅ Khi có mã vận đơn Viettel Post, bên em gửi mình theo dõi ạ.`;
+  return `Oke, em chốt đơn ${order.quantity} lọ, tổng ${currentOrderTransaction(session).money("total")} cho mình rồi nha ✅ Khi có mã vận đơn Viettel Post, bên em gửi mình theo dõi ạ.`;
 }
 
 function orderUpdatedReply(session: DemoSession): string {
@@ -8931,11 +9095,23 @@ function orderUpdatedReply(session: DemoSession): string {
   if (changed.has("legacyAddress")) lines.push(`• Địa chỉ: ${order.legacyAddress}`);
   if (changed.has("quantity") || changed.has("selectedQuantity")) {
     lines.push(`• Sản phẩm: Stopirex × ${order.quantity}`);
-    lines.push(`• Tổng thanh toán: ${order.totalVnd?.toLocaleString("vi-VN")}đ`);
+    lines.push(`• Tổng thanh toán: ${currentOrderTransaction(session).money("total")}`);
   }
   if (changed.has("deliveryNote")) lines.push(`• Ghi chú giao hàng: ${order.deliveryNote}`);
   lines.push("Đơn vẫn đang chờ mã vận đơn; thông tin thay đổi đã được lưu trên hệ thống ạ.");
   return lines.join("\n");
+}
+
+function currentOrderTransaction(session: DemoSession): TransactionRenderReceipt {
+  const quantity = session.selectedQuantity ?? session.order.quantity;
+  if (!quantity || quantity < 1 || quantity > 5) {
+    throw new Error("order_transaction_missing_quantity");
+  }
+  const rendered = renderedQuote(quantity as SupportedOrderQuantity, session);
+  if (session.order.totalVnd !== undefined && session.order.totalVnd !== rendered.amount("total")) {
+    throw new Error("order_transaction_total_mismatch");
+  }
+  return rendered;
 }
 
 function hasOrderTransactionChanges(session: DemoSession): boolean {

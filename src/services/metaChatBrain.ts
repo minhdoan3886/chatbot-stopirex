@@ -3,9 +3,11 @@ import { retrieveKnowledgeMatches, type KnowledgeMatch } from "../domain/knowled
 import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
 import { allowedConversationCtas, buildWorkflowResponseContract } from "../domain/responseContract.js";
 import {
+  responseAttentionForVerdict,
   responseGuardVerdict,
   type ResponseGuardVerdict,
   type ResponseSource,
+  type ResponseTraceSummary,
 } from "../domain/responseGuard.js";
 import {
   missingRequiredAnswerTopics,
@@ -34,6 +36,14 @@ import {
 } from "../domain/knowledgeResolver.js";
 import type { ConversationIdentity, OpeningVariantId } from "../domain/sales.js";
 import { isDeterministicBoundaryTurn } from "../domain/conversationBoundaries.js";
+import { validateFinalResponse } from "../domain/finalResponseValidator.js";
+import { projectMemoryForTurn } from "../domain/memoryProjection.js";
+import {
+  createTurnContextSnapshot,
+  type TurnContextSnapshot,
+  type TurnMoneyRole,
+  type TurnScope,
+} from "../domain/turnContext.js";
 import {
   CodexLlmBridge,
   isContentFreeCustomerMessage,
@@ -90,7 +100,10 @@ export class MetaChatBrain {
     traceId?: string;
     tenantId?: TenantId;
     pageId?: string;
+    customerId?: string;
     conversationId?: string;
+    inboundRevision?: number;
+    occurredAt?: Date;
     identity?: ConversationIdentity;
     openingVariantId?: OpeningVariantId;
     orderConfirmationMode?: "sandbox" | "inbox";
@@ -101,6 +114,7 @@ export class MetaChatBrain {
       ...(input.openingVariantId ? { openingVariantId: input.openingVariantId } : {}),
       ...(input.orderConfirmationMode ? { orderConfirmationMode: input.orderConfirmationMode } : {}),
       ...(input.orderEditable !== undefined ? { orderEditable: input.orderEditable } : {}),
+      ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
     };
     const before = this.chat.peek(input.sessionId);
     // Every customer message goes through semantic interpretation when the LLM
@@ -118,6 +132,8 @@ export class MetaChatBrain {
     };
     let interpretationStatus: "not_run" | "interpreted" | "fallback" | "skipped" | "unavailable" = "not_run";
     let interpretationReason: string | undefined;
+    let turnContext: Readonly<TurnContextSnapshot> | undefined;
+    let logicalModelCalls = 0;
     const contentFreeMessage = isContentFreeCustomerMessage(input.text);
     if (!fastTransition) {
       matches = contentFreeMessage
@@ -142,6 +158,13 @@ export class MetaChatBrain {
         canonicalFacts: canonicalResolution.facts,
         canonicalConflicts: canonicalResolution.conflicts,
       });
+      turnContext = buildTurnContextSnapshot({
+        input,
+        state: before,
+        responseContract: routingContract,
+        canonicalResolution,
+      });
+      logicalModelCalls += 1;
       let rawLlmResult = await this.llm.interpret({
         customerMessage: input.text,
         state: before,
@@ -149,6 +172,7 @@ export class MetaChatBrain {
         canonicalFacts: canonicalResolution.facts,
         canonicalConflicts: canonicalResolution.conflicts,
         responseContract: routingContract,
+        turnContext,
       });
       let knowledgeRetry = false;
       const semanticQueries = semanticKnowledgeQueries(rawLlmResult);
@@ -183,6 +207,13 @@ export class MetaChatBrain {
             canonicalFacts: canonicalResolution.facts,
             canonicalConflicts: canonicalResolution.conflicts,
           });
+          turnContext = buildTurnContextSnapshot({
+            input,
+            state: before,
+            responseContract: routingContract,
+            canonicalResolution,
+          });
+          logicalModelCalls += 1;
           rawLlmResult = await this.llm.interpret({
             customerMessage: input.text,
             state: before,
@@ -190,6 +221,7 @@ export class MetaChatBrain {
             canonicalFacts: canonicalResolution.facts,
             canonicalConflicts: canonicalResolution.conflicts,
             responseContract: routingContract,
+            turnContext,
           });
           knowledgeRetry = true;
         }
@@ -326,6 +358,15 @@ export class MetaChatBrain {
           reason: `conversation_turn_recovered:${reason}`,
           source: "workflow_safe_fallback",
         }),
+        [],
+        0,
+        {
+          schemaVersion: 1,
+          workflowResponseRef: evidenceRef(recovered.reply),
+          finalResponseRef: evidenceRef(recovered.reply),
+          logicalModelCalls,
+          repairAttempts: 0,
+        },
       );
     }
     const responseContract = buildWorkflowResponseContract({
@@ -334,6 +375,32 @@ export class MetaChatBrain {
       authoritativeReply: base.reply,
       canonicalFacts: canonicalResolution.facts,
       canonicalConflicts: canonicalResolution.conflicts,
+    });
+    turnContext = buildTurnContextSnapshot({
+      input,
+      state: base.state,
+      responseContract,
+      canonicalResolution,
+      interpreted,
+    });
+    const memoryProjection = projectMemoryForTurn({
+      ...(base.state.conversationMemory?.factLedger
+        ? { ledger: base.state.conversationMemory.factLedger }
+        : {}),
+      customerMessage: input.text,
+    });
+    this.logger?.log("debug", "turn_context_snapshot", {
+      ...(input.traceId ? { traceId: input.traceId } : {}),
+      turnId: turnContext.turnId,
+      inboundRevision: turnContext.inboundRevision,
+      stateVersion: turnContext.stateVersion,
+      activeSubjectId: turnContext.activeSubjectId,
+      selectedMemoryFactIds: memoryProjection.facts.map((fact) => fact.id),
+      excludedMemoryFacts: memoryProjection.excluded,
+      knowledgeFactIds: turnContext.knowledgeFacts.map((fact) => fact.id),
+      knowledgeSourceVersions: [...new Set(turnContext.knowledgeFacts.map((fact) => fact.sourceVersion))],
+      receiptIds: turnContext.receipts.map((receipt) => receipt.id),
+      missingInformation: turnContext.missingInformation,
     });
     this.logger?.log("debug", "workflow_response_contract", {
       ...(input.traceId ? { traceId: input.traceId } : {}),
@@ -346,11 +413,25 @@ export class MetaChatBrain {
       availableFactIds: responseContract.factPolicy.availableFacts.map((fact) => fact.id),
       prohibitedFactKeys: responseContract.factPolicy.mustNotClaim.map((fact) => fact.key),
     });
+    let responseRepairAttempts = 0;
+    const responseTraceBase = {
+      schemaVersion: 1 as const,
+      turnId: turnContext.turnId,
+      turnContextVersion: turnContext.schemaVersion,
+      workflowResponseRef: evidenceRef(base.reply),
+      ...(interpreted.draftReply ? { draftResponseRef: evidenceRef(interpreted.draftReply) } : {}),
+    };
     const deliver = (
       response: DemoChatResponse,
       verdict: ResponseGuardVerdict,
       responseClaimedSavedFields: readonly string[] = [],
-    ): DemoChatResponse => this.deliverTurn(input, before, response, verdict, responseClaimedSavedFields);
+    ): DemoChatResponse =>
+      this.deliverTurn(input, before, response, verdict, responseClaimedSavedFields, responseRepairAttempts, {
+        ...responseTraceBase,
+        finalResponseRef: evidenceRef(response.reply),
+        logicalModelCalls,
+        repairAttempts: responseRepairAttempts,
+      });
     if (this.rollout.mode !== "enabled") {
       const alternateVariant = liveVariant === "multi_action" ? "legacy" : "multi_action";
       const alternateChat = new DemoChatService();
@@ -416,20 +497,12 @@ export class MetaChatBrain {
     if (base.state.conversationFactReceipt?.responseSource === "fact_ledger") {
       this.logger?.log("debug", "llm_composition", {
         ...(input.traceId ? { traceId: input.traceId } : {}),
-        status: "skipped",
-        reason: "conversation_fact_route_locked",
+        status: "continued",
+        reason: "conversation_fact_receipt_adapted_to_shared_composer",
         selectedRoute: base.state.decisionTrace?.selectedRoute,
         acceptedFactCount: base.state.conversationFactReceipt.acceptedFactIds.length,
         supersededFactCount: base.state.conversationFactReceipt.supersededFactIds.length,
       });
-      return deliver(
-        base,
-        responseGuardVerdict({
-          accepted: true,
-          reason: "conversation_fact_route_locked",
-          source: "workflow_safe_fallback",
-        }),
-      );
     }
     if (
       base.state.decisionTrace?.selectedRoute === "start_care" ||
@@ -451,29 +524,6 @@ export class MetaChatBrain {
           accepted: true,
           reason: "customer_care_route_locked",
           source: "customer_care_workflow",
-        }),
-      );
-    }
-    if (
-      isDeliveryInspectionQuestion(input.text) &&
-      base.state.orderTransactionTrace?.changedFields.includes("deliveryNote")
-    ) {
-      // This compound turn has already committed a normalized delivery note
-      // and rendered the approved inspection policy. Lock the workflow reply
-      // so an LLM paraphrase cannot turn the customer's receiving constraint
-      // into the shop's own business hours.
-      this.logger?.log("debug", "llm_composition", {
-        ...(input.traceId ? { traceId: input.traceId } : {}),
-        status: "skipped",
-        reason: "delivery_note_inspection_route_locked",
-        selectedRoute: base.state.decisionTrace?.selectedRoute,
-      });
-      return deliver(
-        base,
-        responseGuardVerdict({
-          accepted: true,
-          reason: "delivery_note_inspection_route_locked",
-          source: "workflow_safe_fallback",
         }),
       );
     }
@@ -502,6 +552,7 @@ export class MetaChatBrain {
         ),
       softStylePolicy: "warn",
       responseContract,
+      turnContext,
     });
     const postReducerValidatedDraft = interpreted.claimedSavedFields
       ? { ...composed, claimedSavedFields: interpreted.claimedSavedFields }
@@ -510,6 +561,7 @@ export class MetaChatBrain {
       interpreted.propositions?.length && base.state.orderTransactionTrace?.acceptedMutations?.length,
     );
     if (requiresPostCommitComposition) {
+      logicalModelCalls += 1;
       const postCommitComposition = await this.llm.composePostCommit({
         customerMessage: input.text,
         preCommitDraft: interpreted.draftReply?.trim() || base.reply,
@@ -520,6 +572,7 @@ export class MetaChatBrain {
         knowledge,
         ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
         responseContract,
+        turnContext,
       });
       if (postCommitComposition.status === "enhanced") {
         composed = postCommitComposition;
@@ -537,6 +590,8 @@ export class MetaChatBrain {
         composed = postCommitComposition;
       }
     } else if (composed.status !== "enhanced" && interpreted.draftReply?.trim()) {
+      responseRepairAttempts += 1;
+      logicalModelCalls += 1;
       composed = await this.llm.repairInterpretedDraft({
         customerMessage: input.text,
         rejectedDraft: interpreted.draftReply,
@@ -548,6 +603,7 @@ export class MetaChatBrain {
         knowledge,
         ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
         responseContract,
+        turnContext,
       });
       if (composed.status === "enhanced") compositionSource = "llm_repair";
     }
@@ -601,7 +657,9 @@ export class MetaChatBrain {
       orderSelectionChanged: before.selectedQuantity !== base.state.selectedQuantity,
       candidateReply: composed.status === "enhanced" ? composed.reply : base.reply,
     });
-    if (!coverage.complete && composed.status === "enhanced") {
+    if (!coverage.complete && composed.status === "enhanced" && responseRepairAttempts === 0) {
+      responseRepairAttempts += 1;
+      logicalModelCalls += 1;
       const repaired = await this.llm.repairInterpretedDraft({
         customerMessage: input.text,
         rejectedDraft: composed.reply,
@@ -613,6 +671,7 @@ export class MetaChatBrain {
         knowledge,
         ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
         responseContract,
+        turnContext,
       });
       if (repaired.status === "enhanced") {
         const repairedCoverage = assessQuestionCoverage({
@@ -798,6 +857,11 @@ export class MetaChatBrain {
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : "fact_applicability_guard";
+      if (responseRepairAttempts >= 1) {
+        return deliver(base, responseGuardVerdict({ reason, source: "workflow_safe_fallback" }));
+      }
+      responseRepairAttempts += 1;
+      logicalModelCalls += 1;
       const repaired = await this.llm.repairInterpretedDraft({
         customerMessage: input.text,
         rejectedDraft: composed.reply,
@@ -809,6 +873,7 @@ export class MetaChatBrain {
         knowledge,
         ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
         responseContract,
+        turnContext,
       });
       if (repaired.status === "enhanced") {
         try {
@@ -849,7 +914,12 @@ export class MetaChatBrain {
     let governed = governCustomerResponse({
       replies: composed.replies ?? [composed.reply],
       answeredTopics: base.state.answeredTopics,
-      previouslyAskedTopics: base.state.askedTopics,
+      // `base` already contains the workflow question generated for this
+      // turn. Treating that question as historical makes the presentation
+      // governor delete the brand-new CTA and leaves the previous pending
+      // topic behind. Only questions from the pre-turn snapshot are eligible
+      // for repeat suppression.
+      previouslyAskedTopics: before.askedTopics,
       maxCharacters: responseCharacterBudget,
       maxBubbles: responseBubbleBudget,
       preserveFullText:
@@ -876,7 +946,7 @@ export class MetaChatBrain {
       const untruncated = governCustomerResponse({
         replies: composed.replies ?? [composed.reply],
         answeredTopics: base.state.answeredTopics,
-        previouslyAskedTopics: base.state.askedTopics,
+        previouslyAskedTopics: before.askedTopics,
         maxBubbles: 2,
         preserveFullText: true,
       });
@@ -895,6 +965,93 @@ export class MetaChatBrain {
       return deliver(
         base,
         responseGuardVerdict({ reason: "empty_governed_reply", source: "workflow_safe_fallback" }),
+      );
+    }
+    if (!turnContext) {
+      return deliver(
+        base,
+        responseGuardVerdict({
+          reason: "turn_context_missing_before_final_validation",
+          source: "workflow_safe_fallback",
+        }),
+      );
+    }
+    let finalValidationIssues = validateFinalResponse({
+      reply: governed.replies.join("\n\n"),
+      customerMessage: input.text,
+      snapshot: turnContext,
+      canonicalResolution,
+      executionSummary: base.reply,
+      requiredFacts: responseContract.factPolicy.mustIncludeFacts,
+    });
+    if (
+      finalValidationIssues.length > 0 &&
+      responseRepairAttempts === 0 &&
+      finalValidationIssues.every((issue) => issue.repairable && !issue.requiredContextChange)
+    ) {
+      responseRepairAttempts += 1;
+      logicalModelCalls += 1;
+      const repaired = await this.llm.repairInterpretedDraft({
+        customerMessage: input.text,
+        rejectedDraft: governed.replies.join("\n\n"),
+        violations: finalValidationIssues.map(
+          (issue) => `${issue.category}:${issue.code}:${issue.affectedBlock}`,
+        ),
+        baseReply: base.reply,
+        state: base.state,
+        actions: base.state.decisionTrace?.actionPlan?.accepted ?? [],
+        ...(base.state.activeSkill ? { skillId: base.state.activeSkill } : {}),
+        knowledge,
+        ...(interpreted.knowledgeIds ? { knowledgeIds: interpreted.knowledgeIds } : {}),
+        responseContract,
+        turnContext,
+      });
+      if (repaired.status === "enhanced") {
+        const repairedGoverned = governCustomerResponse({
+          replies: repaired.replies ?? [repaired.reply],
+          answeredTopics: base.state.answeredTopics,
+          previouslyAskedTopics: before.askedTopics,
+          maxCharacters: responseCharacterBudget,
+          maxBubbles: responseBubbleBudget,
+          preserveFullText: true,
+        });
+        const repairedIssues = validateFinalResponse({
+          reply: repairedGoverned.replies.join("\n\n"),
+          customerMessage: input.text,
+          snapshot: turnContext,
+          canonicalResolution,
+          executionSummary: base.reply,
+          requiredFacts: responseContract.factPolicy.mustIncludeFacts,
+        });
+        if (repairedIssues.length === 0) {
+          composed = repaired;
+          compositionSource = "llm_repair";
+          governed = repairedGoverned;
+          finalValidationIssues = [];
+        } else {
+          finalValidationIssues = repairedIssues;
+        }
+      }
+    }
+    if (finalValidationIssues.length > 0) {
+      this.logger?.log("warn", "final_response_validation_failed", {
+        ...(input.traceId ? { traceId: input.traceId } : {}),
+        turnId: turnContext.turnId,
+        repairAttempts: responseRepairAttempts,
+        issues: finalValidationIssues.map((issue) => ({
+          category: issue.category,
+          code: issue.code,
+          evidenceRefs: issue.evidenceRefs,
+          repairable: issue.repairable,
+          requiredContextChange: issue.requiredContextChange,
+        })),
+      });
+      return deliver(
+        base,
+        responseGuardVerdict({
+          reason: `final_response_validation:${finalValidationIssues.map((issue) => issue.code).join(",")}`,
+          source: "workflow_safe_fallback",
+        }),
       );
     }
     try {
@@ -956,6 +1113,8 @@ export class MetaChatBrain {
     response: DemoChatResponse,
     verdict: ResponseGuardVerdict,
     responseClaimedSavedFields: readonly string[] = [],
+    responseRepairAttempts = 0,
+    responseTrace?: ResponseTraceSummary,
   ): DemoChatResponse {
     const actionPlan = response.state.decisionTrace?.actionPlan;
     const trace = response.state.orderTransactionTrace;
@@ -968,9 +1127,17 @@ export class MetaChatBrain {
       error.name = "OrderAuditInvariantError";
       throw error;
     }
+    const responseAttention = responseAttentionForVerdict(verdict, {
+      ...(input.traceId ? { traceId: input.traceId } : {}),
+    });
     const delivered: DemoChatResponse = {
       ...response,
-      state: { ...response.state, responseDecision: verdict },
+      state: {
+        ...response.state,
+        responseDecision: verdict,
+        ...(responseAttention ? { responseAttention } : {}),
+        ...(responseTrace ? { responseTrace } : {}),
+      },
     };
     this.logger?.log(verdict.outcome === "block" ? "warn" : "info", "conversation_turn_audit", {
       ...(input.traceId ? { traceId: input.traceId } : {}),
@@ -1012,6 +1179,11 @@ export class MetaChatBrain {
       finalResponseSource: verdict.source,
       responseBubbleCount: response.replies.length,
       responseClaimedSavedFields,
+      responseRepairAttempts,
+      logicalModelCalls: responseTrace?.logicalModelCalls ?? 0,
+      workflowResponseRef: responseTrace?.workflowResponseRef,
+      draftResponseRef: responseTrace?.draftResponseRef,
+      finalResponseRef: responseTrace?.finalResponseRef ?? evidenceRef(response.reply),
       responseStateInvariant: verdict.outcome === "block" ? "blocked" : "passed",
     });
     return delivered;
@@ -1613,12 +1785,205 @@ function contentFreeMessageFallbackReply(): string {
 }
 
 function knowledgeContexts(matches: readonly KnowledgeMatch[]): ApprovedKnowledgeContext[] {
-  return matches.map(({ entity: { id, title, content, responseGuidance } }) => ({
-    id,
-    title,
-    content,
-    ...(responseGuidance ? { responseGuidance } : {}),
+  return matches.map(
+    ({ entity: { id, title, content, responseGuidance, status, scope, validFrom, validTo, sourceRow } }) => ({
+      id,
+      title,
+      content,
+      ...(responseGuidance ? { responseGuidance } : {}),
+      ...(status ? { status } : {}),
+      ...(scope ? { scope } : {}),
+      ...(validFrom ? { validFrom } : {}),
+      ...(validTo ? { validTo } : {}),
+      sourceRow,
+    }),
+  );
+}
+
+function buildTurnContextSnapshot(input: {
+  input: {
+    sessionId: string;
+    text: string;
+    traceId?: string;
+    tenantId?: TenantId;
+    pageId?: string;
+    customerId?: string;
+    conversationId?: string;
+    inboundRevision?: number;
+  };
+  state: DemoChatState;
+  responseContract: ReturnType<typeof buildWorkflowResponseContract>;
+  canonicalResolution: CanonicalKnowledgeResolution;
+  interpreted?: SemanticUnderstanding;
+}): Readonly<TurnContextSnapshot> {
+  const projection = projectMemoryForTurn({
+    ...(input.state.conversationMemory?.factLedger
+      ? { ledger: input.state.conversationMemory.factLedger }
+      : {}),
+    customerMessage: input.input.text,
+  });
+  const receipt = input.state.conversationFactReceipt;
+  const requiredMemoryFactIds = new Set(
+    receipt && (receipt.attribution.correction || receipt.attribution.memoryQuestion)
+      ? receipt.acceptedFactIds
+      : [],
+  );
+  const memoryFacts = projection.facts.map((fact) =>
+    requiredMemoryFactIds.has(fact.id) ? { ...fact, usage: "must_say" as const } : fact,
+  );
+  const scope: TurnScope = {
+    tenantId: String(input.input.tenantId ?? liveKnowledgeTenant),
+    pageId: input.input.pageId ?? "local-page",
+    customerId: input.input.customerId ?? input.input.sessionId,
+    conversationId: input.input.conversationId ?? input.input.sessionId,
+    episodeId: input.input.sessionId,
+  };
+  const inboundRevision = input.input.inboundRevision ?? Math.max(0, (input.state.stateVersion ?? 0) + 1);
+  const turnId =
+    input.input.traceId ??
+    `turn:${createHash("sha256")
+      .update(`${scope.tenantId}|${scope.pageId}|${scope.conversationId}|${inboundRevision}`)
+      .digest("hex")
+      .slice(0, 20)}`;
+  const requiredFactIds = new Set(input.responseContract.factPolicy.mustIncludeFacts.map((fact) => fact.id));
+  const conflictedFactIds = new Set(
+    input.canonicalResolution.conflicts.flatMap((conflict) => conflict.factIds),
+  );
+  const knowledgeFacts = input.canonicalResolution.facts.map((fact) => ({
+    ...fact,
+    usage: conflictedFactIds.has(fact.id)
+      ? ("disallowed" as const)
+      : requiredFactIds.has(fact.id)
+        ? ("must_say" as const)
+        : ("may_say" as const),
   }));
+  const money = input.canonicalResolution.facts.flatMap((fact) => {
+    if (typeof fact.value !== "number" || (fact.kind !== "price" && fact.kind !== "shipping")) {
+      return [];
+    }
+    const quantity = quantityFromCanonicalKey(fact.key);
+    const role = moneyRoleForCanonicalFact(fact, quantity);
+    return [
+      {
+        role,
+        amount: fact.value,
+        currency: "VND" as const,
+        ...(quantity ? { quantity } : {}),
+        sourceRef: fact.sourceId,
+        sourceVersion: fact.sourceVersion,
+      },
+    ];
+  });
+  const orderMutationReceipts = (input.state.orderTransactionTrace?.acceptedMutations ?? []).map(
+    (mutation, index) => ({
+      id: `order-mutation:${mutation.type}:${index}:${mutation.evidenceRef}`,
+      type: mutation.type,
+      status: "succeeded" as const,
+      sourceVersion: String(input.state.orderRevision ?? input.state.stateVersion ?? 0),
+      scope,
+    }),
+  );
+  const actionReceipts = (input.state.decisionTrace?.actionPlan?.accepted ?? [])
+    .filter((action) => ["handoff_to_human", "start_customer_care", "pause_order"].includes(action.type))
+    .map((action, index) => ({
+      id: `workflow-action:${action.type}:${index}:${action.evidence.map(evidenceRef).join("+")}`,
+      type: action.type,
+      status: "succeeded" as const,
+      sourceVersion: String(input.state.stateVersion ?? 0),
+      scope,
+    }));
+  const factReceipt = input.state.conversationFactReceipt;
+  const factReceipts = factReceipt?.acceptedFactIds.length
+    ? [
+        {
+          id: `memory-commit:${factReceipt.turn}:${factReceipt.acceptedFactIds.join("+")}`,
+          type: "record_fact",
+          status: "succeeded" as const,
+          sourceVersion: String(input.state.stateVersion ?? 0),
+          scope,
+        },
+      ]
+    : [];
+  const orderReceipt = input.state.orderId
+    ? [
+        {
+          id: `order:${input.state.orderId}`,
+          type: "create_order",
+          status: "succeeded" as const,
+          sourceVersion: String(input.state.orderRevision ?? input.state.stateVersion ?? 0),
+          scope,
+        },
+      ]
+    : [];
+  const shipmentReceipt = input.state.trackingNumber
+    ? [
+        {
+          id: `shipment:${input.state.trackingNumber}`,
+          type: "create_shipment",
+          status: "succeeded" as const,
+          sourceVersion: String(input.state.orderRevision ?? input.state.stateVersion ?? 0),
+          scope,
+        },
+      ]
+    : [];
+  const freeShippingReceipt = input.state.freeShippingApproval
+    ? [
+        {
+          id: input.state.freeShippingApproval.receiptId,
+          type: "approve_free_shipping",
+          status: "succeeded" as const,
+          performedAt: input.state.freeShippingApproval.approvedAt,
+          sourceVersion: input.state.freeShippingApproval.sourceVersion,
+          scope,
+        },
+      ]
+    : [];
+  const questions = [
+    ...requiredAnswerTopics(input.input.text).map(String),
+    ...(input.interpreted ? semanticAnswerTopics(input.interpreted, input.input.text) : []).map(String),
+  ].filter((value, index, all) => value && all.indexOf(value) === index);
+  const missingInformation = [
+    ...input.canonicalResolution.unresolvedFacts.map((fact) => `knowledge:${fact}`),
+    ...(input.state.selectedQuantity ? input.state.orderMissing.map((field) => `order:${field}`) : []),
+    ...(input.interpreted?.unsupportedQuestions ?? []).map((question) => `question:${evidenceRef(question)}`),
+  ];
+  return createTurnContextSnapshot({
+    turnId,
+    scope,
+    inboundRevision,
+    stateVersion: input.state.stateVersion ?? 0,
+    createdAt: new Date().toISOString(),
+    currentMessage: input.input.text,
+    activeSubjectId: projection.activeSubjectId,
+    questions,
+    memoryFacts,
+    knowledgeFacts,
+    knowledgeConflicts: input.canonicalResolution.conflicts,
+    money,
+    receipts: [
+      ...orderMutationReceipts,
+      ...actionReceipts,
+      ...factReceipts,
+      ...orderReceipt,
+      ...shipmentReceipt,
+      ...freeShippingReceipt,
+    ],
+    missingInformation,
+    allowedActions: input.responseContract.allowedCtas.map((cta) => cta.id),
+  });
+}
+
+function quantityFromCanonicalKey(key: string): number | undefined {
+  const raw = key.match(/\.(\d+)_units?$/u)?.[1];
+  const quantity = raw ? Number(raw) : undefined;
+  return quantity && Number.isSafeInteger(quantity) ? quantity : undefined;
+}
+
+function moneyRoleForCanonicalFact(fact: CanonicalAnswerFact, quantity: number | undefined): TurnMoneyRole {
+  if (fact.kind === "shipping" || fact.key.startsWith("shipping.")) return "shipping";
+  if (/discount|giam_gia|uu_dai/u.test(fact.key)) return "discount";
+  if (/total|tong/u.test(fact.key) || (quantity ?? 0) > 1) return "total";
+  return "unit_price";
 }
 
 function semanticKnowledgeQueries(semantic: SemanticUnderstanding): string[] {

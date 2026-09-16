@@ -403,6 +403,26 @@ test("phiên lịch sử không còn nằm trong queue được hạ khỏi cả
   assert.match(result.issue ?? "", /Phiên lịch sử/u);
 });
 
+test("verdict needs_attention được giữ trên dashboard để nhân viên xử lý", () => {
+  const result = diagnoseSession(
+    {
+      ...databaseSnapshot.sessions[0]!,
+      lastInboundAt: now.toISOString(),
+      lastOutboundAt: now.toISOString(),
+      responseAttention: {
+        status: "needs_attention",
+        severity: "critical",
+        code: "final_response_money_role_mismatch",
+      },
+      finalResponseRef: "sha256:0123456789abcdef",
+    },
+    now,
+  );
+  assert.equal(result.health, "critical");
+  assert.match(result.issue ?? "", /final_response_money_role_mismatch/u);
+  assert.equal(result.finalResponseRef, "sha256:0123456789abcdef");
+});
+
 test("worker heartbeat cũ được báo mất kết nối", async () => {
   const service = new OperationsDashboardService({
     env: loadEnv({ NODE_ENV: "development" }),

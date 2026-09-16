@@ -2,7 +2,7 @@ import type { KnowledgeEntity } from "./knowledge.js";
 import type { TenantId } from "./types.js";
 
 export function stopirexApprovedKnowledge(tenantId: TenantId): readonly KnowledgeEntity[] {
-  return [
+  const entities: KnowledgeEntity[] = [
     {
       id: "price-adjustment-france-import",
       tenantId,
@@ -286,7 +286,7 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
         "Herbal Body Wash",
       ],
       responseGuidance:
-        "Nếu khách hỏi giá chung, chỉ báo phương án 1–3 lọ; trình bày thành danh sách dễ đọc gồm quà tặng và combo chăm sóc mùi cơ thể, đồng thời nói rõ Herbal Body Wash chưa bán lẻ. Nếu khách hỏi giá hôm nay/hiện tại có đổi không mà không nêu giá cũ, nói chưa có thay đổi mới và báo giá đang áp dụng; tuyệt đối không tự kể lý do tăng giá lịch sử. Chỉ báo combo 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó. Chỉ nhắc chuyển tư vấn viên khi khách thực sự hỏi từ 6 lọ trở lên. Kết thúc bằng đúng một câu hỏi nối tiếp phù hợp ngữ cảnh, không tự chốt đơn.",
+        "Trả đúng phương án giá khách đang hỏi. Hỏi giá chung thì có thể báo giá 1 lọ trước; chỉ mở bảng combo/quà tặng khi khách hỏi combo, ưu đãi hoặc muốn xem thêm lựa chọn. Nếu khách hỏi giá hôm nay/hiện tại có đổi không mà không nêu giá cũ, nói chưa có thay đổi mới và báo giá đang áp dụng; tuyệt đối không tự kể lý do tăng giá lịch sử. Chỉ báo combo 4 hoặc 5 lọ khi khách hỏi đúng số lượng đó. Chỉ nhắc chuyển tư vấn viên khi khách thực sự hỏi từ 6 lọ trở lên. Không tự chốt đơn và không bắt buộc thêm câu hỏi khi ý hiện tại đã được trả lời đủ.",
       sourceRow: 25,
     },
     {
@@ -601,4 +601,9 @@ export function stopirexApprovedKnowledge(tenantId: TenantId): readonly Knowledg
       sourceRow: 52,
     },
   ];
+  return entities.map((entity) => ({
+    status: "active" as const,
+    scope: "current" as const,
+    ...entity,
+  }));
 }

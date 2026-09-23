@@ -1,5 +1,10 @@
 import { Pool, type PoolClient } from "pg";
 import type { TenantId } from "../domain/types.js";
+import {
+  responsePayloadRef,
+  type DeliveryDecision,
+  type FinalPayloadChannel,
+} from "../domain/responseGuard.js";
 import type { LlmUsageTelemetry } from "../services/codexLlm.js";
 import type { ActionRolloutComparison } from "../domain/actionRollout.js";
 import {
@@ -89,6 +94,7 @@ export type ConversationOutboundPlan = {
   inboundRevision?: number;
   responseRef?: string;
   deliveryStatus?: "unknown";
+  deliveryDecision?: DeliveryDecision;
 };
 
 export type MetaCommentWorkflowRecord = {
@@ -1056,13 +1062,15 @@ export class PostgresStore {
     tenantId: TenantId;
     conversationId: string;
     expectedStateVersion: number;
+    permission: DeliveryDecision["permission"];
   }): Promise<boolean> {
     return this.withTenant(input.tenantId, async (client) => {
       const result = await client.query(
-        `SELECT state_version = $3 AND human_status <> 'human' AS dispatch_current
+        `SELECT state_version = $3
+                AND (human_status <> 'human' OR $4 = 'handoff_ack') AS dispatch_current
          FROM conversations
          WHERE tenant_id = $1 AND id = $2`,
-        [input.tenantId, input.conversationId, input.expectedStateVersion],
+        [input.tenantId, input.conversationId, input.expectedStateVersion, input.permission],
       );
       return result.rows[0]?.dispatch_current === true;
     });
@@ -1193,9 +1201,40 @@ export class PostgresStore {
       turnContextVersion?: number;
       inboundRevision?: number;
       responseRef?: string;
+      channel: FinalPayloadChannel;
+      deliveryDecision: Omit<DeliveryDecision, "stateVersion">;
     };
   }): Promise<{ stateVersion: number; outbound: ConversationOutboundPlan }> {
     return this.withTenant(input.tenantId, async (client) => {
+      const expectedRef = responsePayloadRef(input.outbound.channel, input.outbound.texts);
+      const expectedPartChannels =
+        input.outbound.channel === "comment_public"
+          ? input.outbound.texts.map((_, index) =>
+              index === 0 ? ("comment_public" as const) : ("comment_private" as const),
+            )
+          : input.outbound.texts.map(() => input.outbound.channel);
+      if (
+        input.outbound.texts.length === 0 ||
+        input.outbound.deliveryDecision.outcome !== "allow" ||
+        input.outbound.deliveryDecision.responseRef !== expectedRef ||
+        input.outbound.responseRef !== expectedRef ||
+        input.outbound.deliveryDecision.inboundRevision !== input.outbound.inboundRevision ||
+        input.outbound.inboundRevision !== input.expectedStateVersion + 1 ||
+        input.outbound.deliveryDecision.scope.tenantId !== String(input.tenantId) ||
+        input.outbound.deliveryDecision.scope.pageId !== input.pageId ||
+        input.outbound.deliveryDecision.scope.conversationId !== input.conversationId ||
+        input.outbound.deliveryDecision.recipientId !== input.outbound.recipientId ||
+        input.outbound.deliveryDecision.sourceEventIds.length !== input.sourceEventIds.length ||
+        input.outbound.deliveryDecision.sourceEventIds.some(
+          (eventId, index) => eventId !== input.sourceEventIds[index],
+        ) ||
+        input.outbound.deliveryDecision.partChannels.length !== expectedPartChannels.length ||
+        input.outbound.deliveryDecision.partChannels.some(
+          (channel, index) => channel !== expectedPartChannels[index],
+        )
+      ) {
+        throw new Error("outbound_delivery_authorization_mismatch");
+      }
       const updated = input.preserveConversationState
         ? await client.query(
             `SELECT state_version::int FROM conversations
@@ -1242,6 +1281,11 @@ export class PostgresStore {
           ? { inboundRevision: input.outbound.inboundRevision }
           : {}),
         ...(input.outbound.responseRef ? { responseRef: input.outbound.responseRef } : {}),
+        channel: input.outbound.channel,
+        deliveryDecision: {
+          ...input.outbound.deliveryDecision,
+          stateVersion: Number(updated.rows[0].state_version),
+        },
       };
       const inserted = await client.query(
         `INSERT INTO outbox (tenant_id, topic, idempotency_key, payload)
@@ -1261,6 +1305,55 @@ export class PostgresStore {
         stateVersion: Number(updated.rows[0].state_version),
         outbound: mapOutboundPlan(inserted.rows[0]),
       };
+    });
+  }
+
+  /** Persist a valid reducer result and finish the inbound without creating a sendable outbox. */
+  async commitConversationTurnBlocked(input: {
+    tenantId: TenantId;
+    conversationId: string;
+    expectedStateVersion: number;
+    consultationStage: string;
+    pipelineTag: string;
+    signalTag?: string;
+    humanStatus: "bot" | "human" | "paused";
+    runtimeState: unknown;
+    summary?: string;
+    pageId: string;
+    sourceEventIds: readonly string[];
+  }): Promise<number> {
+    return this.withTenant(input.tenantId, async (client) => {
+      const updated = await client.query(
+        `UPDATE conversations
+         SET consultation_stage = $2,
+             pipeline_tag = $3,
+             signal_tag = $4,
+             human_status = $5,
+             runtime_state = $6::jsonb,
+             summary = $7,
+             state_version = state_version + 1,
+             updated_at = now()
+         WHERE id = $1 AND state_version = $8
+         RETURNING state_version::int`,
+        [
+          input.conversationId,
+          input.consultationStage,
+          input.pipelineTag,
+          input.signalTag ?? null,
+          input.humanStatus,
+          JSON.stringify(input.runtimeState),
+          input.summary ?? null,
+          input.expectedStateVersion,
+        ],
+      );
+      if (updated.rowCount !== 1) throw conversationStateConflict();
+      await client.query(
+        `UPDATE inbound_events
+         SET processed_at = COALESCE(processed_at, now())
+         WHERE page_id = $1 AND external_event_id = ANY($2::text[])`,
+        [input.pageId, [...input.sourceEventIds]],
+      );
+      return Number(updated.rows[0].state_version);
     });
   }
 
@@ -1723,7 +1816,27 @@ function mapOutboundPlan(row: Record<string, unknown>): ConversationOutboundPlan
       : {}),
     ...(typeof payload.responseRef === "string" ? { responseRef: payload.responseRef } : {}),
     ...(payload.deliveryStatus === "unknown" ? { deliveryStatus: "unknown" as const } : {}),
+    ...(isDeliveryDecision(payload.deliveryDecision) ? { deliveryDecision: payload.deliveryDecision } : {}),
   };
+}
+
+function isDeliveryDecision(value: unknown): value is DeliveryDecision {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const decision = value as Partial<DeliveryDecision>;
+  return (
+    (decision.outcome === "allow" || decision.outcome === "block") &&
+    typeof decision.responseRef === "string" &&
+    typeof decision.contextRef === "string" &&
+    typeof decision.channel === "string" &&
+    (decision.permission === "standard" || decision.permission === "handoff_ack") &&
+    typeof decision.recipientId === "string" &&
+    Array.isArray(decision.sourceEventIds) &&
+    Array.isArray(decision.partChannels) &&
+    typeof decision.inboundRevision === "number" &&
+    typeof decision.stateVersion === "number" &&
+    Boolean(decision.scope) &&
+    Array.isArray(decision.requiredReceiptRefs)
+  );
 }
 
 function conversationStateConflict(): Error {

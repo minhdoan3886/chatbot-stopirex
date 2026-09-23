@@ -1,10 +1,18 @@
 import { createHash } from "node:crypto";
 import { retrieveKnowledgeMatches, type KnowledgeMatch } from "../domain/knowledge.js";
 import { governCustomerResponse, inferAnsweredTopicFromMessage } from "../domain/responseGovernor.js";
-import { allowedConversationCtas, buildWorkflowResponseContract } from "../domain/responseContract.js";
+import {
+  allowedConversationCtas,
+  buildWorkflowResponseContract,
+  classifySafetyTrigger,
+  type SafetyTrigger,
+} from "../domain/responseContract.js";
+import type { ConversationTurnAttribution } from "../domain/conversationFacts.js";
 import {
   responseAttentionForVerdict,
+  responseContextRef,
   responseGuardVerdict,
+  responsePayloadRef,
   type ResponseGuardVerdict,
   type ResponseSource,
   type ResponseTraceSummary,
@@ -42,6 +50,7 @@ import {
   createTurnContextSnapshot,
   type TurnContextSnapshot,
   type TurnMoneyRole,
+  type TurnMoneyValue,
   type TurnScope,
 } from "../domain/turnContext.js";
 import {
@@ -330,6 +339,7 @@ export class MetaChatBrain {
     });
     const snapshotBefore = this.chat.exportSession(input.sessionId);
     let base: DemoChatResponse;
+    let conversationRecoveryReason: string | undefined;
     try {
       base = this.chat.chat(input.sessionId, input.text, interpreted, {
         ...context,
@@ -350,28 +360,33 @@ export class MetaChatBrain {
         "Em chưa thể xử lý trọn yêu cầu này trong một bước. Mình tách giúp em từng yêu cầu hoặc từng địa chỉ để em hỗ trợ chính xác nhé.",
         context,
       );
-      return this.deliverTurn(
-        input,
-        before,
-        recovered,
-        responseGuardVerdict({
-          reason: `conversation_turn_recovered:${reason}`,
-          source: "workflow_safe_fallback",
-        }),
-        [],
-        0,
-        {
-          schemaVersion: 1,
-          workflowResponseRef: evidenceRef(recovered.reply),
-          finalResponseRef: evidenceRef(recovered.reply),
-          logicalModelCalls,
-          repairAttempts: 0,
-        },
-      );
+      base = recovered;
+      conversationRecoveryReason = `conversation_turn_recovered:${reason}`;
+    }
+    if (fastTransition && !contentFreeMessage) {
+      // Disabled/provider-fallback turns still need approved local evidence for
+      // the exact workflow answer; otherwise the final gate would either be
+      // bypassed or reject a correct catalog response merely for missing context.
+      matches = retrieveKnowledgeMatches({
+        tenantId: liveKnowledgeTenant,
+        query: knowledgeSafeQuery(`${contextualKnowledgeQuery(input.text, before)}\n${base.reply}`),
+        entities: liveKnowledge,
+        limit: 12,
+      });
+      knowledge = knowledgeContexts(matches);
+      canonicalResolution = resolveCanonicalKnowledge({
+        query: `${input.text}\n${base.reply}`,
+        matches,
+        ...(base.state.lastIntent ? { intent: base.state.lastIntent } : {}),
+      });
     }
     const responseContract = buildWorkflowResponseContract({
       state: base.state,
       customerMessage: input.text,
+      safetyTrigger: safetyTriggerForResolvedAttribution(
+        input.text,
+        base.state.conversationFactReceipt?.attribution,
+      ),
       authoritativeReply: base.reply,
       canonicalFacts: canonicalResolution.facts,
       canonicalConflicts: canonicalResolution.conflicts,
@@ -383,11 +398,14 @@ export class MetaChatBrain {
       canonicalResolution,
       interpreted,
     });
+    const memorySubjectId = resolvedMemorySubjectId(input.text, base.state, interpreted);
     const memoryProjection = projectMemoryForTurn({
       ...(base.state.conversationMemory?.factLedger
         ? { ledger: base.state.conversationMemory.factLedger }
         : {}),
       customerMessage: input.text,
+      ...(memorySubjectId ? { activeSubjectId: memorySubjectId } : {}),
+      ...(input.occurredAt ? { at: input.occurredAt } : {}),
     });
     this.logger?.log("debug", "turn_context_snapshot", {
       ...(input.traceId ? { traceId: input.traceId } : {}),
@@ -425,13 +443,95 @@ export class MetaChatBrain {
       response: DemoChatResponse,
       verdict: ResponseGuardVerdict,
       responseClaimedSavedFields: readonly string[] = [],
-    ): DemoChatResponse =>
-      this.deliverTurn(input, before, response, verdict, responseClaimedSavedFields, responseRepairAttempts, {
-        ...responseTraceBase,
-        finalResponseRef: evidenceRef(response.reply),
-        logicalModelCalls,
-        repairAttempts: responseRepairAttempts,
+    ): DemoChatResponse => {
+      const texts = response.replies.length > 0 ? response.replies : [response.reply];
+      const responseRef = responsePayloadRef("messenger", texts);
+      const contextRef = responseContextRef({
+        scope: turnContext.scope,
+        inboundRevision: turnContext.inboundRevision,
+        stateVersion: turnContext.stateVersion,
+        turnId: turnContext.turnId,
       });
+      const issues = validateFinalResponse({
+        reply: texts.join("\n\n"),
+        customerMessage: input.text,
+        snapshot: turnContext,
+        canonicalResolution,
+        executionSummary: base.reply,
+        requiredFacts: responseContract.factPolicy.mustIncludeFacts,
+      });
+      const finalVerdict: ResponseGuardVerdict =
+        issues.length > 0
+          ? {
+              outcome: "block",
+              hard: issues.some((issue) => issue.severity === "critical"),
+              reason: `final_response_validation:${issues.map((issue) => issue.code).join(",")}`,
+              source: verdict.source,
+              responseRef,
+              contextRef,
+              channel: "messenger",
+              scope: turnContext.scope,
+              inboundRevision: turnContext.inboundRevision,
+              stateVersion: turnContext.stateVersion,
+            }
+          : {
+              ...responseGuardVerdict({
+                accepted: true,
+                reason:
+                  verdict.outcome === "allow" ? verdict.reason : `safe_fallback_validated:${verdict.reason}`,
+                source: verdict.source,
+              }),
+              responseRef,
+              contextRef,
+              channel: "messenger",
+              scope: turnContext.scope,
+              inboundRevision: turnContext.inboundRevision,
+              stateVersion: turnContext.stateVersion,
+            };
+      if (issues.length > 0) {
+        this.logger?.log("warn", "final_response_candidate_rejected", {
+          ...(input.traceId ? { traceId: input.traceId } : {}),
+          responseRef,
+          contextRef,
+          originalOutcome: verdict.outcome,
+          originalReason: verdict.reason,
+          issueCodes: issues.map((issue) => issue.code),
+        });
+      }
+      return this.deliverTurn(
+        input,
+        before,
+        response,
+        finalVerdict,
+        responseClaimedSavedFields,
+        responseRepairAttempts,
+        {
+          ...responseTraceBase,
+          finalResponseRef: responseRef,
+          logicalModelCalls,
+          repairAttempts: responseRepairAttempts,
+          validationStatus: issues.length === 0 ? "validated" : "blocked",
+          contextRef,
+          validationIssueCodes: issues.map((issue) => issue.code),
+          ...(verdict.outcome !== "allow" || issues.length > 0
+            ? {
+                draftRejections: [
+                  {
+                    responseRef:
+                      verdict.outcome === "allow"
+                        ? responseRef
+                        : (responseTraceBase.draftResponseRef ?? responseTraceBase.workflowResponseRef),
+                    reason:
+                      issues.length > 0
+                        ? `final_response_validation:${issues.map((issue) => issue.code).join(",")}`
+                        : verdict.reason,
+                  },
+                ],
+              }
+            : {}),
+        },
+      );
+    };
     if (this.rollout.mode !== "enabled") {
       const alternateVariant = liveVariant === "multi_action" ? "legacy" : "multi_action";
       const alternateChat = new DemoChatService();
@@ -472,6 +572,12 @@ export class MetaChatBrain {
           conversationId: input.conversationId,
         });
       }
+    }
+    if (conversationRecoveryReason) {
+      return deliver(
+        base,
+        responseGuardVerdict({ reason: conversationRecoveryReason, source: "workflow_safe_fallback" }),
+      );
     }
     if (fastTransition) {
       return deliver(
@@ -849,6 +955,7 @@ export class MetaChatBrain {
         reply: composed.reply,
         authoritativeReply: base.reply,
         resolution: canonicalResolution,
+        allowedMoney: turnContext.money,
       });
       assertCanonicalClaimsSupported({
         reply: composed.reply,
@@ -881,6 +988,7 @@ export class MetaChatBrain {
             reply: repaired.reply,
             authoritativeReply: base.reply,
             resolution: canonicalResolution,
+            allowedMoney: turnContext.money,
           });
           assertCanonicalClaimsSupported({
             reply: repaired.reply,
@@ -1040,6 +1148,7 @@ export class MetaChatBrain {
         repairAttempts: responseRepairAttempts,
         issues: finalValidationIssues.map((issue) => ({
           category: issue.category,
+          severity: issue.severity,
           code: issue.code,
           evidenceRefs: issue.evidenceRefs,
           repairable: issue.repairable,
@@ -1800,6 +1909,70 @@ function knowledgeContexts(matches: readonly KnowledgeMatch[]): ApprovedKnowledg
   );
 }
 
+function resolvedMemorySubjectId(
+  customerMessage: string,
+  state: DemoChatState,
+  interpreted?: SemanticUnderstanding,
+): string | undefined {
+  const text = customerMessage
+    .toLocaleLowerCase("vi-VN")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/gu, "d")
+    .replace(/\s+/gu, " ")
+    .trim();
+
+  // Explicit subjects are resolved again by memoryProjection; returning them
+  // here also makes the selected subject visible in the turn snapshot.
+  if (/\b(?:em gai|em trai|em minh|em tui|em toi)\b/u.test(text)) return "sibling-1";
+  if (/\b(?:ban minh|ban tui|ban toi|ban cua minh|ban cua tui)\b/u.test(text)) return "friend-1";
+  if (/\b(?:review|nguoi viet review)\b/u.test(text)) return "external-reviewer-1";
+
+  const factTarget = interpreted?.actions?.find(
+    (action) => action.type === "record_fact" && Boolean(action.target?.trim()),
+  );
+  if (factTarget?.type === "record_fact" && factTarget.target) {
+    const target = factTarget.target.trim();
+    const normalizedTarget = target
+      .toLocaleLowerCase("vi-VN")
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .replace(/đ/gu, "d");
+    if (["self", "customer", "user", "khach", "ban"].includes(normalizedTarget)) return "self";
+    if (/sibling|em gai|em trai|em cua/u.test(normalizedTarget)) return "sibling-1";
+    if (/friend|ban cua|ban tui|ban minh/u.test(normalizedTarget)) return "friend-1";
+    if (/review|reviewer|nguoi viet/u.test(normalizedTarget)) return "external-reviewer-1";
+    return target.slice(0, 80);
+  }
+
+  if (interpreted?.subject === "customer" || state.conversationMemory?.activeSubject === "customer") {
+    return "self";
+  }
+  if (interpreted?.subject === "child" || state.conversationMemory?.activeSubject === "child") {
+    const activeBeneficiaryId = state.conversationMemory?.activeBeneficiaryId;
+    if (
+      activeBeneficiaryId &&
+      state.conversationMemory?.factLedger?.facts.some((fact) => fact.subjectId === activeBeneficiaryId)
+    ) {
+      return activeBeneficiaryId;
+    }
+    if (state.conversationMemory?.factLedger?.facts.some((fact) => fact.subjectId === "sibling-1")) {
+      return "sibling-1";
+    }
+  }
+  return undefined;
+}
+
+function orderMutationField(type: string): string {
+  if (type === "set_quantity") return "quantity";
+  if (type === "set_phone") return "phone";
+  if (type === "set_recipient_name") return "recipientName";
+  if (type === "set_address" || type === "clear_address") return "legacyAddress";
+  if (type === "set_delivery_note") return "deliveryNote";
+  if (type === "confirm_order") return "customerConfirmedAt";
+  return type;
+}
+
 function buildTurnContextSnapshot(input: {
   input: {
     sessionId: string;
@@ -1810,17 +1983,21 @@ function buildTurnContextSnapshot(input: {
     customerId?: string;
     conversationId?: string;
     inboundRevision?: number;
+    occurredAt?: Date;
   };
   state: DemoChatState;
   responseContract: ReturnType<typeof buildWorkflowResponseContract>;
   canonicalResolution: CanonicalKnowledgeResolution;
   interpreted?: SemanticUnderstanding;
 }): Readonly<TurnContextSnapshot> {
+  const memorySubjectId = resolvedMemorySubjectId(input.input.text, input.state, input.interpreted);
   const projection = projectMemoryForTurn({
     ...(input.state.conversationMemory?.factLedger
       ? { ledger: input.state.conversationMemory.factLedger }
       : {}),
     customerMessage: input.input.text,
+    ...(memorySubjectId ? { activeSubjectId: memorySubjectId } : {}),
+    ...(input.input.occurredAt ? { at: input.input.occurredAt } : {}),
   });
   const receipt = input.state.conversationFactReceipt;
   const requiredMemoryFactIds = new Set(
@@ -1838,6 +2015,8 @@ function buildTurnContextSnapshot(input: {
     conversationId: input.input.conversationId ?? input.input.sessionId,
     episodeId: input.input.sessionId,
   };
+  const stateSourceVersion = String(input.state.stateVersion ?? 0);
+  const orderSourceVersion = String(input.state.orderRevision ?? input.state.stateVersion ?? 0);
   const inboundRevision = input.input.inboundRevision ?? Math.max(0, (input.state.stateVersion ?? 0) + 1);
   const turnId =
     input.input.traceId ??
@@ -1857,7 +2036,7 @@ function buildTurnContextSnapshot(input: {
         ? ("must_say" as const)
         : ("may_say" as const),
   }));
-  const money = input.canonicalResolution.facts.flatMap((fact) => {
+  const money: TurnMoneyValue[] = input.canonicalResolution.facts.flatMap((fact) => {
     if (typeof fact.value !== "number" || (fact.kind !== "price" && fact.kind !== "shipping")) {
       return [];
     }
@@ -1874,12 +2053,80 @@ function buildTurnContextSnapshot(input: {
       },
     ];
   });
+  const unitPrice = money.find((item) => item.role === "unit_price" && item.quantity === 1);
+  if (unitPrice) {
+    const standardShipping = money.find((item) => item.role === "shipping");
+    if (standardShipping) {
+      money.push({
+        role: "total",
+        amount: unitPrice.amount + standardShipping.amount,
+        currency: "VND",
+        quantity: 1,
+        sourceRef: `${unitPrice.sourceRef}+${standardShipping.sourceRef}`,
+        sourceVersion: `${unitPrice.sourceVersion}+${standardShipping.sourceVersion}`,
+      });
+    }
+    for (const total of money.filter(
+      (item): item is TurnMoneyValue & { quantity: number } =>
+        item.role === "total" && item.quantity !== undefined && item.quantity > 1,
+    )) {
+      const discount = unitPrice.amount * total.quantity - total.amount;
+      if (discount <= 0) continue;
+      money.push({
+        role: "discount",
+        amount: discount,
+        currency: "VND",
+        quantity: total.quantity,
+        sourceRef: `${unitPrice.sourceRef}+${total.sourceRef}`,
+        sourceVersion: `${unitPrice.sourceVersion}+${total.sourceVersion}`,
+      });
+    }
+  }
+  if (input.state.orderDraft?.totalVnd !== undefined && input.state.orderDraft.quantity !== undefined) {
+    const orderQuantity = input.state.orderDraft.quantity;
+    const canonicalSubtotal = money.find(
+      (item) => item.quantity === orderQuantity && (item.role === "unit_price" || item.role === "total"),
+    );
+    if (canonicalSubtotal) {
+      money.push({
+        role: "subtotal",
+        amount: canonicalSubtotal.amount,
+        currency: "VND",
+        quantity: orderQuantity,
+        sourceRef: canonicalSubtotal.sourceRef,
+        sourceVersion: canonicalSubtotal.sourceVersion,
+      });
+    }
+    if (
+      !money.some(
+        (item) =>
+          item.role === "total" &&
+          item.amount === input.state.orderDraft?.totalVnd &&
+          item.quantity === orderQuantity,
+      )
+    ) {
+      money.push({
+        role: "total",
+        amount: input.state.orderDraft.totalVnd,
+        currency: "VND",
+        quantity: orderQuantity,
+        sourceRef: `order:${scope.conversationId}`,
+        sourceVersion: orderSourceVersion,
+      });
+    }
+  }
   const orderMutationReceipts = (input.state.orderTransactionTrace?.acceptedMutations ?? []).map(
     (mutation, index) => ({
       id: `order-mutation:${mutation.type}:${index}:${mutation.evidenceRef}`,
       type: mutation.type,
       status: "succeeded" as const,
-      sourceVersion: String(input.state.orderRevision ?? input.state.stateVersion ?? 0),
+      stage: "committed" as const,
+      field: orderMutationField(mutation.type),
+      valueRef: `state:${orderSourceVersion}:${orderMutationField(mutation.type)}`,
+      operationId: turnId,
+      resourceRef: `order:${scope.conversationId}`,
+      resultVersion: orderSourceVersion,
+      sourceVersion: orderSourceVersion,
       scope,
     }),
   );
@@ -1888,29 +2135,36 @@ function buildTurnContextSnapshot(input: {
     .map((action, index) => ({
       id: `workflow-action:${action.type}:${index}:${action.evidence.map(evidenceRef).join("+")}`,
       type: action.type,
-      status: "succeeded" as const,
-      sourceVersion: String(input.state.stateVersion ?? 0),
+      status: "unknown" as const,
+      stage: "accepted" as const,
+      sourceVersion: stateSourceVersion,
       scope,
     }));
   const factReceipt = input.state.conversationFactReceipt;
-  const factReceipts = factReceipt?.acceptedFactIds.length
-    ? [
-        {
-          id: `memory-commit:${factReceipt.turn}:${factReceipt.acceptedFactIds.join("+")}`,
-          type: "record_fact",
-          status: "succeeded" as const,
-          sourceVersion: String(input.state.stateVersion ?? 0),
-          scope,
-        },
-      ]
-    : [];
+  const acceptedFactIds = new Set(factReceipt?.acceptedFactIds ?? []);
+  const factReceipts = (input.state.conversationMemory?.factLedger?.facts ?? [])
+    .filter((fact) => acceptedFactIds.has(fact.id))
+    .map((fact) => ({
+      id: `memory-commit:${factReceipt?.turn ?? fact.sourceTurn}:${fact.id}`,
+      type: "record_fact",
+      status: "succeeded" as const,
+      stage: "committed" as const,
+      field: fact.predicate,
+      valueRef: `state:${stateSourceVersion}:fact:${fact.id}`,
+      operationId: turnId,
+      resourceRef: `memory:${scope.conversationId}`,
+      resultVersion: stateSourceVersion,
+      sourceVersion: stateSourceVersion,
+      scope,
+    }));
   const orderReceipt = input.state.orderId
     ? [
         {
           id: `order:${input.state.orderId}`,
           type: "create_order",
           status: "succeeded" as const,
-          sourceVersion: String(input.state.orderRevision ?? input.state.stateVersion ?? 0),
+          stage: "committed" as const,
+          sourceVersion: orderSourceVersion,
           scope,
         },
       ]
@@ -1921,7 +2175,8 @@ function buildTurnContextSnapshot(input: {
           id: `shipment:${input.state.trackingNumber}`,
           type: "create_shipment",
           status: "succeeded" as const,
-          sourceVersion: String(input.state.orderRevision ?? input.state.stateVersion ?? 0),
+          stage: "completed" as const,
+          sourceVersion: orderSourceVersion,
           scope,
         },
       ]
@@ -1932,6 +2187,7 @@ function buildTurnContextSnapshot(input: {
           id: input.state.freeShippingApproval.receiptId,
           type: "approve_free_shipping",
           status: "succeeded" as const,
+          stage: "completed" as const,
           performedAt: input.state.freeShippingApproval.approvedAt,
           sourceVersion: input.state.freeShippingApproval.sourceVersion,
           scope,
@@ -1984,6 +2240,23 @@ function moneyRoleForCanonicalFact(fact: CanonicalAnswerFact, quantity: number |
   if (/discount|giam_gia|uu_dai/u.test(fact.key)) return "discount";
   if (/total|tong/u.test(fact.key) || (quantity ?? 0) > 1) return "total";
   return "unit_price";
+}
+
+function safetyTriggerForResolvedAttribution(
+  customerMessage: string,
+  attribution?: ConversationTurnAttribution,
+): SafetyTrigger {
+  if (
+    attribution &&
+    (attribution.thirdParty ||
+      attribution.quotedReview ||
+      attribution.primarySubjectId !== "self" ||
+      attribution.product === "other_rollon" ||
+      attribution.memoryQuestion)
+  ) {
+    return { scenario: "none", redFlag: false };
+  }
+  return classifySafetyTrigger(customerMessage);
 }
 
 function semanticKnowledgeQueries(semantic: SemanticUnderstanding): string[] {

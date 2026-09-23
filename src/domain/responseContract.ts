@@ -10,7 +10,44 @@ export type RequiredResponseFact = {
   id: string;
   text: string;
   kind: "money" | "duration" | "url" | "shipping" | "gift" | "safety" | "order" | "claim";
+  condition?: "actual" | "conditional";
 };
+
+export type SafetyTrigger = {
+  scenario: "none" | "actual" | "conditional";
+  redFlag: boolean;
+};
+
+export function classifySafetyTrigger(value: string): SafetyTrigger {
+  const raw = value.toLocaleLowerCase("vi-VN");
+  const folded = normalizeComparable(value);
+  const hasBurning = /\brát\b/iu.test(raw) || (!/\brất\b/iu.test(raw) && /\brat\b/u.test(folded));
+  const hasSymptom =
+    hasBurning ||
+    /\b(?:ngứa|đỏ da|kích ứng|khó thở|sưng môi|sưng mặt|choáng|cấp cứu)\b/iu.test(raw) ||
+    /\b(?:ngua|do da|kich ung|kho tho|sung moi|sung mat|choang|cap cuu)\b/u.test(folded);
+  if (!hasSymptom) return { scenario: "none", redFlag: false };
+  const redFlag = /\b(?:khó thở|sưng môi|sưng mặt|choáng|cấp cứu)\b/iu.test(raw);
+  const explicitActual =
+    /\b(?:đang|hiện tại|hiện|vừa|đã)\b.{0,55}\b(?:bị|rát|ngứa|đỏ|kích ứng|khó thở|sưng|choáng)\b/iu.test(
+      raw,
+    ) ||
+    /\b(?:dùng|xài|lăn|bôi)\s+(?:xong\s+)?bị\s+(?:rát|ngứa|đỏ|kích ứng)/iu.test(raw) ||
+    /\bsau khi (?:dùng|xài|lăn|bôi)\b.{0,35}\b(?:rát|ngứa|đỏ|kích ứng)/iu.test(raw);
+  const hypothetical =
+    /\b(?:nếu|giả sử|ví dụ|lỡ|trường hợp)\b/iu.test(raw) ||
+    /\b(?:chưa dùng|chưa xài|sợ|lo|ngại)\b.{0,45}\b(?:rát|ngứa|đỏ|kích ứng)/iu.test(raw) ||
+    /\b(?:dùng|xài|lăn|bôi)\b.{0,18}\b(?:có bị|liệu có)\b/iu.test(raw);
+  return {
+    scenario:
+      explicitActual && !/^\s*(?:nếu|giả sử|lỡ)\b/iu.test(raw)
+        ? "actual"
+        : hypothetical
+          ? "conditional"
+          : "actual",
+    redFlag,
+  };
+}
 
 export type ResponseContractState = {
   mode: "sales" | "care";
@@ -42,6 +79,7 @@ export type WorkflowResponseContract = {
 export function buildWorkflowResponseContract(input: {
   state: ResponseContractState;
   customerMessage?: string;
+  safetyTrigger?: SafetyTrigger;
   authoritativeReply: string;
   canonicalFacts?: readonly CanonicalAnswerFact[];
   canonicalConflicts?: readonly CanonicalFactConflict[];
@@ -51,6 +89,7 @@ export function buildWorkflowResponseContract(input: {
       ? extractRequiredResponseFacts(input.authoritativeReply)
       : selectCanonicalRequiredFacts({
           customerMessage: input.customerMessage ?? "",
+          ...(input.safetyTrigger ? { safetyTrigger: input.safetyTrigger } : {}),
           canonicalFacts: input.canonicalFacts ?? [],
           authoritativeReply: input.authoritativeReply,
           requireExecutionReceipt: (input.state.orderTransactionTrace?.changedFields.length ?? 0) > 0,
@@ -90,16 +129,17 @@ export function buildWorkflowResponseContract(input: {
  */
 export function selectCanonicalRequiredFacts(input: {
   customerMessage: string;
+  safetyTrigger?: SafetyTrigger;
   canonicalFacts: readonly CanonicalAnswerFact[];
   authoritativeReply?: string;
   requireExecutionReceipt?: boolean;
 }): RequiredResponseFact[] {
   const query = normalizeComparable(input.customerMessage);
-  const asksPrice = /\b(?:gia|combo|bao nhieu tien|tong tien|thanh toan)\b/u.test(query);
+  const asksPrice = /\b(?:gia|bao nhieu tien|tong tien|thanh toan)\b/u.test(query);
   const asksCombo = /\bcombo\b/u.test(query);
   const asksShipping = /\b(?:ship|giao|van chuyen|freeship|free ship|mien phi giao)\b/u.test(query);
   const asksDuration = /\b(?:bao lau|may ngay|khi nao|bao gio|tan suat|may lan|thang|gio)\b/u.test(query);
-  const safetyTurn = /\b(?:rat|ngua|do da|kich ung|kho tho|sung moi|sung mat|choang|cap cuu)\b/u.test(query);
+  const safetyTrigger = input.safetyTrigger ?? classifySafetyTrigger(input.customerMessage);
   const requestedQuantity = query.match(
     /(?:combo|lay|mua|gia|chot|cho|dat|gui)\s*(?:m|minh|anh|chi|em)?\s*(\d)\s*(?:lo|chai)?/u,
   )?.[1];
@@ -107,7 +147,18 @@ export function selectCanonicalRequiredFacts(input: {
   const specificBundle = /body wash|sua tam/u.test(query);
   const selected: RequiredResponseFact[] = [];
   const add = (fact: RequiredResponseFact) => {
-    if (!selected.some((item) => item.id === fact.id)) selected.push(fact);
+    if (
+      !selected.some(
+        (item) =>
+          item.id === fact.id ||
+          (item.kind === "safety" &&
+            fact.kind === "safety" &&
+            item.text === fact.text &&
+            item.condition === fact.condition),
+      )
+    ) {
+      selected.push(fact);
+    }
   };
 
   for (const fact of input.canonicalFacts) {
@@ -159,11 +210,21 @@ export function selectCanonicalRequiredFacts(input: {
       add({ id: fact.id, kind: "gift", text: fact.text });
     } else if (fact.kind === "duration" && (asksDuration || asksShipping)) {
       add({ id: fact.id, kind: "duration", text: String(fact.value) });
-    } else if (fact.kind === "safety" && safetyTurn) {
+    } else if (fact.kind === "safety" && safetyTrigger.scenario !== "none") {
       for (const safetyFact of extractRequiredResponseFacts(fact.text).filter(
         (item) => item.kind === "safety",
       )) {
-        add({ ...safetyFact, id: `${fact.id}:${safetyFact.id}` });
+        if (
+          safetyFact.text === "emergency_care" &&
+          !(safetyTrigger.scenario === "actual" && safetyTrigger.redFlag)
+        ) {
+          continue;
+        }
+        add({
+          ...safetyFact,
+          id: `${fact.id}:${safetyFact.id}`,
+          condition: safetyTrigger.scenario,
+        });
       }
     } else if (
       fact.kind === "claim" &&
@@ -312,7 +373,7 @@ export function extractRequiredResponseFacts(value: string): RequiredResponseFac
     if (/quà tặng|được tặng/iu.test(line)) {
       add("gift", line.match(/\d+\s+(?:túi|quà)/iu)?.[0] ?? "gift_present");
     }
-    if (/ngưng (?:dùng|sản phẩm)/iu.test(line)) add("safety", "stop_use");
+    if (/(?:ngưng|dừng|tạm ngưng) (?:dùng|sử dụng|sản phẩm)/iu.test(line)) add("safety", "stop_use");
     if (/đi cấp cứu/iu.test(line)) add("safety", "emergency_care");
     if (/không lăn lại/iu.test(line)) add("safety", "do_not_reapply");
     if (/người nhận:|SĐT:|địa chỉ:|sản phẩm:|tổng thanh toán:|tình trạng đơn:/iu.test(line)) {
@@ -340,11 +401,18 @@ export function assertRequiredResponseFactsPresent(
       }
     } else if (fact.kind === "safety") {
       const safetyPatterns: Record<string, RegExp> = {
-        stop_use: /(?:ngưng|dừng|tạm ngưng) (?:dùng|sản phẩm)/iu,
+        stop_use: /(?:ngưng|dừng|tạm ngưng) (?:dùng|sử dụng|sản phẩm)/iu,
         emergency_care: /(?:đi|gọi|đến).*cấp cứu/iu,
         do_not_reapply: /không (?:lăn|bôi) lại/iu,
       };
-      if (safetyPatterns[required]?.test(compactRendered)) continue;
+      const safetyPattern = safetyPatterns[required];
+      if (safetyPattern?.test(compactRendered)) {
+        if (fact.condition !== "conditional") continue;
+        const conditionalBlock = compactRendered
+          .split(/(?<=[.!?])\s+/u)
+          .find((block) => safetyPattern.test(block) && /\b(?:nếu|khi|trường hợp|lỡ)\b/iu.test(block));
+        if (conditionalBlock) continue;
+      }
     } else if (fact.kind === "claim" && required === "bodywash_not_sold_separately") {
       if (
         /Herbal Body Wash[^.!?\n]{0,60}chưa bán lẻ|chưa bán lẻ[^.!?\n]{0,60}Herbal Body Wash/iu.test(

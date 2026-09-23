@@ -200,7 +200,7 @@ test("product path: teencode turn 4–6 commits each proposition before composin
     text: "thui chot m 1 lọ. ship dc q1 sg khum shop? free shp k b?",
   });
   assert.equal(turn4.state.selectedQuantity, 1);
-  assert.match(turn4.reply, /giao được đến Quận 1, TP\. Hồ Chí Minh/iu);
+  assert.match(turn4.reply, /giao được(?: đến)? Quận 1, (?:TP\. ?Hồ Chí Minh|TP\.HCM)/iu);
   assert.match(turn4.reply, /30\.000đ phí giao/iu);
   assert.equal(turn4.state.orderDraft?.legacyAddress, undefined);
   assert.equal(turn4.state.locationMemory?.addressContext?.district, "Quận 1");

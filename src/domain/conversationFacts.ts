@@ -123,8 +123,13 @@ export function classifyConversationTurn(raw: string): ConversationTurnAttributi
   const questionOnly =
     memoryQuestion ||
     (/\b(?:dung khong|phai khong|chua ta|chua|co .* khong)\b/.test(text) && !/\bdang\b/.test(text));
+  const explicitlyOngoingEvidence =
+    /\b(?:hien tai|hien|dang|van con|con)\b.{0,30}\b(?:rat|ngua|do|do da|kich ung|di ung|viem)\b/.test(text);
+  const directPostUseEvidence =
+    /\b(?:dung|xai|lan|boi)\b.{0,35}\bbi\s+(?:rat|ngua|do|do da|kich ung|di ung|viem)\b/.test(text);
   const currentEvidence =
-    /\b(?:hien tai|hien|dang|con)\b.{0,30}\b(?:rat|ngua|do|do da|kich ung|di ung|viem)\b/.test(text) ||
+    explicitlyOngoingEvidence ||
+    directPostUseEvidence ||
     /\b(?:moi|vua|da) (?:dung|xai|lan|boi)\b.{0,70}\b(?:bi|dang) (?:rat|ngua|do|do da|kich ung|di ung|viem)\b/.test(
       text,
     ) ||
@@ -147,7 +152,8 @@ export function classifyConversationTurn(raw: string): ConversationTurnAttributi
     !quotedReview &&
     !otherProduct &&
     !questionOnly &&
-    currentEvidence;
+    currentEvidence &&
+    (explicitlyOngoingEvidence || !hypothetical);
   const source: ConversationFactSource =
     !explicitCurrentSelfIncident && hypothetical
       ? "hypothetical"
@@ -200,6 +206,7 @@ export function reduceConversationFactLedger(input: {
   const rejected: Array<{ evidence: string; reason: string }> = [];
 
   ensureSubject(ledger, attribution.primarySubjectId);
+  const occurredAt = input.occurredAt ?? new Date();
   for (const claim of claims) {
     ensureSubject(ledger, claim.subjectId);
     if (!claim.evidence.trim() || claim.confidence < 0.75) {
@@ -214,10 +221,11 @@ export function reduceConversationFactLedger(input: {
         fact.product === claim.product &&
         fact.value === claim.value &&
         fact.temporal === claim.temporal &&
-        fact.source === claim.source,
+        fact.source === claim.source &&
+        sameEventIdentity(fact, claim, occurredAt),
     );
     if (duplicate) continue;
-    const id = factId(input.turn, claim, acceptedFactIds.length);
+    const id = factId(input.turn, claim, acceptedFactIds.length, occurredAt);
     if (isSingleValuePredicate(claim.predicate)) {
       for (const current of ledger.facts) {
         if (
@@ -231,7 +239,6 @@ export function reduceConversationFactLedger(input: {
         }
       }
     }
-    const occurredAt = input.occurredAt ?? new Date();
     ledger.facts.push({
       ...claim,
       id,
@@ -481,17 +488,18 @@ export function planConversationFactResponse(input: {
       schedule ? `lịch gym là ${formatSchedule(String(schedule))}` : undefined,
       hairTime ? `lần cạo/wax gần nhất là ${formatHairTime(String(hairTime))}` : undefined,
     ];
-    const selfReaction = selfStopirexReaction
-      ? "mình từng có phản ứng với Stopirex"
-      : "mình chưa bị ngứa, đỏ da hay dị ứng do Stopirex";
+    const selfReaction = selfStopirexReaction ? "mình từng có phản ứng với Stopirex" : undefined;
     const otherReactions = [
       friendReaction ? "người từng bị ngứa là bạn của mình" : undefined,
       reviewReaction ? "phần ngứa đỏ là review của người khác" : undefined,
       otherProductReaction ? "lần bị rát là với một loại lăn khác sau khi cạo" : undefined,
     ];
-    const reactionContext = `${selfReaction}${otherReactions.some(Boolean) ? `, còn ${joinNaturalList(otherReactions)}` : ""}`;
+    const reactionContext = joinNaturalList([selfReaction, ...otherReactions]);
+    const reactionSentence = reactionContext
+      ? `${capitalize(reactionContext)}.`
+      : "Chưa có dữ kiện về phản ứng của mình với Stopirex.";
     return plan(
-      `Chốt lại nha: ${lowerFirst(mainConcern)}. ${capitalize(joinNaturalList(currentContext))}. ${capitalize(reactionContext)}.`,
+      `Chốt lại nha: ${lowerFirst(mainConcern)}. ${capitalize(joinNaturalList(currentContext))}. ${reactionSentence}`,
       "consultation",
       "other",
       "memory_recap",
@@ -526,7 +534,7 @@ export function planConversationFactResponse(input: {
       ? "Còn bạn của mình từng bị ngứa vài ngày sau khi dùng Stopirex."
       : "Còn trường hợp của bạn mình thì chưa có đủ thông tin.";
     return plan(
-      `Mình thì ${lowerFirst(mainConcern).replace(/^mình\s+/u, "")}, ${lowerFirst(skin)} và chưa gặp ngứa rát do Stopirex. ${friendText}`,
+      `Mình thì ${lowerFirst(mainConcern).replace(/^mình\s+/u, "")} và ${lowerFirst(skin)}. Phản ứng của bạn mình không phải dữ kiện về mình. ${friendText}`,
       "product_comparison",
       "comparison",
       "subject_comparison",
@@ -544,7 +552,7 @@ export function planConversationFactResponse(input: {
     return plan(
       selfStopirexReaction
         ? "Đúng rồi, mình từng gặp phản ứng này sau khi dùng Stopirex."
-        : `Chưa nha.${detail}${review}`,
+        : `Mình chưa có dữ kiện xác nhận điều đó.${detail}${review}`,
       "safety",
       "irritation",
       "reaction_owner_verification",
@@ -558,7 +566,7 @@ export function planConversationFactResponse(input: {
 
   if (input.attribution.quotedReview && !orderSupportQuestion) {
     return plan(
-      "À, đây là review của người khác nha. Mình chưa gặp tình trạng ngứa đỏ đó.",
+      "À, đây là review của người khác nha. Nội dung này không phải dữ kiện phản ứng của mình.",
       "safety",
       "irritation",
       "quoted_review_attribution",
@@ -572,7 +580,7 @@ export function planConversationFactResponse(input: {
     !orderSupportQuestion
   ) {
     return plan(
-      "À, người bị ngứa là bạn của mình nha. Còn mình chưa gặp tình trạng đó.",
+      "À, người bị ngứa là bạn của mình nha. Tình trạng đó không phải dữ kiện về mình.",
       "safety",
       "irritation",
       "third_party_reaction_attribution",
@@ -588,8 +596,14 @@ export function planConversationFactResponse(input: {
       claim.subjectId === "sibling-1" && claim.predicate === "skin_type" && claim.value === "sensitive",
   );
   if (selfNormal && siblingSensitive) {
+    const waxContext =
+      input.claims.some(
+        (claim) => claim.subjectId === "self" && claim.predicate === "skin_sensitivity_context",
+      ) || Boolean(has("skin_sensitivity_context"));
     return plan(
-      "À hiểu rồi, da mình bình thường, chỉ dễ xót sau wax thôi. Da nhạy cảm là em của mình nha.",
+      waxContext
+        ? "À hiểu rồi, da mình bình thường và chỉ dễ xót sau wax. Da nhạy cảm là em của mình nha."
+        : "À hiểu rồi, da mình bình thường. Da nhạy cảm là em của mình nha.",
       "safety",
       "sensitive_skin",
       "subject_skin_correction",
@@ -643,7 +657,7 @@ export function planConversationFactResponse(input: {
   }
   if (hairReaction?.value === "none") {
     return plan(
-      `À, lần wax/cạo ${formatHairTime(String(hairTime ?? "yesterday"))} da mình không bị xót nha. Những lần khác mình vẫn có thể dễ xót sau wax.`,
+      `À, lần wax/cạo ${formatHairTime(String(hairTime ?? "yesterday"))} da mình không bị xót nha.`,
       "safety",
       "sensitive_skin",
       "hair_removal_event_update",
@@ -738,11 +752,18 @@ function extractConversationFactClaims(
     add({ ...actualSelfReport, predicate: "odor_severity", value: "mild", temporal: "habitual" });
   }
 
-  const selfNormal =
-    /\b(?:tui|toi|minh) da (?:bt|binh thuong)\b|\bda (?:tui|toi|minh) (?:bt|binh thuong)\b/.test(text);
+  const subjectClauses = text.split(/\s*[,;.]\s*|\s+nhung\s+|\s+con\s+/u).filter(Boolean);
+  const selfSkinClauses = subjectClauses.filter(
+    (clause) => !/\b(?:em gai|em trai|em cua|minh co em|nho em|dua em)\b/u.test(clause),
+  );
+  const selfNormal = selfSkinClauses.some((clause) =>
+    /\b(?:tui|toi|minh) da (?:bt|binh thuong)\b|\bda (?:tui|toi|minh) (?:bt|binh thuong)\b/u.test(clause),
+  );
   const selfSensitive =
-    /\b(?:tui|toi|minh) da (?:hoi )?nhay cam\b|\bda (?:tui|toi|minh) (?:la da )?(?:hoi )?nhay cam\b/.test(
-      text,
+    selfSkinClauses.some((clause) =>
+      /\b(?:tui|toi|minh) da (?:hoi )?nhay cam\b|\bda (?:tui|toi|minh) (?:la da )?(?:hoi )?nhay cam\b/u.test(
+        clause,
+      ),
     ) && !attribution.memoryQuestion;
   if (selfNormal) add({ ...actualSelfReport, predicate: "skin_type", value: "normal" });
   if (selfSensitive) add({ ...actualSelfReport, predicate: "skin_type", value: "sensitive" });
@@ -924,12 +945,35 @@ function ensureSubject(ledger: ConversationFactLedger, id: string): void {
   }
 }
 
-function factId(turn: number, claim: ConversationFactClaim, offset: number): string {
+function factId(turn: number, claim: ConversationFactClaim, offset: number, occurredAt: Date): string {
   const digest = createHash("sha256")
-    .update(`${turn}:${offset}:${claim.subjectId}:${claim.predicate}:${claim.value}:${claim.evidence}`)
+    .update(
+      `${turn}:${offset}:${claim.subjectId}:${claim.predicate}:${claim.value}:${claim.evidence}:${eventIdentity(claim, occurredAt)}`,
+    )
     .digest("hex")
     .slice(0, 12);
   return `fact-${turn}-${digest}`;
+}
+
+function sameEventIdentity(fact: ConversationFact, claim: ConversationFactClaim, occurredAt: Date): boolean {
+  if (claim.temporal !== "today" && claim.temporal !== "yesterday") return true;
+  if (!fact.eventAt) return false;
+  return dateKeyInVietnam(new Date(fact.eventAt)) === eventIdentity(claim, occurredAt);
+}
+
+function eventIdentity(claim: ConversationFactClaim, occurredAt: Date): string {
+  const eventAt = new Date(occurredAt);
+  if (claim.temporal === "yesterday") eventAt.setUTCDate(eventAt.getUTCDate() - 1);
+  return claim.temporal === "today" || claim.temporal === "yesterday" ? dateKeyInVietnam(eventAt) : "state";
+}
+
+function dateKeyInVietnam(value: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(value);
 }
 
 function normalize(value: string): string {

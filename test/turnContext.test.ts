@@ -167,3 +167,121 @@ test("legacy fact tương đối thiếu eventAt không được dùng như sự
     { factId: "legacy-yesterday", reason: "legacy_relative_time_unknown" },
   ]);
 });
+
+test("nhắc lại giá không biến toàn bộ hồ sơ cá nhân thành must_say", () => {
+  const ledger = {
+    subjects: [{ id: "self", type: "self" as const, label: "bạn" }],
+    facts: [
+      {
+        id: "skin-sensitive",
+        subjectId: "self",
+        predicate: "skin_type" as const,
+        value: "sensitive",
+        product: "unknown" as const,
+        temporal: "current" as const,
+        scenario: "actual" as const,
+        source: "self_report" as const,
+        polarity: "positive" as const,
+        confidence: 1,
+        evidence: "da mình nhạy cảm",
+        sourceTurn: 1,
+        recordedAt: "2026-09-01T00:00:00.000Z",
+        status: "current" as const,
+      },
+    ],
+  };
+  const projection = projectMemoryForTurn({
+    ledger,
+    customerMessage: "Nhắc lại giá 1 lọ giúp mình",
+    at: new Date("2026-09-16T00:00:00.000Z"),
+  });
+
+  assert.ok(projection.facts.every((fact) => fact.usage === "context_only"));
+});
+
+test("projection giữ product polarity status và hạ relative fact đã cũ về context_only", () => {
+  const ledger = {
+    subjects: [{ id: "self", type: "self" as const, label: "bạn" }],
+    facts: [
+      {
+        id: "old-shave",
+        subjectId: "self",
+        predicate: "hair_removal_time" as const,
+        value: "today",
+        product: "unknown" as const,
+        temporal: "today" as const,
+        scenario: "actual" as const,
+        source: "self_report" as const,
+        polarity: "positive" as const,
+        confidence: 1,
+        evidence: "hôm nay mình cạo",
+        sourceTurn: 1,
+        recordedAt: "2026-09-01T00:00:00.000Z",
+        eventAt: "2026-09-01T00:00:00.000Z",
+        status: "current" as const,
+      },
+      {
+        id: "other-rollon-irritation",
+        subjectId: "self",
+        predicate: "product_reaction" as const,
+        value: "irritation",
+        product: "other_rollon" as const,
+        temporal: "current" as const,
+        scenario: "actual" as const,
+        source: "self_report" as const,
+        polarity: "positive" as const,
+        confidence: 1,
+        evidence: "lăn loại khác bị rát",
+        sourceTurn: 1,
+        recordedAt: "2026-09-01T00:00:00.000Z",
+        status: "current" as const,
+      },
+    ],
+  };
+  const projection = projectMemoryForTurn({
+    ledger,
+    customerMessage: "giờ dùng sao?",
+    at: new Date("2026-09-16T00:00:00.000Z"),
+  });
+  const oldShave = projection.facts.find((fact) => fact.id === "old-shave");
+  const reaction = projection.facts.find((fact) => fact.id === "other-rollon-irritation");
+
+  assert.equal(oldShave?.usage, "context_only");
+  assert.equal(oldShave?.temporal, "past");
+  assert.equal(reaction?.product, "other_rollon");
+  assert.equal(reaction?.polarity, "positive");
+  assert.equal(reaction?.status, "current");
+});
+
+test("đại từ tiếp nối dùng active subject đã resolve thay vì tự gán self", () => {
+  const projection = projectMemoryForTurn({
+    ledger: {
+      subjects: [
+        { id: "self", type: "self", label: "bạn" },
+        { id: "sibling-1", type: "sibling", label: "em gái" },
+      ],
+      facts: [
+        {
+          id: "sibling-sensitive",
+          subjectId: "sibling-1",
+          predicate: "skin_type",
+          value: "sensitive",
+          product: "unknown",
+          temporal: "current",
+          scenario: "actual",
+          source: "third_party_report",
+          polarity: "positive",
+          confidence: 1,
+          evidence: "em gái mình da nhạy cảm",
+          sourceTurn: 1,
+          status: "current",
+        },
+      ],
+    },
+    customerMessage: "Em ấy dùng sao?",
+    activeSubjectId: "sibling-1",
+  });
+
+  assert.equal(projection.activeSubjectId, "sibling-1");
+  assert.equal(projection.facts[0]?.usage, "may_say");
+});

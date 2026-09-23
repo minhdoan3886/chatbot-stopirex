@@ -134,3 +134,37 @@ test("fact từ OpenAI được chuẩn hóa đóng trước khi có thể che f
     1,
   );
 });
+
+test("relative event retry cùng ngày idempotent nhưng cùng câu ở ngày khác là sự kiện mới", () => {
+  const first = reduceConversationFactLedger({
+    ledger: initialConversationFactLedger(),
+    raw: "Hôm nay mình vừa cạo nách",
+    turn: 1,
+    occurredAt: new Date("2026-09-01T03:00:00.000Z"),
+  });
+  const retry = reduceConversationFactLedger({
+    ledger: first.ledger,
+    raw: "Hôm nay mình vừa cạo nách",
+    turn: 1,
+    occurredAt: new Date("2026-09-01T03:00:00.000Z"),
+  });
+  assert.deepEqual(retry.receipt.acceptedFactIds, []);
+
+  const later = reduceConversationFactLedger({
+    ledger: retry.ledger,
+    raw: "Hôm nay mình vừa cạo nách",
+    turn: 2,
+    occurredAt: new Date("2026-09-17T03:00:00.000Z"),
+  });
+  assert.equal(later.receipt.acceptedFactIds.length, 1);
+  assert.equal(
+    currentConversationFact(later.ledger, "hair_removal_time")?.eventAt,
+    "2026-09-17T03:00:00.000Z",
+  );
+  assert.equal(
+    later.ledger.facts.filter(
+      (fact) => fact.predicate === "hair_removal_time" && fact.status === "superseded",
+    ).length,
+    1,
+  );
+});

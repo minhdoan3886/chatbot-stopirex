@@ -1,6 +1,10 @@
 # Response rebuild Stopirex — local implementation status
 
-Ngày kiểm tra: 2026-09-16 (Asia/Ho_Chi_Minh)
+> Cập nhật nghiệm thu 17/09/2026: **chưa đạt để phát hành bản sửa local**. Các trạng thái “done” bên dưới ghi nhận phần đã triển khai, không xác nhận đã khép mọi đường phản hồi. Audit mới tái hiện lỗi finalization/quyền gửi, kiểm nghĩa, memory event và comment/follow-up. Xem `../../AUDIT_RESPONSE_SYSTEM_2026-09-17.md` và log/script đi kèm. Kết quả test pass phía dưới vẫn đúng trong phạm vi các test đã chạy.
+
+> Closure local ngày 18/09/2026 được theo dõi riêng tại `../../RESPONSE_FIX_STATUS_2026-09-18.md`; tài liệu này không còn là nguồn trạng thái nghiệm thu mới nhất.
+
+Ngày kiểm tra gần nhất: 2026-09-17 (Asia/Ho_Chi_Minh)
 Repository: `Ai chatbot stopirex`
 Baseline trước thay đổi: `08617efb66cf9d9258b364a941cd39118d0169d7`
 
@@ -99,11 +103,19 @@ Module mới không đứng rời: `MetaChatBrain.reply()` tạo và truyền `T
 
 ## Trạng thái xác minh
 
-- `npm run check`: lint, typecheck, 662 tests (655 pass, 7 integration skip theo mặc định, 0 fail) và build đều đạt.
-- Bật PostgreSQL/Redis local và các cờ opt-in: 7/7 integration pass, gồm migration/idempotency, lease/queue/recovery và hai memory E2E. Như vậy toàn bộ 662 test đã được thực thi đạt khi cộng hai gate đúng môi trường.
+- `npm run check`: lint, typecheck, 670 tests (663 pass, 7 integration skip theo mặc định, 0 fail) và build đều đạt.
+- Ở lần kiểm tra lịch sử 17/09, PostgreSQL/Redis local và các cờ opt-in đạt 7/7 integration, gồm migration/idempotency, lease/queue/recovery và hai memory E2E. Kết quả lịch sử này không thay cho integration closure 18/09 đang ghi là chưa xác minh trong status mới.
 - Cụm renderer/guard/dashboard/Meta/brain/order kiểm tra riêng: 108/108 pass.
 - `git diff --check` và `npm run format:check`: pass.
 - PostgreSQL local đã áp dụng migrations `015_meta_comment_workflow.sql`, `016_meta_comment_moderation.sql` và `017_meta_page_management.sql`; production chưa migrate.
 - Deterministic `product-memory`: 6 kịch bản/70 lượt, 0 exception, 0 reply rỗng, 0 `needs_attention`, 0 cụm từ lộ memory/state nội bộ. LLM/OpenAI bị ép tắt trong lần chạy này.
 - Live OpenAI/Meta/Tailscale/product: **chưa xác minh trong task này**.
 - Deploy GitHub → server: **chưa thực hiện**.
+
+## Hardening bổ sung ngày 2026-09-17
+
+- Validator hậu kiểm cả fact `must_say` và fact `may_say` nếu bot chủ động nhắc đến; chặn nói ngược fact, gán nhầm người và gán phản ứng của sản phẩm khác sang Stopirex.
+- Action mới chỉ ở bước planner `accepted` không còn được xem là bằng chứng đã thực hiện. Chỉ receipt `committed/completed` đúng field mới cho phép bot nói đã lưu/chốt/cập nhật.
+- Projection memory bám câu hỏi hiện tại, subject đang active và thời gian Việt Nam; lời chào độc lập không kéo recap cũ, câu đại từ tiếp nối không tự rơi về khách hàng.
+- Lời chào mới sau một đơn đã hoàn tất tách khỏi pipeline cũ nhưng vẫn giữ lịch sử đơn bền vững.
+- Trace phản hồi ghi rõ `validated` hoặc `needs_attention` để dashboard và CSKH phân biệt câu đã qua hậu kiểm với recovery response.

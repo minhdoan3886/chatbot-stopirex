@@ -35,16 +35,17 @@ test("kịch bản miền Nam giữ correction và không gán phản ứng củ
   assert.equal(responses[4]!.state.conversationMemory?.consultationFacts.sensitiveSkin, false);
   assert.match(responses[4]!.reply, /da mình bình thường.*da nhạy cảm là em của mình/isu);
   assert.notEqual(responses[5]!.state.mode, "care");
-  assert.match(responses[5]!.reply, /nếu.*bị rát.*tạm ngưng.*da hết khó chịu/isu);
+  assert.match(responses[5]!.reply, /nếu.*bị rát.*tạm ngưng.*không lăn lại.*da (?:còn khó chịu|ổn)/isu);
   assert.notEqual(responses[6]!.state.mode, "care");
-  assert.match(responses[6]!.reply, /người bị ngứa là bạn của mình.*mình chưa gặp/isu);
+  assert.match(responses[6]!.reply, /người bị ngứa là bạn của mình.*không phải dữ kiện về mình/isu);
   assert.match(responses[7]!.reply, /Mình thì.*bạn của mình/isu);
-  assert.match(responses[8]!.reply, /hôm qua.*không bị xót.*những lần khác/isu);
+  assert.match(responses[8]!.reply, /hôm qua.*không bị xót/isu);
+  assert.doesNotMatch(responses[8]!.reply, /những lần khác/iu);
   assert.equal(currentFactValue(responses[8]!, "hair_removal_reaction"), "none");
   assert.match(responses[9]!.reply, /mồ hôi nách nhiều.*mùi không đáng kể/isu);
   assert.match(responses[9]!.reply, /da mình bình thường.*dễ xót sau wax/isu);
   assert.match(responses[9]!.reply, /sáng thứ 3, 5, 7/iu);
-  assert.match(responses[9]!.reply, /mình chưa bị ngứa.*Stopirex/isu);
+  assert.doesNotMatch(responses[9]!.reply, /mình chưa (?:bị|gặp).*Stopirex|dị ứng do Stopirex/iu);
   assert.match(responses[9]!.reply, /người từng bị ngứa là bạn của mình/iu);
 });
 
@@ -58,8 +59,8 @@ test("kịch bản vùng miền phân biệt lăn khác, review và sửa thời
   assert.notEqual(responses[4]!.state.mode, "care");
   assert.match(responses[4]!.reply, /da mình bình thường.*lăn khác.*không liên quan Stopirex/isu);
   assert.notEqual(responses[5]!.state.mode, "care");
-  assert.match(responses[5]!.reply, /review của người khác.*mình chưa gặp/isu);
-  assert.match(responses[6]!.reply, /^Chưa nha/iu);
+  assert.match(responses[5]!.reply, /review của người khác.*không phải dữ kiện phản ứng của mình/isu);
+  assert.match(responses[6]!.reply, /^Mình chưa có dữ kiện xác nhận/iu);
   assert.match(responses[6]!.reply, /lăn khác.*review của người khác/isu);
   assert.match(responses[7]!.reply, /mồ hôi nách nhiều.*mùi không đáng kể/isu);
   assert.match(responses[8]!.reply, /mình cạo\/wax hôm qua/isu);
@@ -68,7 +69,7 @@ test("kịch bản vùng miền phân biệt lăn khác, review và sửa thời
   assert.match(responses[9]!.reply, /Da mình bình thường/iu);
   assert.match(responses[9]!.reply, /mồ hôi nách nhiều.*mùi không đáng kể/isu);
   assert.match(responses[9]!.reply, /cạo\/wax gần nhất là hôm qua/iu);
-  assert.match(responses[9]!.reply, /mình chưa bị.*dị ứng do Stopirex/isu);
+  assert.doesNotMatch(responses[9]!.reply, /mình chưa (?:bị|gặp).*Stopirex|dị ứng do Stopirex/iu);
   assert.match(responses[9]!.reply, /review của người khác/iu);
 });
 

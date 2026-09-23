@@ -795,6 +795,28 @@ export class DemoChatService {
         "LLM đã xác định câu hỏi cần trả lời trực tiếp và Reconciler đã chấp nhận answer action.";
     }
 
+    if (isPositiveCustomerFeedback(raw)) {
+      delete session.pendingQuestionTopic;
+      session.activeSkill = "direct-answer";
+      session.skillReason =
+        "Khách đang cảm ơn hoặc phản hồi tích cực; chỉ đáp lại, không mở discovery hay CTA.";
+      lockBoundaryDecision(
+        session,
+        "other",
+        "other",
+        "Phản hồi xã giao tích cực được khóa thành acknowledgement ngắn, không khai thác bán hàng.",
+      );
+      // The acknowledgement itself is a natural conversational opening. Do
+      // not prepend a separate staff introduction to a thank-you message.
+      session.greeted = true;
+      return this.respond(
+        session,
+        /\b(?:dùng|xài|hiệu quả|hợp|ưng|tốt)\b/iu.test(raw)
+          ? "Dạ cảm ơn mình nhiều nha, nghe mình dùng hợp là bên em vui rồi ạ 😊"
+          : "Dạ không có gì đâu ạ, cảm ơn mình nhiều nha 😊",
+      );
+    }
+
     if (isSensitiveSkinConsultationRequest(raw)) {
       session.pipeline = "2.Đang tư vấn";
       session.consultation = { ...session.consultation, stage: "S5.guidance" };
@@ -2278,6 +2300,15 @@ export class DemoChatService {
       delete session.lastDecision.pendingActionAfter;
       delete session.activeSkill;
       delete session.skillReason;
+    }
+
+    // A greeting in an existing episode is a new conversational opening, not
+    // an instruction to resume the previous pending CTA. This check runs
+    // after completed-order detachment so durable order history is preserved
+    // while the old order stops owning the active sales pipeline.
+    if (session.messages > 1 && isGenericOpening(text)) {
+      delete session.pendingQuestionTopic;
+      return this.respond(session, "Dạ em đây, mình cần hỗ trợ gì nè?");
     }
 
     if (session.pipeline === "6.Đã tạo đơn") {
@@ -4364,9 +4395,25 @@ function isReset(text: string): boolean {
 }
 
 function isGenericOpening(text: string): boolean {
-  return /^(?:tu van|tu van giup|tu van giup minh|xin chao|chao|hello|hi|inbox|ib)(?: a| nhe| voi)?$/.test(
+  return /^(?:tu van|tu van giup|tu van giup minh|xin chao|chao|hello|hi|inbox|ib)(?: a| e| em| shop| nhe| voi)?$/.test(
     text,
   );
+}
+
+function isPositiveCustomerFeedback(raw: string): boolean {
+  if (/[?？]/u.test(raw)) return false;
+  const text = normalize(raw);
+  const negative =
+    /\b(?:khong|ko|k)\s+(?:tot|hieu qua|hop|ung)|khong thay tac dung|that vong|te|kem|bi rat|bi ngua|kich ung\b/u.test(
+      text,
+    );
+  if (negative) return false;
+  const gratitude = /\b(?:cam on|thank you|thanks|tks|cam on shop|cam on em)\b/u.test(text);
+  const positiveUsage =
+    /\b(?:dùng|xài|dung|xai)\b.{0,24}\b(?:rất tốt|tốt lắm|hiệu quả|hợp da|ưng lắm|rat tot|tot lam|hieu qua|hop da|ung lam)\b|\b(?:rất hài lòng|hài lòng|ưng lắm|rat hai long|hai long|ung lam)\b/iu.test(
+      raw,
+    );
+  return gratitude || positiveUsage;
 }
 
 function isStateRequest(text: string): boolean {
@@ -5717,7 +5764,7 @@ function audienceSafetyReply(
     answers.push({
       reply: asksDarkening
         ? "Dạ Stopirex có công thức dịu nhẹ, phù hợp với da nhạy cảm khi dùng đúng hướng dẫn nên mình có thể yên tâm hơn ạ. Mình lăn một lớp mỏng vào buổi tối khi da sạch, khô; không dùng trên da đang trầy, rát hoặc ngứa và chờ ít nhất 24 giờ sau cạo hoặc wax. Nếu da khó chịu hay đổi màu, mình tạm ngưng và nhắn bên em kiểm tra nhé ạ."
-        : "À, nếu sau khi lăn mà da bị rát, ngứa hoặc đỏ thì mình nên tạm ngưng sử dụng nha. Đợi da hết khó chịu rồi nhắn bên em kiểm tra trước khi dùng lại.",
+        : "À, nếu sau khi lăn mà da bị rát, ngứa hoặc đỏ thì mình nên tạm ngưng sử dụng và không lăn lại khi da còn khó chịu nha. Đợi da ổn rồi nhắn bên em kiểm tra trước khi dùng lại.",
       knowledgeEntityIds: ["safety-irritation-hypothetical"],
     });
   }
@@ -5788,7 +5835,7 @@ function childUsageGuidanceReply(): string {
   return [
     "Dạ bé dùng Stopirex vào buổi tối, khi da sạch và khô hoàn toàn ạ.",
     "Lăn một lớp mỏng, dùng 2–3 lần/tuần. Sau cạo hoặc wax cần chờ ít nhất 24 giờ.",
-    "Không dùng khi da trầy, rát hoặc ngứa; nếu khó chịu thì tạm ngưng và nhắn bên em nhé ạ.",
+    "Không dùng khi da trầy, rát hoặc ngứa. Nếu da bị khó chịu thì tạm ngưng sử dụng, không lăn lại và nhắn bên em nhé ạ.",
   ].join("\n\n");
 }
 
@@ -5796,7 +5843,7 @@ function generalUsageGuidanceReply(): string {
   return [
     "Dạ mình dùng Stopirex vào buổi tối, khi da sạch và khô hoàn toàn ạ.",
     "Lăn một lớp mỏng, dùng 2–3 lần/tuần. Sau cạo hoặc wax cần chờ ít nhất 24 giờ.",
-    "Không dùng khi da trầy, rát hoặc ngứa; nếu khó chịu thì tạm ngưng và nhắn bên em nhé ạ.",
+    "Không dùng khi da trầy, rát hoặc ngứa. Nếu da bị khó chịu thì tạm ngưng sử dụng, không lăn lại và nhắn bên em nhé ạ.",
   ].join("\n\n");
 }
 

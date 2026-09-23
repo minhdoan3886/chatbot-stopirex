@@ -18,6 +18,7 @@ function claimed(overrides: Partial<ClaimedFollowupJob> = {}): ClaimedFollowupJo
     stage: "3h",
     idempotencyKey: "followup-key",
     attemptCount: 1,
+    claimedAt: new Date("2026-08-17T03:59:00.000Z"),
     anchorSentAt: anchor,
     anchorStateVersion: 1,
     currentStateVersion: 1,
@@ -167,6 +168,139 @@ test("dispatcher ưu tiên nội dung OpenAI và lưu câu hỏi follow-up vào 
   assert.match(sentText, /mồ hôi.*mùi.*cả hai/iu);
   assert.equal(marked?.composerStatus, "generated");
   assert.equal(marked?.pendingQuestionTopic, "symptom");
+});
+
+test("follow-up bị hủy trong lúc compose được recheck và không gửi", async () => {
+  let stillClaimed = true;
+  let claimChecks = 0;
+  let cancelledClaims = 0;
+  let sends = 0;
+  const repository = {
+    async isStillClaimed() {
+      claimChecks += 1;
+      return stillClaimed;
+    },
+    async markCancelledClaim() {
+      cancelledClaims += 1;
+      return true;
+    },
+  } as unknown as PgFollowupRepository;
+  const dispatcher = new FollowupDispatcher({
+    repository,
+    messenger: messengerFixture(async () => {
+      sends += 1;
+      return { ok: true, value: { messageId: "should-not-send" } };
+    }),
+    logger: new StructuredLogger(() => undefined),
+    mode: "enabled",
+    outboundWindowHours: 24,
+    maxAttempts: 3,
+    composer: {
+      async composeFollowup() {
+        stillClaimed = false;
+        return {
+          text: "Mình còn cần shop hỗ trợ phần nào ạ?",
+          status: "generated" as const,
+          latencyMs: 1,
+          model: "fake",
+          provider: "openai" as const,
+        };
+      },
+    },
+    now: () => new Date("2026-08-17T04:00:00.000Z"),
+  });
+
+  assert.equal(await dispatcher.process(claimed()), "cancelled");
+  assert.equal(claimChecks, 2);
+  assert.equal(cancelledClaims, 1);
+  assert.equal(sends, 0);
+});
+
+test("follow-up mất conversation lease sau compose thì 0 send", async () => {
+  let leaseChecks = 0;
+  let sends = 0;
+  let cancelledClaims = 0;
+  const repository = {
+    async isStillClaimed() {
+      return true;
+    },
+    async markCancelledClaim() {
+      cancelledClaims += 1;
+      return true;
+    },
+  } as unknown as PgFollowupRepository;
+  const dispatcher = new FollowupDispatcher({
+    repository,
+    messenger: messengerFixture(async () => {
+      sends += 1;
+      return { ok: true, value: { messageId: "should-not-send" } };
+    }),
+    logger: new StructuredLogger(() => undefined),
+    mode: "enabled",
+    outboundWindowHours: 24,
+    maxAttempts: 3,
+    composer: {
+      async composeFollowup() {
+        return {
+          text: "Mình còn cần shop hỗ trợ phần nào ạ?",
+          status: "generated" as const,
+          latencyMs: 1,
+          model: "fake",
+          provider: "openai" as const,
+        };
+      },
+    },
+    now: () => new Date("2026-08-17T04:00:00.000Z"),
+  });
+
+  const result = await dispatcher.process(claimed(), async () => {
+    leaseChecks += 1;
+    return leaseChecks === 1;
+  });
+  assert.equal(result, "cancelled");
+  assert.equal(cancelledClaims, 0);
+  assert.equal(sends, 0);
+});
+
+test("final follow-up gate chặn claim nguy hiểm dù composer tùy biến trả status generated", async () => {
+  let sends = 0;
+  let cancelledReason = "";
+  const repository = {
+    async isStillClaimed() {
+      return true;
+    },
+    async markCancelledClaim(_job: ClaimedFollowupJob, reason: string) {
+      cancelledReason = reason;
+      return true;
+    },
+  } as unknown as PgFollowupRepository;
+  const dispatcher = new FollowupDispatcher({
+    repository,
+    messenger: messengerFixture(async () => {
+      sends += 1;
+      return { ok: true, value: { messageId: "must-not-send" } };
+    }),
+    logger: new StructuredLogger(() => undefined),
+    mode: "enabled",
+    outboundWindowHours: 24,
+    maxAttempts: 3,
+    composer: {
+      async composeFollowup() {
+        return {
+          text: "Có thể uống trực tiếp mỗi ngày. Mình còn cần shop hỗ trợ phần nào ạ?",
+          status: "generated" as const,
+          latencyMs: 1,
+          model: "fake",
+          provider: "openai" as const,
+        };
+      },
+    },
+    now: () => new Date("2026-08-17T04:00:00.000Z"),
+  });
+
+  assert.equal(await dispatcher.process(claimed()), "cancelled");
+  assert.equal(cancelledReason, "unsupported_material_claim");
+  assert.equal(sends, 0);
 });
 
 test("markSent ghi tin follow-up vào history để lượt trả lời ngắn tiếp theo giữ đúng ngữ cảnh", async () => {

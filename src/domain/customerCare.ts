@@ -800,7 +800,7 @@ function careOpening(issue: IssueType): string {
     return "Dạ em rất tiếc vì Stopirex chưa mang lại hiệu quả như mình mong đợi. Em kiểm tra nhanh cách dùng để tìm đúng nguyên nhân cùng mình nhé ạ.";
   }
   if (issue === "irritation") {
-    return "Dạ em rất tiếc vì vùng da của mình đang bị khó chịu sau khi dùng sản phẩm. Mình tạm ngưng sử dụng trước giúp em; em kiểm tra nhanh nguyên nhân cùng mình nhé ạ.";
+    return "Dạ em rất tiếc vì vùng da của mình đang bị khó chịu sau khi dùng sản phẩm. Mình tạm ngưng sử dụng và không lăn lại khi da còn khó chịu giúp em; em kiểm tra nhanh nguyên nhân cùng mình nhé ạ.";
   }
   if (issue === "delivery") {
     return "Dạ em rất tiếc vì đơn hàng chưa đến đúng như mình mong đợi. Em kiểm tra thông tin để hỗ trợ mình ngay ạ.";

@@ -157,6 +157,22 @@ test("hỏi danh tính chatbot được trả lời trực tiếp và không che
   assert.doesNotMatch(result.reply, /ngồi điều hòa|ra nhiều mồ hôi|mùi cơ thể|bảng giá|1 lọ|combo/);
 });
 
+test("cảm ơn và phản hồi dùng tốt chỉ được acknowledgement ngắn, không mở discovery", () => {
+  for (const [index, message] of ["Cảm ơn shop", "Cảm ơn shop, mình dùng rất tốt"].entries()) {
+    const chat = new DemoChatService();
+    const result = chat.chat(`positive-feedback-${index}`, message);
+
+    assert.equal(result.replies.length, 1, message);
+    assert.match(result.reply, /cảm ơn/iu, message);
+    assert.doesNotMatch(
+      result.reply,
+      /ngồi điều hòa|tình trạng của mình|mồ hôi làm ướt áo|mùi cơ thể hay cả hai|bảng giá|mấy lọ/iu,
+      message,
+    );
+    assert.equal(result.state.pendingQuestionTopic, undefined);
+  }
+});
+
 test("mẫu mở đầu đưa câu trả lời vào đúng bước tương ứng", () => {
   const chat = new DemoChatService();
   const prior = chat.reset("opening-prior", { openingVariantId: "C.prior" });

@@ -41,3 +41,18 @@ test("comment không có nội dung mở discovery ngắn", () => {
   const plan = composeCommentReplyPlan({ commentText: ".", groundedReplies: [] });
   assert.equal((plan.privateReply.match(/\?/gu) ?? []).length, 1);
 });
+
+test("comment adaptation không cắt mất cảnh báo ở cuối private reply", () => {
+  const advice =
+    "Dạ mình chỉ dùng một lớp mỏng vào buổi tối khi da sạch và khô. " +
+    "Mình đọc kỹ hướng dẫn sử dụng trên bao bì trước khi dùng nhé. ".repeat(8) +
+    "Không bôi trên da trầy xước hoặc đang kích ứng.";
+  const plan = composeCommentReplyPlan({
+    commentText: "Cách dùng thế nào shop?",
+    intent: "usage_guidance",
+    groundedReplies: [advice],
+  });
+  assert.match(plan.privateReply, /Không bôi trên da trầy xước hoặc đang kích ứng/u);
+  assert.equal(plan.privateReply, advice);
+  assert.doesNotMatch(plan.publicReply, /đã nhắn riêng/iu);
+});

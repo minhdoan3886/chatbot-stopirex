@@ -135,7 +135,7 @@ if (!env.redisUrl || !env.databaseUrl) {
           continue;
         }
         try {
-          await dispatcher.process(job);
+          await dispatcher.process(job, () => redis.renewLease(leaseKey, leaseOwner, env.followupClaimTtlMs));
         } catch (error) {
           logger.log("error", "followup_job_crashed", {
             jobId: job.id,

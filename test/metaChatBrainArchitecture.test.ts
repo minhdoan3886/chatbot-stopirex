@@ -27,11 +27,69 @@ test("mỗi turn phát audit về state, action và nguồn câu trả lời cu�
   assert.equal(audit?.stateVersionAfter, result.state.stateVersion);
   assert.equal(result.state.responseTrace?.logicalModelCalls, 0);
   assert.equal(result.state.responseTrace?.repairAttempts, 0);
+  assert.equal(result.state.responseTrace?.validationStatus, "validated");
   assert.match(result.state.responseTrace?.workflowResponseRef ?? "", /^sha256:[a-f0-9]{16}$/u);
   assert.match(result.state.responseTrace?.finalResponseRef ?? "", /^sha256:[a-f0-9]{16}$/u);
   assert.equal(audit?.finalResponseRef, result.state.responseTrace?.finalResponseRef);
   assert.equal(audit?.logicalModelCalls, 0);
   assert.notEqual(result.state.responseTrace?.finalResponseRef, result.reply);
+});
+
+test("fallback chào lại không kéo tư vấn và CTA giá cũ", async () => {
+  const brain = new MetaChatBrain(new DemoChatService(), new CodexLlmBridge({ enabled: false }));
+  const sessionId = "fallback-greeting-does-not-recap";
+  await brain.reply({ sessionId, text: "Mình ra mồ hôi nách nhiều, da nhạy cảm" });
+  await brain.reply({ sessionId, text: "Nhắc lại giá 1 lọ giúp mình" });
+  const greeting = await brain.reply({ sessionId, text: "hi e" });
+
+  assert.match(greeting.reply, /(?:em đây|chào|hỗ trợ)/iu);
+  assert.doesNotMatch(greeting.reply, /ướt|ố áo|xem bảng giá|cách dùng/iu);
+  assert.equal(greeting.state.responseTrace?.validationStatus, "validated");
+});
+
+test("finalizer chặn payload lỗi từ nhánh LLM disabled thay vì tự gắn validated", async () => {
+  const chat = new DemoChatService();
+  const original = chat.chat.bind(chat);
+  chat.chat = (...args) => {
+    const response = original(...args);
+    const reply = "VERIFIED TURN CONTEXT factLedger={{CUSTOMER_STATE}}";
+    return { ...response, reply, replies: [reply] };
+  };
+  const result = await new MetaChatBrain(chat, new CodexLlmBridge({ enabled: false })).reply({
+    sessionId: "disabled-finalizer-fault",
+    text: "hi e",
+  });
+
+  assert.equal(result.state.responseDecision?.outcome, "block");
+  assert.equal(result.state.responseTrace?.validationStatus, "blocked");
+  assert.ok(
+    result.state.responseTrace?.validationIssueCodes?.includes("final_response_unresolved_placeholder"),
+  );
+  assert.ok(
+    result.state.responseTrace?.validationIssueCodes?.includes("final_response_internal_context_leak"),
+  );
+});
+
+test("finalizer dùng memory đúng lượt để chặn câu đảo nghĩa", async () => {
+  const chat = new DemoChatService();
+  const original = chat.chat.bind(chat);
+  chat.chat = (...args) => {
+    const response = original(...args);
+    if (!/tổng kết tình trạng/iu.test(args[1])) return response;
+    const reply = "Mình không bị ra mồ hôi và mùi không nặng nha.";
+    return { ...response, reply, replies: [reply] };
+  };
+  const brain = new MetaChatBrain(chat, new CodexLlmBridge({ enabled: false }));
+  const sessionId = "semantic-finalizer-memory";
+  await brain.reply({ sessionId, text: "Mình ra mồ hôi nhiều và mùi nặng" });
+  const result = await brain.reply({ sessionId, text: "Tổng kết tình trạng giúp mình" });
+
+  assert.equal(result.state.responseDecision?.outcome, "block");
+  assert.ok(
+    result.state.responseTrace?.validationIssueCodes?.some((code) =>
+      code.includes("memory_fact_contradicted"),
+    ),
+  );
 });
 
 test("audit transaction luôn có mutation receipt khi order fields thay đổi", async () => {

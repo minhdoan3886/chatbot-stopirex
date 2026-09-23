@@ -50,20 +50,26 @@ export function composeCommentReplyPlan(input: {
       category,
       priority: "normal",
       ...moderation,
-      publicReply: "Dạ shop chào mình ạ 😊 Shop đã nhắn riêng để hỗ trợ, mình kiểm tra giúp shop nhé.",
+      publicReply:
+        "Dạ shop chào mình ạ 😊 Shop sẽ gửi tin nhắn riêng để hỗ trợ, mình kiểm tra giúp shop nhé.",
       privateReply:
         "Dạ shop chào mình ạ 😊 Mình đang quan tâm giá, cách dùng hay muốn được tư vấn tình trạng mồ hôi và mùi cơ thể ạ?",
     };
   }
   if (category === "complaint") {
+    const safetyGuidance = groundedSafetyGuidance(input.groundedReplies);
     return {
       category,
       priority: "urgent",
       ...moderation,
       publicReply:
         "Stopirex rất tiếc vì trải nghiệm chưa trọn vẹn của mình ạ. Shop xin phép nhắn riêng để kiểm tra và hỗ trợ mình kỹ hơn nhé.",
-      privateReply:
+      privateReply: [
+        safetyGuidance,
         "Stopirex rất xin lỗi vì sự bất tiện này ạ. Mình gửi giúp shop mã đơn hoặc SĐT đặt hàng cùng tình trạng đang gặp để CSKH kiểm tra và hỗ trợ ngay nhé.",
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     };
   }
   if (category === "positive") {
@@ -84,7 +90,7 @@ export function composeCommentReplyPlan(input: {
       priority: "normal",
       ...moderation,
       publicReply:
-        "Dạ shop đã nhận yêu cầu của mình ạ. Shop gửi giá và ưu đãi chi tiết qua tin nhắn riêng, mình kiểm tra cả mục Tin nhắn chờ giúp shop nhé 😊",
+        "Dạ shop đã nhận yêu cầu của mình ạ. Shop sẽ gửi giá và ưu đãi chi tiết qua tin nhắn riêng, mình kiểm tra cả mục Tin nhắn chờ giúp shop nhé 😊",
       privateReply,
     };
   }
@@ -94,7 +100,7 @@ export function composeCommentReplyPlan(input: {
       priority: "normal",
       ...moderation,
       publicReply:
-        "Dạ shop đã nhận câu hỏi của mình ạ. Shop gửi phần tư vấn phù hợp qua tin nhắn riêng, mình kiểm tra giúp shop nhé 😊",
+        "Dạ shop đã nhận câu hỏi của mình ạ. Shop sẽ gửi phần tư vấn phù hợp qua tin nhắn riêng, mình kiểm tra giúp shop nhé 😊",
       privateReply,
     };
   }
@@ -103,7 +109,7 @@ export function composeCommentReplyPlan(input: {
     priority: "normal",
     ...moderation,
     publicReply:
-      "Dạ shop đã nhận bình luận của mình ạ. Shop gửi thông tin hỗ trợ qua tin nhắn riêng, mình kiểm tra giúp shop nhé 😊",
+      "Dạ shop đã nhận bình luận của mình ạ. Shop sẽ gửi thông tin hỗ trợ qua tin nhắn riêng, mình kiểm tra giúp shop nhé 😊",
     privateReply,
   };
 }
@@ -193,15 +199,19 @@ function compactPrivateReply(replies: readonly string[]): string {
     .trim();
   const fallback =
     "Dạ mình cho shop biết nhu cầu hoặc tình trạng đang quan tâm để shop tư vấn đúng và gọn nhất cho mình nhé.";
-  return clipAtSentence(joined || fallback, 480);
+  return joined || fallback;
 }
 
-function clipAtSentence(value: string, limit: number): string {
-  if (value.length <= limit) return value;
-  const clipped = value.slice(0, limit + 1);
-  const boundary = Math.max(clipped.lastIndexOf(". "), clipped.lastIndexOf("? "), clipped.lastIndexOf("! "));
-  if (boundary >= Math.floor(limit * 0.55)) return clipped.slice(0, boundary + 1).trim();
-  return `${value.slice(0, limit - 1).trimEnd()}…`;
+function groundedSafetyGuidance(replies: readonly string[]): string | undefined {
+  const blocks = replies
+    .flatMap((reply) => reply.split(/\n{2,}|(?<=[.!?])\s+/u))
+    .map((block) => block.trim())
+    .filter((block) =>
+      /(?:ngưng|dừng|tạm ngưng) (?:dùng|sử dụng|sản phẩm)|không (?:lăn|bôi) lại|(?:đi|gọi|đến).*cấp cứu/iu.test(
+        block,
+      ),
+    );
+  return blocks.length > 0 ? [...new Set(blocks)].join(" ") : undefined;
 }
 
 function normalize(value: string): string {

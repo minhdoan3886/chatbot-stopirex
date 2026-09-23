@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { TenantId } from "../domain/types.js";
 import type { OpeningVariantId } from "../domain/sales.js";
 import type { MetaMessenger } from "../integrations/contracts.js";
@@ -16,7 +15,17 @@ import type { FollowupCycleSchedule } from "./followupRepository.js";
 import type { OrderDraft } from "../domain/orders.js";
 import type { PushOrderInboxInput } from "./orderInbox.js";
 import type { MetaReferralAttribution } from "../domain/marketingAttribution.js";
-import { composeCommentReplyPlan, isLowInformationComment } from "./commentReplyPolicy.js";
+import {
+  composeCommentReplyPlan,
+  isLowInformationComment,
+  type CommentReplyPlan,
+} from "./commentReplyPolicy.js";
+import {
+  responseContextRef,
+  responsePayloadRef,
+  type DeliveryDecision,
+  type FinalPayloadChannel,
+} from "../domain/responseGuard.js";
 
 export type FollowupCoordinator = {
   cancelConversation(input: { tenantId: string; conversationId: string; reason: string }): Promise<number>;
@@ -53,6 +62,7 @@ export type MetaInboundStore = Pick<
   | "hasNewerInboundContent"
   | "updateConversationRuntime"
   | "commitConversationTurn"
+  | "commitConversationTurnBlocked"
   | "findConversationTurnOutbound"
   | "markConversationTurnOutboundSent"
   | "markInboundProcessed"
@@ -245,14 +255,23 @@ export class MetaInboundProcessor {
       let replyCount = 0;
       let lastMessageId = existingOutbound.lastMessageId;
       let suppressed = false;
+      let satisfiedReceiptRefs: string[] = [];
       await assertLease();
       if (!isCommentTurn) {
-        await this.pushCreatedOrder({
+        satisfiedReceiptRefs = await this.pushCreatedOrder({
           sessionId,
           state: conversation.runtimeState,
         });
       }
-      if (existingOutbound.status !== "sent" && existingOutbound.deliveryStatus !== "unknown") {
+      if (
+        existingOutbound.status !== "sent" &&
+        existingOutbound.deliveryStatus !== "unknown" &&
+        outboundAuthorizationValid(existingOutbound, conversation.stateVersion, {
+          tenantId: String(first.tenantId),
+          pageId: first.pageId,
+          conversationId: conversation.conversationId,
+        })
+      ) {
         const dispatched = await this.dispatchOutbound(
           first,
           conversation,
@@ -260,6 +279,7 @@ export class MetaInboundProcessor {
           conversation.stateVersion,
           messenger,
           assertLease,
+          satisfiedReceiptRefs,
         );
         replyCount = dispatched.count;
         suppressed = dispatched.suppressed;
@@ -267,6 +287,19 @@ export class MetaInboundProcessor {
       } else if (existingOutbound.deliveryStatus === "unknown") {
         suppressed = true;
         this.options.logger.log("warn", "meta_outbound_delivery_unknown_not_retried", {
+          traceId: first.traceId,
+          conversationId: conversation.conversationId,
+          outboxId: existingOutbound.outboxId,
+        });
+      } else if (
+        !outboundAuthorizationValid(existingOutbound, conversation.stateVersion, {
+          tenantId: String(first.tenantId),
+          pageId: first.pageId,
+          conversationId: conversation.conversationId,
+        })
+      ) {
+        suppressed = true;
+        this.options.logger.log("warn", "meta_outbound_legacy_or_invalid_authorization_held", {
           traceId: first.traceId,
           conversationId: conversation.conversationId,
           outboxId: existingOutbound.outboxId,
@@ -301,7 +334,18 @@ export class MetaInboundProcessor {
     const imageJobs = contentJobs.filter((job) => job.kind === "image");
     if (imageJobs.length > 0) {
       const reply =
-        "Dạ em đã nhận được hình ảnh của mình ạ. Em chuyển bộ phận liên quan kiểm tra nội dung ảnh và phản hồi lại mình sớm nhé.";
+        "Dạ em đã nhận được hình ảnh của mình ạ. Nội dung ảnh cần bộ phận liên quan kiểm tra kỹ trước khi phản hồi mình nhé.";
+      const texts = [reply];
+      const channel = "messenger" as const;
+      const responseRef = responsePayloadRef(channel, texts);
+      const inboundRevision = conversation.stateVersion + 1;
+      const scope = {
+        tenantId: String(first.tenantId),
+        pageId: first.pageId,
+        customerId: conversation.customerId,
+        conversationId: conversation.conversationId,
+        episodeId: sessionId,
+      };
       void messenger.sendTyping(first.senderId).catch(() => undefined);
       await assertLease();
       const committed = await this.options.store.commitConversationTurn({
@@ -319,11 +363,29 @@ export class MetaInboundProcessor {
         outbound: {
           idempotencyKey: turnIdempotencyKey,
           recipientId: first.senderId,
-          texts: [reply],
+          texts,
           traceId: first.traceId,
           turnContextVersion: 1,
-          inboundRevision: conversation.stateVersion + 1,
-          responseRef: responseReference(reply),
+          inboundRevision,
+          responseRef,
+          channel,
+          deliveryDecision: {
+            outcome: "allow",
+            responseRef,
+            contextRef: responseContextRef({
+              scope,
+              inboundRevision,
+              stateVersion: conversation.stateVersion,
+            }),
+            channel,
+            permission: "handoff_ack",
+            recipientId: first.senderId,
+            sourceEventIds: imageJobs.map((job) => job.eventId),
+            partChannels: ["messenger"],
+            scope,
+            inboundRevision,
+            requiredReceiptRefs: [],
+          },
         },
       });
       const dispatched = await this.dispatchOutbound(
@@ -456,13 +518,76 @@ export class MetaInboundProcessor {
       ? composeCommentReplyPlan({
           commentText: text,
           ...(result.state.lastIntent ? { intent: result.state.lastIntent } : {}),
-          groundedReplies: result.replies.slice(0, 2),
+          groundedReplies: result.replies,
           humanCareRequired:
             result.state.botPaused ||
             result.state.decisionTrace?.selectedRoute === "start_care" ||
             result.state.decisionTrace?.selectedRoute === "active_care",
         })
       : undefined;
+    const outboundTexts = commentPlan ? [commentPlan.publicReply, commentPlan.privateReply] : result.replies;
+    const outboundChannel: FinalPayloadChannel = isCommentTurn ? "comment_public" : "messenger";
+    const responseRef = responsePayloadRef(outboundChannel, outboundTexts);
+    const deliveryDecision = deliveryAuthorizationForTurn({
+      result,
+      channel: outboundChannel,
+      texts: outboundTexts,
+      responseRef,
+      lowInformationComment,
+      ...(commentPlan ? { commentPlan } : {}),
+      recipientId: first.senderId,
+      sourceEventIds: contentJobs.map((job) => job.eventId),
+      tenantId: String(first.tenantId),
+      pageId: first.pageId,
+      customerId: conversation.customerId,
+      conversationId: conversation.conversationId,
+      episodeId: sessionId,
+      inboundRevision: conversation.stateVersion + 1,
+    });
+    if (!deliveryDecision) {
+      if (!isCommentTurn) {
+        await this.options.store.commitConversationTurnBlocked({
+          tenantId: first.tenantId,
+          pageId: first.pageId,
+          conversationId: conversation.conversationId,
+          consultationStage: result.state.consultationStage,
+          pipelineTag: result.state.pipeline,
+          ...(result.state.signal ? { signalTag: result.state.signal } : {}),
+          humanStatus: result.state.botPaused ? "paused" : "bot",
+          runtimeState: responseRuntimeState(this.options.chat.exportSession(sessionId), result.state),
+          summary: `${result.state.pipeline} · phản hồi bị chặn bởi final gate`.slice(0, 800),
+          expectedStateVersion: conversation.stateVersion,
+          sourceEventIds: contentJobs.map((job) => job.eventId),
+        });
+      } else if (first.commentId) {
+        await this.options.store.markMetaCommentIssue({
+          tenantId: first.tenantId,
+          pageId: first.pageId,
+          externalCommentId: first.commentId,
+          status: "paused",
+          errorCode: "final_payload_not_authorized",
+        });
+        if (commentPlan?.autoHide && messenger.setCommentHidden) {
+          const hidden = await messenger.setCommentHidden({ commentId: first.commentId, hidden: true });
+          if (hidden.ok) {
+            await this.options.store.markMetaCommentVisibilityByExternal({
+              tenantId: first.tenantId,
+              pageId: first.pageId,
+              externalCommentId: first.commentId,
+              hidden: true,
+            });
+          }
+        }
+      }
+      if (isCommentTurn) await this.markProcessed(jobs);
+      if (isCommentTurn) this.options.chat.discardSession(sessionId);
+      this.options.logger.log("warn", "meta_final_payload_blocked_before_outbox", {
+        traceId: first.traceId,
+        conversationId: conversation.conversationId,
+        responseRef,
+      });
+      return { status: "paused", replyCount: 0 };
+    }
     await assertLease();
     const committed = await this.options.store.commitConversationTurn({
       tenantId: first.tenantId,
@@ -493,11 +618,13 @@ export class MetaInboundProcessor {
       outbound: {
         idempotencyKey: turnIdempotencyKey,
         recipientId: first.senderId,
-        texts: commentPlan ? [commentPlan.publicReply, commentPlan.privateReply] : result.replies.slice(0, 2),
+        texts: outboundTexts,
         traceId: first.traceId,
         turnContextVersion: 1,
         inboundRevision: conversation.stateVersion + 1,
-        responseRef: result.state.responseTrace?.finalResponseRef ?? responseReference(result.reply),
+        responseRef,
+        channel: outboundChannel,
+        deliveryDecision,
       },
     });
     await assertLease();
@@ -547,9 +674,10 @@ export class MetaInboundProcessor {
     }
     // A public comment is a separate episode and must never create or mutate
     // an inbox order draft from the customer's Messenger conversation.
+    let satisfiedReceiptRefs: string[] = [];
     if (!isCommentTurn) {
       await assertLease();
-      await this.pushCreatedOrder({
+      satisfiedReceiptRefs = await this.pushCreatedOrder({
         sessionId,
         state: result.state,
       });
@@ -561,6 +689,7 @@ export class MetaInboundProcessor {
       committed.stateVersion,
       messenger,
       assertLease,
+      satisfiedReceiptRefs,
     );
     if (isCommentTurn) this.options.chat.discardSession(sessionId);
     if (result.state.botPaused) {
@@ -628,8 +757,8 @@ export class MetaInboundProcessor {
     };
   }
 
-  private async pushCreatedOrder(input: { sessionId: string; state: unknown }): Promise<void> {
-    if (!this.options.orderInbox || !input.state || typeof input.state !== "object") return;
+  private async pushCreatedOrder(input: { sessionId: string; state: unknown }): Promise<string[]> {
+    if (!input.state || typeof input.state !== "object") return [];
     const state = input.state as {
       pipeline?: string;
       orderFlowStatus?: string;
@@ -643,7 +772,8 @@ export class MetaInboundProcessor {
     };
     const draft = state.orderDraft ?? state.order;
     const created = state.orderFlowStatus === "created" || state.pipeline === "6.Đã tạo đơn";
-    if (!created || !draft?.customerConfirmedAt) return;
+    if (!created || !draft?.customerConfirmedAt) return [];
+    if (!this.options.orderInbox) return [];
     const confirmedAt =
       draft.customerConfirmedAt instanceof Date
         ? draft.customerConfirmedAt
@@ -667,6 +797,7 @@ export class MetaInboundProcessor {
       sessionId: input.sessionId,
       confirmedAt: confirmedAt.toISOString(),
     });
+    return ["order_inbox"];
   }
 
   private async dispatchOutbound(
@@ -676,21 +807,81 @@ export class MetaInboundProcessor {
     expectedStateVersion: number,
     messenger: MetaMessenger,
     assertLease: () => Promise<void>,
+    satisfiedReceiptRefs: readonly string[] = [],
   ): Promise<{ count: number; lastMessageId?: string; suppressed: boolean }> {
     if (!plan) return { count: 0, suppressed: false };
+    if (
+      !outboundAuthorizationValid(plan, expectedStateVersion, {
+        tenantId: String(job.tenantId),
+        pageId: job.pageId,
+        conversationId: conversation.conversationId,
+      })
+    ) {
+      this.options.logger.log("warn", "meta_outbound_authorization_rejected", {
+        traceId: job.traceId,
+        conversationId: conversation.conversationId,
+        outboxId: plan.outboxId,
+      });
+      return { count: 0, suppressed: true };
+    }
+    if (
+      !plan.deliveryDecision?.requiredReceiptRefs.every((receipt) => satisfiedReceiptRefs.includes(receipt))
+    ) {
+      this.options.logger.log("warn", "meta_outbound_required_receipt_missing", {
+        traceId: job.traceId,
+        conversationId: conversation.conversationId,
+        outboxId: plan.outboxId,
+        requiredReceiptRefs: plan.deliveryDecision?.requiredReceiptRefs ?? [],
+      });
+      return { count: 0, suppressed: true };
+    }
     let sentThisAttempt = 0;
     let lastMessageId = plan.lastMessageId;
     let suppressed = false;
     for (let index = plan.sentCount; index < plan.texts.length; index += 1) {
       await assertLease();
+      if (
+        !outboundAuthorizationValid(plan, expectedStateVersion, {
+          tenantId: String(job.tenantId),
+          pageId: job.pageId,
+          conversationId: conversation.conversationId,
+        })
+      ) {
+        suppressed = true;
+        this.options.logger.log("warn", "meta_outbound_authorization_changed_before_part", {
+          traceId: job.traceId,
+          conversationId: conversation.conversationId,
+          outboxId: plan.outboxId,
+          part: index + 1,
+        });
+        break;
+      }
       const dispatchCurrent = await this.options.store.canDispatchConversationOutbound({
         tenantId: job.tenantId,
         conversationId: conversation.conversationId,
         expectedStateVersion,
+        permission: plan.deliveryDecision?.permission ?? "standard",
       });
       if (!dispatchCurrent) {
         suppressed = true;
         this.options.logger.log("info", "meta_outbound_suppressed_by_human_takeover", {
+          traceId: job.traceId,
+          conversationId: conversation.conversationId,
+          remainingParts: plan.texts.length - index,
+        });
+        break;
+      }
+      const newerInbound =
+        job.kind !== "comment" &&
+        (await this.options.store.hasNewerInboundContent({
+          tenantId: job.tenantId,
+          pageId: job.pageId,
+          externalCustomerId: job.senderId,
+          currentEventIds: plan.sourceEventIds,
+        }));
+      if (newerInbound) {
+        suppressed = true;
+        this.options.logger.log("info", "meta_outbound_superseded_before_part", {
           traceId: job.traceId,
           conversationId: conversation.conversationId,
           remainingParts: plan.texts.length - index,
@@ -873,8 +1064,163 @@ function isAmbiguousMetaSendFailure(code: string): boolean {
   return code === "network_error" || code === "invalid_response" || code === "request_timeout";
 }
 
-function responseReference(value: string): string {
-  return `sha256:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`;
+function deliveryAuthorizationForTurn(input: {
+  result: { state: DemoChatState; replies: readonly string[] };
+  channel: FinalPayloadChannel;
+  texts: readonly string[];
+  responseRef: string;
+  lowInformationComment: boolean;
+  commentPlan?: CommentReplyPlan;
+  recipientId: string;
+  sourceEventIds: readonly string[];
+  tenantId: string;
+  pageId: string;
+  customerId: string;
+  conversationId: string;
+  episodeId: string;
+  inboundRevision: number;
+}): Omit<DeliveryDecision, "stateVersion"> | undefined {
+  if (input.texts.length === 0 || input.texts.some((text) => finalPayloadTextIssue(text))) return undefined;
+  if (input.channel === "comment_public" && containsPublicPii(input.texts[0] ?? "")) return undefined;
+  const scope = {
+    tenantId: input.tenantId,
+    pageId: input.pageId,
+    customerId: input.customerId,
+    conversationId: input.conversationId,
+    episodeId: input.episodeId,
+  };
+  const decision = input.result.state.responseDecision;
+  if (!input.lowInformationComment) {
+    if (
+      decision?.outcome !== "allow" ||
+      input.result.state.responseTrace?.validationStatus !== "validated" ||
+      decision.inboundRevision !== input.inboundRevision ||
+      !decision.contextRef ||
+      !decision.scope ||
+      !sameDeliveryScope(decision.scope, scope)
+    ) {
+      return undefined;
+    }
+    const sourceResponseRef = responsePayloadRef("messenger", input.result.replies);
+    if (decision.responseRef !== sourceResponseRef) return undefined;
+    if (input.channel === "messenger" && sourceResponseRef !== input.responseRef) return undefined;
+    if (
+      input.channel === "comment_public" &&
+      (!input.commentPlan || !commentAdaptationAuthorized(input.result.replies, input.commentPlan))
+    ) {
+      return undefined;
+    }
+  }
+  const contextRef =
+    decision?.contextRef ??
+    responseContextRef({
+      scope,
+      inboundRevision: input.inboundRevision,
+      stateVersion: input.result.state.stateVersion ?? 0,
+    });
+  return {
+    outcome: "allow",
+    responseRef: input.responseRef,
+    contextRef,
+    channel: input.channel,
+    permission: "standard",
+    recipientId: input.recipientId,
+    sourceEventIds: [...input.sourceEventIds],
+    partChannels:
+      input.channel === "comment_public"
+        ? ["comment_public", "comment_private"]
+        : input.texts.map(() => input.channel),
+    scope,
+    inboundRevision: input.inboundRevision,
+    requiredReceiptRefs:
+      input.channel === "messenger" &&
+      (input.result.state.orderFlowStatus === "created" || input.result.state.pipeline === "6.Đã tạo đơn")
+        ? ["order_inbox"]
+        : [],
+  };
+}
+
+function commentAdaptationAuthorized(groundedReplies: readonly string[], plan: CommentReplyPlan): boolean {
+  const privateReply = normalizePayloadText(plan.privateReply);
+  if (["price", "consultation", "other"].includes(plan.category)) {
+    return groundedReplies.every((reply) => privateReply.includes(normalizePayloadText(reply)));
+  }
+  if (plan.category === "complaint") {
+    const obligations = groundedReplies
+      .flatMap((reply) => reply.split(/\n{2,}|(?<=[.!?])\s+/u))
+      .filter((block) =>
+        /(?:ngưng|dừng|tạm ngưng) (?:dùng|sử dụng|sản phẩm)|không (?:lăn|bôi) lại|(?:đi|gọi|đến).*cấp cứu/iu.test(
+          block,
+        ),
+      );
+    return obligations.every((block) => privateReply.includes(normalizePayloadText(block)));
+  }
+  return plan.category === "positive";
+}
+
+function outboundAuthorizationValid(
+  plan: ConversationOutboundPlan,
+  expectedStateVersion: number,
+  scope: { tenantId: string; pageId: string; conversationId: string },
+): boolean {
+  const decision = plan.deliveryDecision;
+  if (!decision || decision.outcome !== "allow" || decision.stateVersion !== expectedStateVersion)
+    return false;
+  if (decision.inboundRevision !== plan.inboundRevision) return false;
+  if (decision.recipientId !== plan.recipientId) return false;
+  if (
+    decision.sourceEventIds.length !== plan.sourceEventIds.length ||
+    decision.sourceEventIds.some((eventId, index) => eventId !== plan.sourceEventIds[index])
+  ) {
+    return false;
+  }
+  const expectedPartChannels =
+    decision.channel === "comment_public"
+      ? plan.texts.map((_, index) => (index === 0 ? "comment_public" : "comment_private"))
+      : plan.texts.map(() => decision.channel);
+  if (
+    decision.partChannels.length !== expectedPartChannels.length ||
+    decision.partChannels.some((channel, index) => channel !== expectedPartChannels[index])
+  ) {
+    return false;
+  }
+  if (
+    decision.scope.tenantId !== scope.tenantId ||
+    decision.scope.pageId !== scope.pageId ||
+    decision.scope.conversationId !== scope.conversationId
+  ) {
+    return false;
+  }
+  const expectedRef = responsePayloadRef(decision.channel, plan.texts);
+  return decision.responseRef === expectedRef && plan.responseRef === expectedRef;
+}
+
+function finalPayloadTextIssue(value: string): string | undefined {
+  if (!value.trim()) return "empty";
+  if (/\{\{[^}]+\}\}|\[[A-Z_][A-Z0-9_]*\]|undefined|null_placeholder/iu.test(value)) return "placeholder";
+  if (
+    /VERIFIED TURN CONTEXT|acceptedMutations|factLedger|schemaVersion|chain[- ]of[- ]thought/iu.test(value)
+  ) {
+    return "internal_context";
+  }
+  return undefined;
+}
+
+function containsPublicPii(value: string): boolean {
+  return (
+    /(?:^|\D)(?:\+?84|0)(?:[ .-]?\d){9}(?:\D|$)/u.test(value) ||
+    /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/iu.test(value)
+  );
+}
+
+function normalizePayloadText(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function sameDeliveryScope(left: DeliveryDecision["scope"], right: DeliveryDecision["scope"]): boolean {
+  return Object.keys(right).every(
+    (key) => left[key as keyof DeliveryDecision["scope"]] === right[key as keyof DeliveryDecision["scope"]],
+  );
 }
 
 function responseRuntimeState(snapshot: unknown, state: DemoChatState): Record<string, unknown> {

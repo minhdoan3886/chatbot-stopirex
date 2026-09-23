@@ -22,6 +22,10 @@ export type TurnMemoryFact = {
   sourceTurn: number;
   recordedAt?: string;
   eventAt?: string;
+  product?: "stopirex" | "other_rollon" | "unknown";
+  polarity?: "positive" | "negative";
+  status?: "current" | "superseded";
+  supersededBy?: string;
   temporal: string;
   scenario: string;
   source: string;
@@ -46,8 +50,19 @@ export type TurnMoneyValue = {
 
 export type TurnActionReceipt = {
   id: string;
+  /** Operation identity for the turn that produced this result. */
+  operationId?: string;
   type: string;
   status: "succeeded" | "failed" | "unknown";
+  /** Lifecycle evidence: accepted plans are not proof that an action completed. */
+  stage?: "accepted" | "committed" | "queued" | "completed";
+  /** Exact state field proved by this receipt, when applicable. */
+  field?: string;
+  /** Hash/reference only; never place raw customer PII here. */
+  valueRef?: string;
+  /** Opaque resource identity and its own version namespace. */
+  resourceRef?: string;
+  resultVersion?: string;
   performedAt?: string;
   sourceVersion?: string;
   scope: TurnScope;

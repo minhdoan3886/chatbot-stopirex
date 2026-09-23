@@ -21,6 +21,7 @@ export type ClaimedFollowupJob = {
   stage: "3h" | "6h" | "9h";
   idempotencyKey: string;
   attemptCount: number;
+  claimedAt: Date;
   anchorSentAt: Date;
   anchorStateVersion: number;
   currentStateVersion: number;
@@ -189,7 +190,7 @@ export class PgFollowupRepository {
        )
        SELECT
          f.id::text, f.cycle_id::text, f.tenant_id::text, f.page_id::text,
-         f.conversation_id::text, f.stage, f.idempotency_key, f.attempt_count,
+         f.conversation_id::text, f.stage, f.idempotency_key, f.attempt_count, f.claimed_at,
          fc.anchor_sent_at, fc.state_version AS anchor_state_version, fc.status AS cycle_status,
          fc.context_snapshot,
          c.state_version AS current_state_version, c.human_status, c.pipeline_tag,
@@ -207,9 +208,11 @@ export class PgFollowupRepository {
            (SELECT max(m.created_at) FROM messages m
             WHERE m.conversation_id = c.id AND m.direction = 'inbound'),
            (SELECT max(ie.received_at) FROM inbound_events ie
-            WHERE ie.page_id = c.page_id
+            WHERE ie.tenant_id = f.tenant_id
+              AND ie.page_id = c.page_id
               AND ie.payload->'sender'->>'id' = cu.external_customer_id
-              AND (ie.payload ? 'message' OR ie.payload ? 'postback'))
+              AND (ie.payload ? 'message' OR ie.payload ? 'postback')
+              AND COALESCE((ie.payload->'message'->>'is_echo')::boolean, false) = false)
          ) AS last_customer_activity_at
        FROM claimed f
        JOIN followup_cycles fc ON fc.id = f.cycle_id
@@ -257,7 +260,39 @@ export class PgFollowupRepository {
       `SELECT EXISTS (
          SELECT 1 FROM followup_jobs f
          JOIN followup_cycles fc ON fc.id = f.cycle_id
-         WHERE f.id = $1 AND f.status = 'claimed' AND fc.status = 'active'
+         JOIN conversations c ON c.id = f.conversation_id
+         JOIN customers cu ON cu.id = c.customer_id
+         JOIN pages p ON p.id = f.page_id
+         WHERE f.id = $1
+           AND f.status = 'claimed'
+           AND fc.status = 'active'
+           AND c.human_status = 'bot'
+           AND c.pipeline_tag IN ('3.Đã báo giá', '4.XL băn khoăn', '7.Chờ followup')
+           AND p.active = true
+           AND cu.deleted_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM orders o
+             WHERE o.conversation_id = c.id AND o.status IN ('confirmed','creating','created')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM order_inbox oi
+             WHERE oi.session_id = concat(c.page_id::text, ':', cu.external_customer_id)
+               AND oi.status IN ('pending','completed')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM messages m
+             WHERE m.conversation_id = c.id AND m.direction = 'inbound'
+               AND m.created_at > fc.anchor_sent_at
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM inbound_events ie
+             WHERE ie.tenant_id = f.tenant_id
+               AND ie.page_id = f.page_id
+               AND ie.payload->'sender'->>'id' = cu.external_customer_id
+               AND ie.received_at > fc.anchor_sent_at
+               AND (ie.payload ? 'message' OR ie.payload ? 'postback')
+               AND COALESCE((ie.payload->'message'->>'is_echo')::boolean, false) = false
+           )
        ) AS active`,
       [jobId],
     );
@@ -384,6 +419,18 @@ export class PgFollowupRepository {
     );
   }
 
+  async markCancelledClaim(
+    job: Pick<ClaimedFollowupJob, "id" | "attemptCount">,
+    reason: string,
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE followup_jobs SET status = 'cancelled', cancel_reason = $3
+       WHERE id = $1 AND status = 'claimed' AND attempt_count = $2`,
+      [job.id, job.attemptCount, reason],
+    );
+    return result.rowCount === 1;
+  }
+
   async releaseClaim(jobId: string, retryAt: Date, reason: string): Promise<void> {
     await this.pool.query(
       `UPDATE followup_jobs
@@ -476,6 +523,7 @@ function mapClaimedJob(row: Record<string, unknown>): ClaimedFollowupJob {
     stage: row.stage as ClaimedFollowupJob["stage"],
     idempotencyKey: String(row.idempotency_key),
     attemptCount: Number(row.attempt_count),
+    claimedAt: new Date(row.claimed_at as string | Date),
     anchorSentAt: new Date(row.anchor_sent_at as string | Date),
     anchorStateVersion: Number(row.anchor_state_version),
     currentStateVersion: Number(row.current_state_version),

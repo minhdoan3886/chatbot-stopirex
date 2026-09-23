@@ -4,6 +4,8 @@ import { questionTopic } from "../domain/responseGovernor.js";
 import type { FollowupComposeResult } from "./codexLlm.js";
 import type { ClaimedFollowupJob, PgFollowupRepository } from "./followupRepository.js";
 import type { StructuredLogger } from "./logger.js";
+import { responsePayloadRef } from "../domain/responseGuard.js";
+import { assertMaterialClaimsSupportedByApprovedText } from "../domain/knowledgeResolver.js";
 
 export type FollowupMode = "disabled" | "shadow" | "enabled";
 
@@ -74,11 +76,12 @@ export class FollowupDispatcher {
 
   async process(
     job: ClaimedFollowupJob,
+    assertLease: () => Promise<boolean> = async () => true,
   ): Promise<"sent" | "shadowed" | "cancelled" | "scheduled" | "failed" | "delivery_unknown"> {
     const now = (this.options.now ?? (() => new Date()))();
     const eligibility = evaluateFollowupEligibility(job, now, this.options.outboundWindowHours);
     if (!eligibility.eligible) {
-      await this.options.repository.markCancelled(job.id, eligibility.reason);
+      await this.options.repository.markCancelledClaim(job, eligibility.reason);
       this.options.logger.log("info", "followup_cancelled", {
         jobId: job.id,
         cycleId: job.cycleId,
@@ -102,7 +105,11 @@ export class FollowupDispatcher {
     // Cancellation may race with an already claimed job. Recheck immediately
     // before the external side effect; the worker also shares the conversation
     // Redis lease with the inbound worker.
+    if (!(await assertLease())) {
+      return "cancelled";
+    }
     if (!(await this.options.repository.isStillClaimed(job.id))) {
+      await this.options.repository.markCancelledClaim(job, "eligibility_changed_before_compose");
       return "cancelled";
     }
     const context = job.contextSnapshot;
@@ -130,11 +137,37 @@ export class FollowupDispatcher {
           model: "none",
           provider: "openai" as const,
         };
-    const text = composed.text;
+    const text = composed.text.trim();
+    const finalIssue = followupPayloadIssue(text, baseReply);
+    if (finalIssue) {
+      await this.options.repository.markCancelledClaim(job, finalIssue);
+      this.options.logger.log("warn", "followup_payload_blocked", {
+        jobId: job.id,
+        cycleId: job.cycleId,
+        reason: finalIssue,
+      });
+      return "cancelled";
+    }
     const pendingQuestionTopic = questionTopic(text);
     const messenger = this.options.messengerForPage
       ? await this.options.messengerForPage(job.pageId)
       : this.options.messenger;
+    // Composition and adapter resolution may take long enough for an inbound,
+    // takeover, cancellation or lease loss to win. Recheck at the side-effect boundary.
+    const dispatchNow = (this.options.now ?? (() => new Date()))();
+    if (!(await assertLease())) {
+      return "cancelled";
+    }
+    const stillClaimed = await this.options.repository.isStillClaimed(job.id);
+    const stillEligible = evaluateFollowupEligibility(
+      job,
+      dispatchNow,
+      this.options.outboundWindowHours,
+    ).eligible;
+    if (!stillClaimed || !stillEligible) {
+      await this.options.repository.markCancelledClaim(job, "eligibility_changed_before_send");
+      return "cancelled";
+    }
     const result = await messenger.sendText({
       recipientId: job.externalCustomerId,
       text,
@@ -145,7 +178,7 @@ export class FollowupDispatcher {
         job,
         metaMessageId: result.value.messageId,
         text,
-        sentAt: now,
+        sentAt: dispatchNow,
         ...(pendingQuestionTopic ? { pendingQuestionTopic } : {}),
         composerStatus: composed.status,
       });
@@ -160,6 +193,7 @@ export class FollowupDispatcher {
         composerModel: composed.model,
         composerProvider: composed.provider,
         composerLatencyMs: composed.latencyMs,
+        responseRef: responsePayloadRef("followup", [text]),
       });
       return "sent";
     }
@@ -188,4 +222,20 @@ export class FollowupDispatcher {
     });
     return status;
   }
+}
+
+function followupPayloadIssue(text: string, approvedBaseReply: string): string | undefined {
+  if (!text) return "empty_final_payload";
+  if (/\{\{[^}]+\}\}|\[[A-Z_][A-Z0-9_]*\]|undefined|null_placeholder/iu.test(text)) {
+    return "unresolved_placeholder";
+  }
+  if (/VERIFIED TURN CONTEXT|factLedger|schemaVersion|chain[- ]of[- ]thought/iu.test(text)) {
+    return "internal_context_leak";
+  }
+  try {
+    assertMaterialClaimsSupportedByApprovedText(text, [approvedBaseReply]);
+  } catch {
+    return "unsupported_material_claim";
+  }
+  return undefined;
 }

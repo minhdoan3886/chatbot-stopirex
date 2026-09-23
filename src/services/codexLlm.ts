@@ -41,12 +41,14 @@ import {
   allowedConversationCtas,
   assertRequiredResponseFactsPresent,
   assertSelectedCtaAllowed,
+  classifySafetyTrigger,
   extractRequiredResponseFacts,
   type WorkflowResponseContract,
 } from "../domain/responseContract.js";
 import type { CanonicalAnswerFact, CanonicalFactConflict } from "../domain/knowledgeResolver.js";
 import type { IssueType } from "../domain/customerCare.js";
 import type { FollowupContextSnapshot, FollowupStage } from "../domain/followup.js";
+import { assertMaterialClaimsSupportedByApprovedText } from "../domain/knowledgeResolver.js";
 import type { DemoChatState } from "./demoChat.js";
 import type { TurnContextSnapshot } from "../domain/turnContext.js";
 import { projectMemoryForTurn } from "../domain/memoryProjection.js";
@@ -579,6 +581,7 @@ export class CodexLlmBridge {
       this.claims.assertSafe(reply);
       assertRequiredFactsPreserved(input.baseReply, reply);
       assertNoUnapprovedCommerceFacts(input.baseReply, reply);
+      assertMaterialClaimsSupportedByApprovedText(reply, [input.baseReply]);
       assertCustomerAdvisorVoice(input.context.customerMessage ?? "", reply);
       assertFollowupShape(input.stage, reply);
       return {
@@ -1962,7 +1965,9 @@ function buildCompactInterpretPrompt(input: {
     ...compactExamplesFor(input.customerMessage, input.state),
     `STATE: ${JSON.stringify(state)}`,
     `VERIFIED TURN CONTEXT: ${JSON.stringify(input.turnContext ?? null)}`,
-    `CONVERSATION_MEMORY: ${JSON.stringify(promptArgumentMemory(input.state, input.customerMessage))}`,
+    `CONVERSATION_MEMORY: ${JSON.stringify(
+      promptArgumentMemory(input.state, input.customerMessage, input.turnContext),
+    )}`,
     `CTA_POLICY: ${JSON.stringify(input.responseContract?.ctaPolicy ?? null)}`,
     `ALLOWED_CTAS: ${JSON.stringify(input.responseContract?.ctaPolicy.allowed ?? allowedConversationCtas(input.state))}`,
     `CANONICAL_FACTS: ${JSON.stringify(input.canonicalFacts ?? [])}`,
@@ -2102,6 +2107,7 @@ type PromptArgumentId =
 function promptArgumentMemory(
   state: DemoChatState,
   customerMessage: string,
+  turnContext?: Readonly<TurnContextSnapshot>,
 ): {
   currentGoal: string | null;
   activeSubject: string | null;
@@ -2152,6 +2158,9 @@ function promptArgumentMemory(
     source: string;
     evidence: string;
     sourceTurn: number;
+    eventAt: string | null;
+    polarity: string | null;
+    status: string | null;
   }>;
   salesContext: {
     objections: Array<{
@@ -2167,10 +2176,22 @@ function promptArgumentMemory(
   const standaloneGreeting = isStandaloneGreeting(customerMessage);
   const orderContextAvailable = !standaloneGreeting;
   const orderPiiRelevant = isOrderMemoryRelevant(customerMessage);
-  const projected = projectMemoryForTurn({
-    ...(state.conversationMemory?.factLedger ? { ledger: state.conversationMemory.factLedger } : {}),
-    customerMessage,
-  });
+  const projected = turnContext
+    ? {
+        activeSubjectId: turnContext.activeSubjectId,
+        includeHistory: false,
+        facts: [...turnContext.memoryFacts],
+        excluded: [],
+      }
+    : projectMemoryForTurn({
+        ...(state.conversationMemory?.factLedger ? { ledger: state.conversationMemory.factLedger } : {}),
+        customerMessage,
+        ...(state.conversationMemory?.activeBeneficiaryId
+          ? { activeSubjectId: state.conversationMemory.activeBeneficiaryId }
+          : state.conversationMemory?.activeSubject === "customer"
+            ? { activeSubjectId: "self" }
+            : {}),
+      });
   const hasFactLedger = (state.conversationMemory?.factLedger?.facts.length ?? 0) > 0;
   const recent = state.recentTurns.slice(-36);
   const assistantText = recent
@@ -2289,12 +2310,15 @@ function promptArgumentMemory(
         subjectId: fact.subjectId,
         predicate: fact.key,
         value: fact.value,
-        product: null,
+        product: fact.product ?? null,
         temporal: fact.temporal,
         scenario: fact.scenario,
         source: fact.source,
         evidence: fact.evidenceRef,
         sourceTurn: fact.sourceTurn,
+        eventAt: fact.eventAt ?? null,
+        polarity: fact.polarity ?? null,
+        status: fact.status ?? null,
       })),
     salesContext: {
       objections: (state.conversationMemory?.salesContext?.objections ?? []).map((item) => ({
@@ -3230,7 +3254,7 @@ function assertRequiredFactsForCustomerTurn(
   const asksShipping = /\b(?:ship|giao|van chuyen|freeship|free ship|mien phi giao)\b/.test(message);
   const asksDuration = /\b(?:bao lau|may ngay|khi nao|bao gio|tan suat|may lan|thang|gio)\b/.test(message);
   const asksGift = /\b(?:qua|tang|uu dai|khuyen mai)\b/.test(message) || asksPrice;
-  const safetyTurn = /\b(?:rat|ngua|do da|kich ung|kho tho|sung moi|sung mat|choang)\b/.test(message);
+  const safetyTurn = classifySafetyTrigger(customerMessage).scenario !== "none";
   const required = facts.filter((fact) => {
     // A receipt-shaped workflow base is often only execution evidence. Require
     // the whole receipt when this turn actually changed the order or the

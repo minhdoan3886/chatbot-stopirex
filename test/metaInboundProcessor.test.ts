@@ -19,11 +19,14 @@ import {
   type MetaInboundStore,
   type FollowupCoordinator,
 } from "../src/services/metaInboundProcessor.js";
+import type { DeliveryDecision } from "../src/domain/responseGuard.js";
+import { southContextTurns } from "./fixtures/contextScenarios.js";
 
 function fixture(options: {
   live: boolean;
   humanStatus?: "bot" | "human" | "paused";
   newerInbound?: boolean;
+  newerInboundAfterSuccessfulSend?: number;
   failFirstSend?: boolean;
   failSendAttempt?: number;
   ambiguousFirstSend?: boolean;
@@ -32,6 +35,8 @@ function fixture(options: {
   profileName?: string;
   attribution?: boolean;
   forceBrainReply?: string;
+  forceBrainBlock?: boolean;
+  forceUnchecked?: boolean;
   stateConflictOnce?: boolean;
   failOutboundAuditOnce?: boolean;
   runtimeState?: unknown;
@@ -63,18 +68,23 @@ function fixture(options: {
       inboundRevision?: number;
       responseRef?: string;
       deliveryStatus?: "unknown";
+      deliveryDecision?: DeliveryDecision;
     }
   >();
   const followupSchedules: Array<Record<string, unknown>> = [];
   const followupCancellations: Array<Record<string, unknown>> = [];
   const inboxPushes: Array<Record<string, unknown>> = [];
   const attributionTouches: Array<Record<string, unknown>> = [];
+  const newerInboundChecks: boolean[] = [];
   let newerInbound = options.newerInbound ?? false;
   let sendAttempts = 0;
   let cachedDisplayName: string | undefined;
   let profileRequests = 0;
   let commitAttempts = 0;
   let outboundAuditFailures = 0;
+  let currentStateVersion = 0;
+  let currentRuntimeState: unknown = options.runtimeState ?? {};
+  let currentHumanStatus: "bot" | "human" | "paused" = options.humanStatus ?? "bot";
   const profileName = options.profileName;
   const store: MetaInboundStore = {
     async ensureMessengerConversation(input) {
@@ -83,9 +93,9 @@ function fixture(options: {
         customerId: "customer-1",
         ...(cachedDisplayName ? { displayName: cachedDisplayName } : {}),
         conversationId: "conversation-1",
-        humanStatus: options.humanStatus ?? "bot",
-        runtimeState: options.runtimeState ?? {},
-        stateVersion: 0,
+        humanStatus: currentHumanStatus,
+        runtimeState: currentRuntimeState,
+        stateVersion: currentStateVersion,
         pipelineTag: "0.Chưa tư vấn",
         updatedAt: options.updatedAt ?? new Date().toISOString(),
       };
@@ -98,14 +108,18 @@ function fixture(options: {
       }
     },
     async hasNewerInboundContent() {
+      newerInboundChecks.push(newerInbound);
       return newerInbound;
     },
-    async canDispatchConversationOutbound() {
-      return options.dispatchCurrent ?? true;
+    async canDispatchConversationOutbound(input) {
+      if (options.dispatchCurrent !== undefined) return options.dispatchCurrent;
+      return currentHumanStatus !== "human" || input.permission === "handoff_ack";
     },
     async updateConversationRuntime(input) {
       runtimeUpdates.push(input);
-      return input.expectedStateVersion + 1;
+      currentRuntimeState = input.runtimeState;
+      currentStateVersion = input.expectedStateVersion + 1;
+      return currentStateVersion;
     },
     async commitConversationTurn(input) {
       commitAttempts += 1;
@@ -115,6 +129,14 @@ function fixture(options: {
         throw error;
       }
       runtimeUpdates.push(input);
+      const committedStateVersion = input.preserveConversationState
+        ? input.expectedStateVersion
+        : input.expectedStateVersion + 1;
+      if (!input.preserveConversationState) {
+        currentRuntimeState = input.runtimeState;
+        currentStateVersion = committedStateVersion;
+        currentHumanStatus = input.humanStatus;
+      }
       const plan = {
         outboxId: "outbox-1",
         idempotencyKey: input.outbound.idempotencyKey,
@@ -131,10 +153,22 @@ function fixture(options: {
           ? { inboundRevision: input.outbound.inboundRevision }
           : {}),
         ...(input.outbound.responseRef ? { responseRef: input.outbound.responseRef } : {}),
+        deliveryDecision: {
+          ...input.outbound.deliveryDecision,
+          stateVersion: committedStateVersion,
+        },
       };
       outbox.set(plan.idempotencyKey, plan);
       processed.push(...input.sourceEventIds);
-      return { stateVersion: input.expectedStateVersion + 1, outbound: plan };
+      return { stateVersion: committedStateVersion, outbound: plan };
+    },
+    async commitConversationTurnBlocked(input) {
+      runtimeUpdates.push(input);
+      currentRuntimeState = input.runtimeState;
+      currentStateVersion = input.expectedStateVersion + 1;
+      currentHumanStatus = input.humanStatus;
+      processed.push(...input.sourceEventIds);
+      return currentStateVersion;
     },
     async findConversationTurnOutbound(input) {
       return outbox.get(input.idempotencyKey);
@@ -225,6 +259,12 @@ function fixture(options: {
         };
       }
       sent.push(input.text);
+      if (
+        options.newerInboundAfterSuccessfulSend !== undefined &&
+        sent.length >= options.newerInboundAfterSuccessfulSend
+      ) {
+        newerInbound = true;
+      }
       return { ok: true, value: { messageId: `out-${sent.length}` } };
     },
     async sendImage() {
@@ -274,6 +314,36 @@ function fixture(options: {
       return { ...response, reply: replies[0]!, replies, state };
     };
   }
+  if (options.forceBrainBlock || options.forceUnchecked) {
+    const originalReply = brain.reply.bind(brain);
+    brain.reply = async (input) => {
+      const response = await originalReply(input);
+      return {
+        ...response,
+        state: {
+          ...response.state,
+          ...(options.forceBrainBlock
+            ? {
+                responseDecision: {
+                  ...response.state.responseDecision!,
+                  outcome: "block" as const,
+                  hard: true,
+                  reason: "fault_injected_block",
+                },
+              }
+            : {}),
+          ...(options.forceUnchecked
+            ? {
+                responseTrace: {
+                  ...response.state.responseTrace!,
+                  validationStatus: "unchecked" as const,
+                },
+              }
+            : {}),
+        },
+      };
+    };
+  }
   const followups: FollowupCoordinator = {
     async cancelConversation(input) {
       followupCancellations.push(input);
@@ -317,6 +387,7 @@ function fixture(options: {
     commentVisibilityChanges,
     commentWorkflowUpdates,
     persistedMessages,
+    newerInboundChecks,
     get commitAttempts() {
       return commitAttempts;
     },
@@ -438,6 +509,39 @@ test("Meta không tự ẩn khiếu nại thật nếu comment không có PII", 
     }),
   ]);
   assert.deepEqual(context.commentVisibilityChanges, []);
+});
+
+test("C02 comment cảm ơn và dùng rất tốt vẫn nhận phản hồi phù hợp", async () => {
+  for (const [index, text] of ["Cảm ơn shop", "Mình dùng rất tốt, cảm ơn shop"].entries()) {
+    const context = fixture({ live: true });
+    const result = await context.processor.processBatch([
+      job({
+        eventId: `comment-thanks-${index}`,
+        kind: "comment",
+        commentId: `comment-thanks-${index}`,
+        text,
+      }),
+    ]);
+    assert.deepEqual(result, { status: "replied", replyCount: 2 });
+    assert.match(context.publicCommentReplies[0] ?? "", /cảm ơn/iu);
+    assert.match(context.privateCommentReplies[0] ?? "", /cảm ơn/iu);
+  }
+});
+
+test("C03 complaint có kích ứng giữ nghĩa vụ an toàn trong private reply", async () => {
+  const context = fixture({ live: true });
+  const result = await context.processor.processBatch([
+    job({
+      eventId: "comment-safety-complaint",
+      kind: "comment",
+      commentId: "comment-safety-complaint",
+      text: "Mình dùng Stopirex bị ngứa rát, shop hỗ trợ gấp",
+    }),
+  ]);
+
+  assert.deepEqual(result, { status: "replied", replyCount: 2 });
+  assert.match(context.privateCommentReplies[0] ?? "", /tạm ngưng sử dụng/iu);
+  assert.match(context.privateCommentReplies[0] ?? "", /không lăn lại/iu);
 });
 
 test("retry private comment không gửi lại public hoặc nhân đôi private reply", async () => {
@@ -601,7 +705,7 @@ test("Meta inbound dùng brain để trả lời và lưu state khi đã bật g
   assert.equal(context.sent.length, 2);
 });
 
-test("Meta outbound không âm thầm đổi nội dung sau khi brain đã trả final", async () => {
+test("Meta outbound chặn nội dung bị đổi sau final validation", async () => {
   const context = fixture({
     live: true,
     forceBrainReply:
@@ -612,14 +716,45 @@ test("Meta outbound không âm thầm đổi nội dung sau khi brain đã trả
     job({ eventId: "content-free-outbound-1", text: "." }),
   ]);
 
-  assert.equal(result.status, "replied");
-  assert.deepEqual(context.sent, [
-    "Dạ em chưa hiểu chắc ý “.” trong ngữ cảnh hiện tại ạ. Mình diễn đạt rõ thêm chính câu này giúp em để em trả lời đúng nhé.",
+  assert.deepEqual(result, { status: "paused", replyCount: 0 });
+  assert.deepEqual(context.sent, []);
+  // The fixture mutates the already-final response without updating its hash.
+  // Transport must hold it instead of trusting the stale authorization.
+});
+
+test("C04 comment chặn source reply bị đổi sau brain và tạo 0 outbox gửi được", async () => {
+  const context = fixture({ live: true, forceBrainReply: "Dạ riêng mình giá 1đ nha." });
+  const result = await context.processor.processBatch([
+    job({
+      eventId: "comment-tamper-1",
+      kind: "comment",
+      commentId: "comment-tamper-1",
+      text: "Giá một lọ bao nhiêu?",
+    }),
   ]);
-  assert.equal((context.sent[0]?.match(/[?？]/gu) ?? []).length, 0);
-  // Content-free safety is enforced inside MetaChatBrain. This fixture
-  // deliberately mutates its returned final to prove the transport layer no
-  // longer rewrites customer copy after validation.
+
+  assert.deepEqual(result, { status: "paused", replyCount: 0 });
+  assert.deepEqual(context.publicCommentReplies, []);
+  assert.deepEqual(context.privateCommentReplies, []);
+  assert.equal(
+    context.commentWorkflowUpdates.some(
+      (update) => update.action === "issue" && update.errorCode === "final_payload_not_authorized",
+    ),
+    true,
+  );
+});
+
+test("block hoặc unchecked persist state nhưng tạo 0 sendable outbox và 0 send", async () => {
+  for (const options of [{ forceBrainBlock: true }, { forceUnchecked: true }]) {
+    const context = fixture({ live: true, ...options });
+    const result = await context.processor.processBatch([
+      job({ eventId: options.forceBrainBlock ? "blocked-final" : "unchecked-final" }),
+    ]);
+    assert.deepEqual(result, { status: "paused", replyCount: 0 });
+    assert.deepEqual(context.sent, []);
+    assert.equal(context.runtimeUpdates.length, 1);
+    assert.equal("outbound" in context.runtimeUpdates[0]!, false);
+  }
 });
 
 test("nhân viên tiếp quản trong lúc LLM xử lý thì chặn outbound bot đã chuẩn bị", async () => {
@@ -1558,7 +1693,7 @@ test("mất conversation lease chặn commit và outbound", async () => {
   assert.equal(context.sent.length, 0);
 });
 
-test("Ảnh được chuyển người thật thay vì để LLM đoán nội dung", async () => {
+test("Ảnh được giữ cho người thật kiểm tra thay vì để LLM đoán nội dung", async () => {
   const context = fixture({ live: true });
   const result = await context.processor.processBatch([
     job({
@@ -1568,8 +1703,53 @@ test("Ảnh được chuyển người thật thay vì để LLM đoán nội du
     }),
   ]);
   assert.deepEqual(result, { status: "paused", replyCount: 1 });
-  assert.match(context.sent[0] ?? "", /chuyển bộ phận liên quan kiểm tra/u);
+  assert.match(context.sent[0] ?? "", /cần bộ phận liên quan kiểm tra/u);
   assert.equal(context.runtimeUpdates[0]?.humanStatus, "human");
+});
+
+test("D01-D02 handoff ACK ảnh được gửi đúng một lần nhưng sales dưới human ownership bị giữ", async () => {
+  const image = fixture({ live: true });
+  const imageResult = await image.processor.processBatch([
+    job({ eventId: "image-ack-ownership", kind: "image", attachmentUrl: "https://example.test/image.jpg" }),
+  ]);
+  assert.deepEqual(imageResult, { status: "paused", replyCount: 1 });
+  assert.equal(image.sent.length, 1);
+
+  const sales = fixture({ live: true, humanStatus: "human" });
+  const salesResult = await sales.processor.processBatch([
+    job({ eventId: "sales-under-human", text: "Giá một lọ bao nhiêu?" }),
+  ]);
+  assert.deepEqual(salesResult, { status: "paused", replyCount: 0 });
+  assert.deepEqual(sales.sent, []);
+});
+
+test("D03 inbound durable mới giữa hai part chặn part còn lại", async () => {
+  const context = fixture({ live: true, newerInboundAfterSuccessfulSend: 1 });
+  const result = await context.processor.processBatch([
+    job({ eventId: "two-part-with-new-ingress", text: "Giá bao nhiêu?" }),
+  ]);
+
+  assert.deepEqual(context.newerInboundChecks, [false, false, true]);
+  assert.equal(context.sent.length, 1);
+  assert.deepEqual(result, { status: "paused", replyCount: 1 });
+});
+
+test("V01 hành trình context 10 lượt đi qua brain, processor, stateful store và fake Meta", async () => {
+  const context = fixture({ live: true });
+  let priorSendCount = 0;
+  let finalPayload = "";
+  for (const [index, text] of southContextTurns.entries()) {
+    const result = await context.processor.processBatch([job({ eventId: `context-e2e-${index + 1}`, text })]);
+    assert.ok(result.replyCount > 0, `turn ${index + 1} must reach adapter`);
+    finalPayload = context.sent.slice(priorSendCount).join("\n\n");
+    priorSendCount = context.sent.length;
+  }
+
+  assert.match(finalPayload, /mồ hôi nách nhiều.*mùi không đáng kể/isu);
+  assert.match(finalPayload, /da mình bình thường.*dễ xót sau wax/isu);
+  assert.match(finalPayload, /người từng bị ngứa là bạn của mình/iu);
+  assert.doesNotMatch(finalPayload, /mình chưa (?:bị|gặp).*Stopirex|dị ứng do Stopirex/iu);
+  assert.equal(context.runtimeUpdates.length, southContextTurns.length);
 });
 
 test("không gửi phản hồi cũ nếu khách đã nhắn thêm trong lúc brain đang xử lý", async () => {
